@@ -30,18 +30,41 @@ export const stripClientSuffix = (spec) => (spec.endsWith("/client") ? spec.slic
  * 后面同步渲染拿到的就是真模块。
  *
  * 这不是「把测试糊过去」：被验的东西（注册键、create(api) 解构、渲染期有没有
- * 读到 undefined）一个没少，只是把异步那一层按下去。
+ * 读到 undefined）一个没少，只是把「要等多少个 tick」这件事交给渲染循环。
+ *
+ * ⚠️ **必须像真 Promise 那样异步兑现**，不能在 .then 里同步调 onOk。
+ *    同步兑现会让**回调嵌套**塌掉：
+ *
+ *        loadPreview().then(cb)        // 同步跑 cb
+ *        cb 里 return loadPicker().then(cb2)   // 同一 tick 内嵌套跑完
+ *
+ *    而同步 thenable 的 `.then` 返回的是 `settled(value)` —— 那个临时链被丢弃，
+ *    外层拿到的就是**链上第一个**的结果，而不是 cb 的返回值。
+ *    踩到的样子：`loadPromptUi()` 本该返回 `{previewMod, pickerMod}`，
+ *    实际变成了 preview 模块本身，于是 `ui.PromptPicker` 是 undefined，
+ *    真机上报 React #130（Element type is invalid: got undefined）。
+ *
+ *    真机上 `require.async` 返回的是原生 Promise，行为是对的 ——
+ *    所以这个 bug **只在测试里现身**，说明测试的 thenable 得跟原生对齐。
  */
 function settled(value) {
   return {
     __settled: true,
     value,
-    then(onOk) {
-      onOk(value);
-      return settled(value);
+    then(onOk, onErr) {
+      return new Promise((resolve, reject) => {
+        queueMicrotask(() => {
+          try {
+            resolve(onOk ? onOk(value) : value);
+          } catch (e) {
+            if (onErr) resolve(onErr(e));
+            else reject(e);
+          }
+        });
+      });
     },
-    catch() {
-      return settled(value);
+    catch(onErr) {
+      return settled(value).then(undefined, onErr);
     },
   };
 }

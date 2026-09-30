@@ -340,26 +340,60 @@ const headerReg = regs.find((r) => r.opts.id === "prompt-picker");
 const PickerSlot = headerReg.Component;
 const EditorSlot = regs.find((r) => r.opts.name === "settings.plugins.tab").Component;
 
-// 把槽位包装组件解析成真组件。
+// 走**真实路径**把两个槽位跑通：useChunk → require.async → chunk.create(api)。
 //
-// 宿主给 chunk 的那一份 api 是**抓来的**（sandbox.lastApi），不是这里照着复刻的：
-// 复刻就等于自己考自己，宿主漏传一个样式常量，测试照样全绿。
-// 抓法是先让宿主按真实路径渲染一次 —— HeaderSlot / EditorSlot 会调
-// useChunk → require.async → chunk.create(api)，那一份 api 就被记下来了。
+// ⚠️ 这里必须渲染槽位包装组件本身（PickerSlot / EditorSlot），**不能绕过它**。
+//    踩过的坑：测试直接 `modPicker.create(API)` 造组件，而宿主的 HeaderSlot
+//    里忘了调 create —— 测试全绿，真机上 React #130（Element type is invalid:
+//    got undefined），会话头部空一块。
 {
-  // 让两个槽位各按**真实路径**渲染一次：useChunk → require.async → create(api)，
-  // 那一份 api 就被 sandbox 记下来了（后面拿它造组件，而不是自己复刻一份）。
-  // 渲染结果在这不重要，只要求「跑通」。
+  let pickerEl = null;
   try {
-    await shims.renderAsync(PickerSlot, { sessionId: "warmup" });
-  } catch {
-    /* 结果不重要 */
+    pickerEl = await shims.renderAsync(PickerSlot, { sessionId: "warmup" });
+  } catch (e) {
+    ok(false, "会话头部槽位渲染不抛异常 —— 实际抛了: " + e.message);
   }
+  ok(pickerEl !== null, "会话头部槽位渲染出了东西（不是 null）");
+
+  // ⚠️ 这里**不能**断言「根元素的 type 是函数」—— PromptPicker 的根元素本来
+  //    就是 `<span>`（状态点 + 按钮 + 预览 + ↻ 全在它里面），那是历史设计。
+  //
+  //    要抓的是 React #130（Element type is invalid: got undefined）：
+  //    宿主忘了调 create(api) 时，`ui.PromptPicker` 是 undefined，
+  //    createElement 收到 undefined 会**静默**产出一个坏元素 —— 真机上表现为
+  //    「会话头部空了一块」+ 错误边界吞掉整个占用。
+  //
+  //    所以判据是「根元素存在，且是能渲染的东西（字符串标签或组件函数）」，
+  //    再往下确认里面真的有可点的按钮。
+  if (pickerEl) {
+    const t = pickerEl.type;
+    ok(
+      typeof t === "function" || typeof t === "string",
+      `会话头部根元素是可渲染的类型（实际 ${t === undefined ? "undefined ← 就是 #130" : typeof t}）`,
+    );
+    ok(countElements(pickerEl) > 1, "会话头部渲染出的不只是个光壳（有按钮等子元素）");
+    const texts = flattenText(pickerEl);
+    ok(
+      texts.some((x) => x.includes("▾")),
+      "会话头部有那个带 ▾ 的选择按钮（说明 PromptPicker 真的跑起来了，不是空壳）",
+    );
+  }
+
   // 设置页那一栏是按需拉的（会话头部不预热它），显式走一遍
+  let editorEl = null;
   try {
-    await shims.renderAsync(EditorSlot, {});
-  } catch {
-    /* 同上 */
+    editorEl = await shims.renderAsync(EditorSlot, {});
+  } catch (e) {
+    ok(false, "设置页槽位渲染不抛异常 —— 实际抛了: " + e.message);
+  }
+  ok(editorEl !== null, "设置页槽位渲染出了东西（不是 null）");
+  if (editorEl) {
+    const t = editorEl.type;
+    ok(
+      typeof t === "function" || typeof t === "string",
+      `设置页根元素是可渲染的类型（实际 ${t === undefined ? "undefined ← 就是 #130" : typeof t}）`,
+    );
+    ok(countElements(editorEl) > 3, "设置页渲染出了内容（不是空壳）");
   }
 }
 ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
@@ -387,6 +421,8 @@ ok(typeof modEditor.create === "function", "editor chunk 导出了 create");
 // `style: undefined` 是**合法的**（等于没样式），React 不吭声，测试全绿，
 // 真机上表现是「设置页那一栏整片空白」。包成抛错之后这类缺口藏不住了。
 const strict = strictApi(API);
+// 注意：真正的宿主已经用 **自己那份 api** 调过 create 了（上面两个槽位）。
+// 这里再拿 strict 包过的 api 造一份，是为了让「缺常量」在测试里炸出来。
 const pickerBox = modPicker.create(strict.api);
 const editorBox = modEditor.create(strict.api);
 const Picker = pickerBox.PromptPicker;

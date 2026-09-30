@@ -109,6 +109,8 @@
 
     // 已加载好的 chunk：loader → 模块本体（失败了就删掉，下次重试）
     var chunkCache = new Map();
+    /** 「正在加载」的占位符 —— 只用来占住缓存键，绝不作为模块交出去。 */
+    var PENDING = {};
 
     /**
      * 取一个 chunk，没到就先用 effect 去拉。
@@ -134,10 +136,12 @@
       react.useEffect(
         function () {
           if (mod) return undefined;
+          // ⚠️ 「加载中」也要占住这个键，否则同一个 loader 会被并发拉两遍
+          //    （两个组件同时首次渲染就会），白拉一次脚本。
+          if (chunkCache.get(loader) === undefined) chunkCache.set(loader, PENDING);
           var alive = true;
           loader().then(
             function (m) {
-              // 缓存键是 loader，所以「加载中」也要写进去，避免并发拉两遍
               chunkCache.set(loader, m);
               if (alive) setMod(m);
             },
@@ -156,13 +160,20 @@
         [loader, mod],
       );
 
+      // PENDING 只是占位符，不能当模块交出去 —— 否则调用方拿到一个假模块，
+      // 下一步就是 React #130（type 是 undefined）。
+      if (mod === PENDING) return null;
       return mod;
     }
 
     /**
-     * 组合加载器：面板 + 预览必须**一起**备好。
+     * 组合加载器：面板 + 预览两个 **chunk** 一起备好。
      *
-     * ⚠️ 不能各拉各的。面板里点「预览」会直接渲染 PreviewPanel（面板常驻、
+     * ⚠️ 返回的是**两个模块**，不是组件 —— 组件要宿主自己 `create(api)` 造出来。
+     *    这里少调一次 create 就是 React #130（Element type is invalid:
+     *    got undefined），而槽位的错误边界会把整个占用吞掉、只留一行日志。
+     *
+     * ⚠️ 也不能各拉各的。面板里点「预览」会直接渲染 PreviewPanel（面板常驻、
      *    预览是弹层，同一个 React 树）—— 只拉面板的话，点预览那一刻就是
      *    `PreviewPanel is not defined`，React 随即卸载整棵子树。
      *
@@ -170,13 +181,15 @@
      * 内联写箭头函数的话每次渲染都是新键，缓存永远不命中。
      */
     function loadPromptUi() {
+      // ⚠️ 入口先把这个键删掉。它是「组合加载器」，缓存里那个值只有**全部**拉完
+      //    才写得进去；不删的话卸载重挂会读到上一次的（形状可能已经变了）。
+      chunkCache.delete(loadPromptUi);
       return loadPreview().then(function (previewMod) {
         return loadPicker().then(function (pickerMod) {
-          chunkCache.set(loadPreview, previewMod); // 面板以后要单独取预览，顺手缓存
-          return {
-            PreviewPanel: previewMod.PreviewPanel,
-            PromptPicker: pickerMod.PromptPicker,
-          };
+          // 顺手把单件也缓存上 —— 面板以后要单独取预览
+          chunkCache.set(loadPreview, previewMod);
+          chunkCache.set(loadPicker, pickerMod);
+          return { previewMod: previewMod, pickerMod: pickerMod };
         });
       });
     }
@@ -897,13 +910,19 @@
          *
          * `loadPromptUi` 定义在模块级（useChunk 拿它当缓存键，必须是稳定引用）。
          * 还没加载好就渲染 null —— 不挂起，见 useChunk 上面那段说明。
+         *
+         * ⚠️ 拿到的是两个 **chunk 模块**，得自己 `create(api)` 造组件。
+         *    漏掉这一步就是 React #130（type 是 undefined），而且因为槽位外面
+         *    只有错误边界，界面上只会看到「会话头部空了一块」。
          */
         function HeaderSlot(props) {
           var ui = useChunk(loadPromptUi);
           if (!ui) return null;
+          if (!ui.pickerMod.box) ui.pickerMod.box = ui.pickerMod.create(CHUNK_API);
+          if (!ui.previewMod.box) ui.previewMod.box = ui.previewMod.create(CHUNK_API);
           return react.createElement(
-            ui.PromptPicker,
-            Object.assign({}, props, { PreviewPanel: ui.PreviewPanel }),
+            ui.pickerMod.box.PromptPicker,
+            Object.assign({}, props, { PreviewPanel: ui.previewMod.box.PreviewPanel }),
           );
         }
 
