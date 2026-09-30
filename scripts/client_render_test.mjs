@@ -1214,12 +1214,21 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   if (el) {
     const text = flattenText(el).join(" ");
     ok(text.includes("新会话默认"), "有「新会话默认」卡片");
-    ok(text.includes("当前 1 条"), "显示当前默认条数");
-    ok(text.includes("新会话将挂 1 条"), "底部说明当前状态");
-    ok(!text.includes("有未保存的改动"), "没有未保存改动时不提示");
-    ok(text.includes("保存默认"), "有保存按钮");
-    ok(text.includes("清空"), "有清空按钮");
+    // ⚠️ 这张卡片原来六行，后三行是同一句「现在不注入」说了三遍
+    //    （标题的「当前：不注入」+ 空态提示 + 底部状态行）。现在压成三行：
+    //    标题（只带一个数） / 勾选框 / 一行状态。
+    ok(text.includes("1 条"), "标题上显示当前默认条数");
+    ok(text.includes("新会话挂 1 条"), "底部一行说明当前状态");
+    ok(!text.includes("改过"), "没有未保存改动时不提示");
+    // 改过才给按钮 —— 平时它们全是禁用状态，白占视线
+    ok(!text.includes("保存"), "没改动时不显示保存按钮（原来常驻且禁用）");
+    ok(!text.includes("清空"), "**没有「清空」按钮了**（取消勾选再保存，同一件事）");
     ok(text.includes("格式契约") && text.includes("格式契约甲"), "两条可选");
+    // ⚠️ 长说明没丢，只是收进了「?」的 title
+    const dTip = collectTitles(el).find((t) => t.includes("新开的会话自动挂这几条")) || "";
+    ok(dTip !== "", "**「新会话默认」的说明收进 title 了**（不是删了）");
+    ok(dTip.includes("跟随默认"), "title 里指出了「跟随默认」在哪");
+    ok(!text.includes("已经单独指定过的会话不受影响"), "屏幕上不再常驻那段长说明");
     // 「不注入」模式的条目不参与默认
     const boxes = [];
     (function walk(n) {
@@ -1232,12 +1241,15 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     eq(boxes[1].props.checked, false, "gen3 未勾选");
   }
 
-  // 草稿与已保存不同 → 提示有未保存改动
+  // 草稿与已保存不同 → 提示有未保存改动，并出现 撤销 / 保存
   shims.setStates([listData, false, null, null, null, null, ["gen4", "gen3"], false]);
   try {
-    const text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("有未保存的改动"), "勾选变化后提示未保存");
-    ok(text.includes("新会话将挂 2 条"), "按草稿算条数");
+    const el2 = renderEditor({});
+    const text = flattenText(el2).join(" ");
+    ok(text.includes("改成 挂 2 条，还没保存"), "勾选变化后说清「改成什么样、还没保存」");
+    // 标题说**已保存**（实际生效的），状态行说**草稿**（刚勾的）—— 两句都要在
+    ok(text.includes("1 条"), "标题仍显示已保存的 1 条（没被草稿顶掉）");
+    ok(text.includes("保存") && text.includes("撤销"), "**改过之后才出现 撤销 / 保存**");
   } catch (e) {
     ok(false, "草稿态渲染不抛异常 —— 抛了 " + e.message);
   }
@@ -1246,20 +1258,25 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   shims.setStates([{ ...listData, defaults: [] }, false, null, null, null, null, [], false]);
   try {
     const text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("当前：不注入"), "默认空时显示不注入");
-    ok(text.includes("新会话将不注入任何提示词"), "底部说明不注入");
+    ok(text.includes("不注入"), "默认空时显示不注入");
+    ok(text.includes("新会话不注入"), "底部一行说明不注入");
   } catch (e) {
     ok(false, "空默认渲染不抛异常 —— 抛了 " + e.message);
   }
 
-  // 库里没有可用的（只有 none 条目）
+  // 库里没有可用的（只有 none 条目）→ 不铺空态灰字，标题上就是「不注入」
   shims.setStates([
     { prompts: [{ id: "none", name: "不注入", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" }], promptsDir: "X:\\test", defaults: [], libraryErrors: [] },
     false, null, null, null, null, [], false,
   ]);
   try {
-    const text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("库里还没有可用的提示词"), "只有 none 条目的说明");
+    const el3 = renderEditor({});
+    const text = flattenText(el3).join(" ");
+    ok(text.includes("不注入"), "只有 none 条目时标题显示不注入");
+    ok(
+      !text.includes("库里还没有可用的提示词"),
+      "**不再为此铺一行空态灰字**（「不注入」已经说明了同一件事）",
+    );
   } catch (e) {
     ok(false, "空库渲染不抛异常 —— 抛了 " + e.message);
   }

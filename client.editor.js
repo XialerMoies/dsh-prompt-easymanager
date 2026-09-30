@@ -2045,70 +2045,75 @@ window.__ModuleLoader__.load({
               { key: "head", style: CARD_HEAD },
               react.createElement("div", { style: CARD_MAIN_ROW }, [
                 react.createElement("span", { key: "t", style: CARD_TITLE }, "新会话默认"),
+                // ⚠️ 这张卡片原来有六行，后三行是同一句「现在不注入」说了三遍
+                //    （标题上的「当前：不注入」+ 空态提示 + 底部状态行）。
+                //    现在：标题只带一个数，说明收进「?」，底部**只留一行**。
                 react.createElement(
                   "span",
                   { key: "c", style: HEADING_COUNT },
-                  saved.length === 0 ? "当前：不注入" : "当前 " + saved.length + " 条",
+                  saved.length === 0 ? "不注入" : saved.length + " 条",
+                ),
+                renderHelpIcon(
+                  "新开的会话自动挂这几条。已经单独指定过的会话不受影响；" +
+                    "想让它改跟默认，在会话头部点「跟随默认」。" +
+                    "\n\n" +
+                    "「不注入」这种占位条目不参与默认。",
                 ),
               ]),
+            ),
+            boxes.length
+              ? react.createElement(
+                  "div",
+                  { key: "boxes", style: Object.assign({}, CARD_DETAILS, { display: "flex", flexWrap: "wrap", gap: "6px 18px" }) },
+                  boxes,
+                )
+              : null,
+            react.createElement("div", { key: "act", style: CARD_ACTIONS }, [
               react.createElement(
                 "span",
-                { key: "d", style: CARD_DESC },
-                "新开的会话自动挂这几条。已经单独指定过的会话不受影响；" +
-                  "想让它改跟默认，在会话头部点「跟随默认」。",
+                { key: "st", style: STATUS_LINE },
+                // 标题说**已保存**（实际生效的），这一行说**草稿**（你刚勾的）。
+                // 两句都在，而且不会互相矛盾 —— 有改动时这里直接说「改成什么样」。
+                dirty
+                  ? "改成 " + (draft.length === 0 ? "不注入" : "挂 " + draft.length + " 条") + "，还没保存"
+                  : saved.length === 0
+                    ? "新会话不注入"
+                    : "新会话挂 " + saved.length + " 条",
               ),
-            ),
-            react.createElement("div", { key: "body", style: CARD_DETAILS }, [
-              boxes.length
+              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+              // 改过才给按钮 —— 平时它们全是禁用状态，白占视线
+              dirty
                 ? react.createElement(
-                    "div",
-                    { key: "boxes", style: { display: "flex", flexWrap: "wrap", gap: "6px 18px" } },
-                    boxes,
+                    "button",
+                    {
+                      key: "reset",
+                      type: "button",
+                      className: "pm-btn",
+                      style: defaultsBusy ? DETAIL_BTN_BUSY : DETAIL_BTN,
+                      disabled: defaultsBusy,
+                      onClick: function () {
+                        setDefaultsDraft(saved.slice());
+                      },
+                    },
+                    "撤销",
                   )
-                : react.createElement(
-                    "div",
-                    { key: "none", style: STATUS_LINE },
-                    "库里还没有可用的提示词（「不注入」这种条目不参与默认）。",
-                  ),
-              react.createElement("div", { key: "act", style: CARD_ACTIONS }, [
-                react.createElement(
-                  "span",
-                  { key: "st", style: STATUS_LINE },
-                  (draft.length === 0
-                    ? "新会话将不注入任何提示词"
-                    : "新会话将挂 " + draft.length + " 条") + (dirty ? "　·　有未保存的改动" : ""),
-                ),
-                react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-                react.createElement(
-                  "button",
-                  {
-                    key: "clear",
-                    type: "button",
-                    className: "pm-btn",
-                    style: defaultsBusy || draft.length === 0 ? DETAIL_BTN_BUSY : DETAIL_BTN,
-                    disabled: defaultsBusy || draft.length === 0,
-                    onClick: function () {
-                      setDefaultsDraft([]);
-                      saveDefaults([]);
+                : null,
+              dirty
+                ? react.createElement(
+                    "button",
+                    {
+                      key: "save",
+                      type: "button",
+                      className: "pm-btn",
+                      style: defaultsBusy ? DETAIL_BTN_BUSY : DETAIL_BTN,
+                      disabled: defaultsBusy,
+                      onClick: function () {
+                        saveDefaults(draft.slice());
+                      },
                     },
-                  },
-                  "清空",
-                ),
-                react.createElement(
-                  "button",
-                  {
-                    key: "save",
-                    type: "button",
-                    className: "pm-btn",
-                    style: defaultsBusy || !dirty ? DETAIL_BTN_BUSY : DETAIL_BTN,
-                    disabled: defaultsBusy || !dirty,
-                    onClick: function () {
-                      saveDefaults(draft.slice());
-                    },
-                  },
-                  defaultsBusy ? "保存中…" : "保存默认",
-                ),
-              ]),
+                    defaultsBusy ? "保存中…" : "保存",
+                  )
+                : null,
             ]),
           ]);
         }
