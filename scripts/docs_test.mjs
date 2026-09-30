@@ -302,4 +302,26 @@ const readme = readFileSync(at("README.md"), "utf8");
   );
 }
 
+// ── 10. 出厂提示词库必须是空的 ──────────────────────────────────────────────
+//
+// ⚠️ 这条是踩出来的。`prompts/catalog.json` 同时扮演两个角色：
+//    **出厂默认**（随包发布）+ **用户的运行时库**（在界面上建一条提示词，
+//    插件就往这里写）。所以在自己机器上随手建的测试条目，会**原样提交进仓库、
+//    再发布给所有装这个插件的人** —— 别人打开就看到一条不相干的「测试」。
+//
+//    真发生过：提交里混进了一条 `{id:"test", name:"测试", description:"测试用"}`。
+//
+// 不能靠 .gitignore 挡（package.json 的 files 里含 prompts，忽略了发布包会缺文件），
+// 所以用这条断言盯着：**catalog 必须空**。真想让插件出厂带一条示例提示词时，
+// 明确改这条断言 —— 别让它悄悄溜进去。
+{
+  const raw = JSON.parse(readFileSync(at("prompts", "catalog.json"), "utf8"));
+  ok(Array.isArray(raw.prompts), "catalog.json 里有 prompts 数组");
+  eq(
+    raw.prompts,
+    [],
+    "**出厂提示词库是空的**（非空说明把你的运行时库提交进去了，会发布给所有人）",
+  );
+}
+
 done();
