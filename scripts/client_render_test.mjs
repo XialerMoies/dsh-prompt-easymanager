@@ -2140,7 +2140,22 @@ function makeSectionsData(over = {}) {
   // 勾选清单还在（它现在就是「改这套配置」的手段）
   ok(text.includes("格式契约"), "勾选清单里有格式契约");
   ok(text.includes("编码规范"), "勾选清单里有编码规范");
-  ok(text.includes("已选"), "有「已选 N 条」的汇总");
+  // ⚠️ 用户明确说不要那串数字：「已选 N 条 · 共 X tokens」、作用范围、
+  //    以及每条后面的 order / tokens —— 全删了。勾选框自己会说哪几条生效。
+  //
+  // ⚠️ 判据必须限定在**这一块**里：`tokens` / `order` 在页面别处还有
+  //    （个人提示词的卡片、会话选择面板），查全页会误判。
+  {
+    const comboText = flattenText(comboEl).join(" ");
+    // 只取「提示词组合」到「个人提示词」之间那段（其余区块不属于这张卡片）
+    const from = comboText.indexOf("提示词组合");
+    const to = comboText.indexOf("个人提示词");
+    const seg = from >= 0 && to > from ? comboText.slice(from, to) : comboText;
+    ok(!seg.includes("已选 "), "**没有「已选 N 条」汇总了**（用户说不需要）");
+    ok(!seg.includes("tokens"), "**这一块里没有 token 数了**（勾选行里也删了）");
+    ok(!/\border \d/.test(seg), "**这一块里没有 order 了**（在下面对应卡片的详情里）");
+    ok(!seg.includes("全局默认 · 所有会话"), "**没有作用范围那行字了**");
+  }
   ok(!text.includes("可用（"), "**没有「可用」栏**（两栏板早删了）");
   ok(!text.includes("拖动"), "**文案里没有「拖动」**（顺序由 order 决定）");
 
@@ -2168,21 +2183,14 @@ function makeSectionsData(over = {}) {
   //    卡片祖先，再确认勾选网格在那个卡片的**卡片体**里。
   {
     // 锚：「已选 N 条」/「一条都没选」那句摘要（在卡片体里）。
-    // ⚠️ 它现在是体里的 div（原来是卡片头里的 span）—— 结构动过一次，
-    //    锚别钉死标签名，钉内容。
+    // 锚：卡片体里第一个勾选框的行（它就是「选词内容」）
     let anchor = null;
     (function walk(n) {
       if (!n || typeof n !== "object" || anchor) return;
-      const t = flattenText(n).join("");
-      if (
-        (t.startsWith("已选 ") || t.startsWith("一条都没选")) &&
-        (n.children || []).every((k) => typeof k !== "object" || !k.children || k.children.length === 0)
-      ) {
-        anchor = n;
-      }
+      if (n.type === "input" && n.props && n.props.type === "checkbox") anchor = n;
       for (const k of n.children || []) walk(k);
     })(comboEl);
-    ok(!!anchor, "找到选词卡片的摘要锚");
+    ok(!!anchor, "找到选词内容（第一个勾选框）");
 
     let card = null;
     if (anchor) {
@@ -2271,9 +2279,10 @@ function makeSectionsData(over = {}) {
     }
   }
 
-  // ⚠️ 这一条**不能**挪进 title：它是「我现在改的是哪一层」，
-  //    全局默认 / 只改这个会话的区别很要紧，藏起来用户会改错地方。
-  ok(text.includes("全局默认"), "标题上写明了当前改的是哪一层（全局默认）");
+  // ⚠️ **功能标题必须在**。上一版我把标题整个换成了预设名，「提示词组合」
+  //    这几个字就没了 —— 用户问「卡片对应功能的标题去哪了」。
+  //    标题说明这块干什么，预设名说明当前在哪套上，两者都要、一左一右。
+  ok(text.includes("提示词组合"), "**卡片有功能标题「提示词组合」**（不能被预设名顶掉）");
 
   // 「不注入」这种占位条目不该出现在组合列表里
   ok(!/生效（\d）[\s\S]{0,300}不注入/.test(text), "**mode:none 的占位条目不参与组合**");
@@ -2298,14 +2307,25 @@ function makeSectionsData(over = {}) {
   text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("还没有预设"), "零预设时给了引导");
 
-  // 会话层：选了会话层但没选会话 → 提示
+  // 会话层：sectionScope = "session"
+  //
+  // ⚠️ 这里原来断言「还没挑会话」那句提示。**删掉了，因为它测的东西不存在**：
+  //    作用范围的选择控件早就没了 —— `setSectionScope` 在整个文件里
+  //    **只有声明、没有被调用过**（查过 HEAD 和更早的提交，都一样），
+  //    所以 `sectionScope` 恒为 "global"，界面上没有切换入口。
+  //    原来那个 span 只是它最后一点残留显示，这轮跟着噪音一起删了。
+  //    下面这条断言保留价值：**会话层状态传进来也不能渲染崩**。
   shims.setStates([...base, presetData, false, "", null]);
   const baseSess = [...base];
   baseSess[12] = "session";
   baseSess[13] = "";
   shims.setStates([...baseSess, presetData, false, "", null]);
-  text = flattenText(renderEditor({})).join(" ");
-  ok(text.includes("还没挑会话"), "**选了会话层但没选会话时明确提示**（现在在标题上，不是常驻警告条）");
+  try {
+    text = flattenText(renderEditor({})).join(" ");
+    ok(text.includes("提示词组合"), "**sectionScope=session 时照常渲染**（不炸）");
+  } catch (e) {
+    ok(false, "sectionScope=session 时不许炸 —— 抛了 " + e.message);
+  }
 
   // presetsData 为 null（还没读完）不许炸
   shims.setStates([...base, null, false, "", null]);

@@ -1064,7 +1064,10 @@ window.__ModuleLoader__.load({
                         setActivePrompts(next, sectionScope, sectionSessionId);
                       },
                     }),
-                    // 名字占满剩余宽度 —— 长短不一的名字也能对齐右侧两列
+                    // 名字占满剩余宽度。
+                    // ⚠️ 这里原来还跟了 `order 950` 和 `1 tokens` —— 用户明确说
+                    //    不要。勾选清单只回答「哪几条生效」，order / token 数
+                    //    在下面「个人提示词」的卡片详情里本来就有。
                     react.createElement(
                       "span",
                       {
@@ -1078,16 +1081,6 @@ window.__ModuleLoader__.load({
                         }),
                       },
                       p.name || p.id,
-                    ),
-                    react.createElement(
-                      "span",
-                      { key: "o", style: HEADING_COUNT },
-                      "order " + (p.order == null ? "?" : p.order),
-                    ),
-                    react.createElement(
-                      "span",
-                      { key: "t", style: Object.assign({}, HEADING_COUNT, { minWidth: "54px", textAlign: "right" }) },
-                      fmtTokens(p.tokens),
                     ),
                   ],
                 ),
@@ -1309,20 +1302,9 @@ window.__ModuleLoader__.load({
           var currentName = matched ? matched.name : "未保存的配置";
           var bus = presetsBusy || !presetsData;
 
-          // 摘要：头里要显示「已选 N 条」，所以这里先算一遍
-          var activeCount = 0;
-          var totalTokens = 0;
-          if (presetsData) {
-            var lyr =
-              sectionScope === "session"
-                ? presetsData.layers && presetsData.layers.session
-                : presetsData.layers && presetsData.layers.global;
-            var ids = (lyr && Array.isArray(lyr.prompts) ? lyr.prompts : []).slice();
-            activeCount = ids.length;
-            for (var ti = 0; ti < prompts.length; ti++) {
-              if (prompts[ti] && ids.indexOf(prompts[ti].id) >= 0) totalTokens += prompts[ti].tokens || 0;
-            }
-          }
+          // ⚠️ 这里原来先算了一遍「已选 N 条 · 共 X tokens」给卡片头用。
+          //    用户说那些数字不需要，头里就不显示了 —— 计算也跟着删掉，
+          //    免得留一段没人读的死代码。
 
           // 标题：预设名 + 改名铅笔；改名时就地变输入框
           var titleNode;
@@ -1365,6 +1347,14 @@ window.__ModuleLoader__.load({
               }),
             },
             [
+              // ⚠️ **功能标题必须在**。
+              //
+              //    上一版我把标题整个换成了预设名，结果「提示词组合」这几个字
+              //    没了 —— 用户问「卡片对应功能的标题去哪了」。
+              //    标题说明**这块是干什么的**，预设名说明**当前在哪套上**，
+              //    两者都要，一左一右。
+              react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合"),
+              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
               titleNode,
               // 改名铅笔：只有「当前这套是一条真预设」时才有意义
               currentId && !renaming
@@ -1385,27 +1375,11 @@ window.__ModuleLoader__.load({
                     "✎",
                   )
                 : null,
-              react.createElement(
-                "span",
-                {
-                  key: "scope",
-                  style: HEADING_COUNT,
-                  title: "当前改的是哪一层",
-                },
-                sectionScope === "session"
-                  ? (sectionSessionId ? "只改这个会话" : "还没挑会话")
-                  : "全局默认 · 所有会话",
-              ),
               react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-              presetsData
-                ? react.createElement(
-                    "span",
-                    { key: "sum", style: HEADING_COUNT },
-                    activeCount === 0
-                      ? "一条都没选"
-                      : "已选 " + activeCount + " 条 · 共 " + fmtTokens(totalTokens),
-                  )
-                : null,
+              // ⚠️ 这里原来还有两样，都删了：
+              //    · 「全局默认 · 所有会话」——作用范围当时是因为这一块**没有**
+              //      功能标题，得靠它说明自己是什么；现在标题回来了，它是纯噪音；
+              //    · 「已选 N 条 · 共 X tokens」——勾选框自己会说，数字没人看。
               // 预设下拉：换一套
               react.createElement(
                 "select",
