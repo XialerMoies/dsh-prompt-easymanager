@@ -977,7 +977,7 @@ window.__ModuleLoader__.load({
          * 两件事，所以两块都留，但这一块不该铺得比卡片还大。
          */
         function renderPicker() {
-          // 当前层的生效 id 列表（组合区自己算，不从 renderCombo 里借变量）
+          // 当前层的生效 id 列表（这一块自己算，不从 renderCombo 里借变量）
           var layer =
             sectionScope === "session"
               ? presetsData.layers && presetsData.layers.session
@@ -1005,11 +1005,16 @@ window.__ModuleLoader__.load({
             if (!picked[usable[ri].id]) ordered.push(usable[ri]);
           }
 
+          // 空库：整张卡片给一句说明，别留个没有内容的空壳
           if (usable.length === 0) {
             return react.createElement(
               "div",
-              { style: HINT_TEXT },
-              "库里还没有可选的提示词。上面「新建」加一条。",
+              { style: CARD },
+              react.createElement(
+                "div",
+                { style: Object.assign({}, CARD_DETAILS, { borderTop: "0" }) },
+                react.createElement("div", { style: STATUS_LINE }, "库里还没有可选的提示词 —— 在下面「新建」加一条。"),
+              ),
             );
           }
 
@@ -1025,7 +1030,17 @@ window.__ModuleLoader__.load({
               rows.push(
                 react.createElement(
                   "label",
-                  { key: p.id, style: Object.assign({}, COMBO_ROW, { cursor: presetsBusy ? "default" : "pointer" }) },
+                  {
+                    key: p.id,
+                    title: p.description || p.id,
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      minWidth: "0",
+                      cursor: presetsBusy ? "default" : "pointer",
+                    },
+                  },
                   [
                     react.createElement("input", {
                       key: "cb",
@@ -1039,29 +1054,87 @@ window.__ModuleLoader__.load({
                         setActivePrompts(next, sectionScope, sectionSessionId);
                       },
                     }),
-                    react.createElement("span", { key: "n", style: { flex: "1 1 auto" } }, p.name || p.id),
+                    // 名字占满剩余宽度 —— 长短不一的名字也能对齐右侧两列
+                    react.createElement(
+                      "span",
+                      {
+                        key: "n",
+                        style: Object.assign({}, CARD_TITLE, {
+                          flex: "1 1 auto",
+                          fontSize: "13px",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }),
+                      },
+                      p.name || p.id,
+                    ),
                     react.createElement(
                       "span",
                       { key: "o", style: HEADING_COUNT },
                       "order " + (p.order == null ? "?" : p.order),
                     ),
-                    react.createElement("span", { key: "t", style: HEADING_COUNT }, fmtTokens(p.tokens)),
+                    react.createElement(
+                      "span",
+                      { key: "t", style: Object.assign({}, HEADING_COUNT, { minWidth: "54px", textAlign: "right" }) },
+                      fmtTokens(p.tokens),
+                    ),
                   ],
                 ),
               );
             })(ordered[oi]);
           }
 
-          return react.createElement("div", null, [
+          var summary =
+            activeIds.length === 0
+              ? "一条都没选 —— 这个" +
+                (sectionScope === "global" ? "默认" : "会话") +
+                "不会注入任何提示词"
+              : "已选 " + activeIds.length + " 条 · 共 " + fmtTokens(totalTokens);
+
+          return react.createElement("div", { style: CARD }, [
+            // 头部跟个人提示词/系统提示词的卡片同一套（CARD_HEAD + CARD_MAIN_ROW +
+            // 显式 row —— CARD_HEAD 默认是 column，不显式改回 row 会竖成三行居中）
             react.createElement(
               "div",
-              { key: "sum", style: HINT_TEXT },
-              activeIds.length === 0
-                ? "一条都没选 —— 这个" + (sectionScope === "global" ? "默认" : "会话") + "不会注入任何提示词"
-                : "已选 " + activeIds.length + " 条 · 共 " + fmtTokens(totalTokens) +
-                  "（插入位置由各自的 order 决定）",
+              {
+                key: "head",
+                style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
+                  flexDirection: "row",
+                  minHeight: "0",
+                  padding: "10px 14px",
+                }),
+              },
+              [
+                react.createElement(
+                  "span",
+                  { key: "s", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto", fontSize: "13px" }) },
+                  summary,
+                ),
+                react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+                react.createElement(
+                  "span",
+                  { key: "h", style: HEADING_COUNT, title: "插入位置由各自的 order 决定" },
+                  "按 order 插入",
+                ),
+              ],
             ),
-            react.createElement("div", { key: "rows", style: COMBO_CHIPS }, rows),
+            react.createElement(
+              "div",
+              { key: "body", style: CARD_DETAILS },
+              react.createElement(
+                "div",
+                {
+                  style: {
+                    display: "grid",
+                    // 两列：库大了不至于拉成一条长龙；列宽自适应，窄屏自动收成一列
+                    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                    gap: "8px 18px",
+                  },
+                },
+                rows,
+              ),
+            ),
           ]);
         }
 
@@ -1286,13 +1359,15 @@ window.__ModuleLoader__.load({
           children.push(react.createElement("div", { key: "pick" }, renderPicker()));
 
           // ── 存 / 换一套（快速预设）──────────────────────────────────────
+          // 内容收进 presetChildren，最后整体套一张卡片（见下面那段）。
+          var presetChildren = [];
           var list = presetsData.presets || [];
           if (list.length === 0) {
-            children.push(
+            presetChildren.push(
               react.createElement(
                 "div",
-                { key: "pe", style: HINT_TEXT },
-                "还没有预设。下面调好一套（哪些提示词生效 + 哪些段落改写），再存下来。",
+                { key: "pe", style: STATUS_LINE },
+                "还没有预设。上面调好一套（哪些提示词生效 + 哪些段落改写），在下面存下来。",
               ),
             );
           } else {
@@ -1344,11 +1419,11 @@ window.__ModuleLoader__.load({
                 );
               })(list[li]);
             }
-            children.push(react.createElement("div", { key: "pl", style: COMBO_CHIPS }, chips));
+            presetChildren.push(react.createElement("div", { key: "pl", style: COMBO_CHIPS }, chips));
           }
 
           // 存为预设 —— 紧跟在预设胶囊下面，它们是一件事
-          children.push(
+          presetChildren.push(
             react.createElement("div", { key: "ps", style: ACTIONS }, [
               react.createElement("span", { key: "l", style: HINT_TEXT }, "把当前这套存为预设："),
               react.createElement("input", {
@@ -1383,14 +1458,25 @@ window.__ModuleLoader__.load({
                 },
                 "存下来",
               ),
+              // 「覆盖不是合并」收进「?」—— 它是「决定要不要点」之前才需要读的
+              // 一句，常驻占一行灰字不值。三块卡片的说明统一走这个图标。
+              renderHelpIcon(
+                "应用预设是**覆盖**不是合并 —— 它会把你当前的配置整个换成预设里那份" +
+                  "（包括去掉预设里没有的提示词）。所以先存再切。",
+              ),
             ]),
           );
+
+          // 预设整块也套卡片 —— 页面上每个内容块都是卡片，统一。
+          //
+          // ⚠️ 之前这块是裸元素堆着（说明文字 / 胶囊 / 输入行 / 警告各一行），
+          //    跟上面选词卡片和下面「个人提示词」的完成度差着量级。
+          //    用户原话：「这功能的外观样式你倒是做好了啊，做个毛坯房干什么」。
           children.push(
             react.createElement(
               "div",
-              { key: "pn", style: HINT_TEXT },
-              "⚠️ 应用预设是**覆盖**不是合并 —— 它会把你当前的配置整个换成预设里那份" +
-                "（包括去掉预设里没有的提示词）。所以先存再切。",
+              { key: "presets", style: Object.assign({}, CARD, { marginTop: "10px" }) },
+              react.createElement("div", { style: CARD_DETAILS }, presetChildren),
             ),
           );
 

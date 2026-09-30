@@ -2118,8 +2118,146 @@ function makeSectionsData(over = {}) {
   //    中间还夹一个标题行（用户提的就是这个）。
   ok(!text.includes("快速预设"), "**没有独立的「快速预设」标题了**（已并进提示词组合）");
   ok(text.includes("预设「写代码」"), "标题行上报出当前匹配的预设");
-  ok(text.includes("覆盖"), "**说明了应用预设是覆盖不是合并**");
   ok(text.includes("把当前这套存为预设"), "有存为预设的入口（措辞跟着融合改了）");
+  // ⚠️ 「覆盖不是合并」收进了「?」的 title —— 它是「决定要不要点之前」才需要
+  //    读的一句，常驻占一行灰字不值。判据跟着变成「挂在 title 上、够得着」。
+  {
+    const coverTip = collectTitles(comboEl).find((t) => t.includes("覆盖")) || "";
+    ok(coverTip.includes("不是合并"), "**覆盖提示挂在「?」上**（不再常驻一行灰字）");
+    ok(!text.includes("覆盖不是合并"), "屏幕上不再常驻那句覆盖提示");
+  }
+  // ── 外观：两块都要有卡片容器，不能是裸元素堆着 ──────────────────────
+  //
+  // ⚠️ 用户原话：「这功能的外观样式你倒是做好了啊，做个毛胚房干什么」。
+  //    第一版这里是 5 个裸元素垂直堆着（摘要文字 / 一排勾选框 / 空态文字 /
+  //    存为预设行 / 警告），勾选框直接浮在页面背景上 —— 而下面的「个人提示词」
+  //    是正经卡片，两块完成度差着量级。
+  //
+  //    判据：**在「提示词组合」那一块内部**，带边框的容器至少两张
+  //    （选词一张、预设一张）。
+  //
+  //    ⚠️ 第一版数的是**全页**的带边框容器 —— 页面别处（个人提示词的卡片）
+  //    本来就有，怎么拆都还是 ≥2，守卫是空的。判据必须限定在被验的那一块里。
+  {
+    // 找**同时**含「提示词组合」和「把当前这套存为预设」的**最小**容器。
+    //
+    // ⚠️ 第一版写成「某个元素的直接子里分别有这两句」—— 条件在**整棵树的根**
+    //    上也成立，于是「区域」= 整个编辑器，数出来 35 张卡片（页面别处的都在里面），
+    //    怎么拆都还是 ≥2，守卫是空的。
+    //    判据必须限定在**被验的那一块**里才有效。
+    const MARK_A = "提示词组合";
+    const MARK_B = "把当前这套存为预设";
+    let region = null;
+    (function walk(n) {
+      if (!n || typeof n !== "object") return;
+      const t = flattenText(n).join("");
+      if (t.includes(MARK_A) && t.includes(MARK_B)) {
+        // 取更深的那个（子节点里也满足就继续往下）
+        let deeper = null;
+        for (const k of n.children || []) {
+          const kt = k && typeof k === "object" ? flattenText(k).join("") : "";
+          if (kt.includes(MARK_A) && kt.includes(MARK_B)) deeper = k;
+        }
+        if (!deeper) region = n;
+      }
+      for (const k of n.children || []) walk(k);
+    })(comboEl);
+    ok(!!region, "定位到「提示词组合」那一块（最小容器）");
+    if (region) {
+      // 断言一件**具体**的事：勾选框所在的那个网格，它的**直接父级**必须是
+      // 卡片体（borderTop + padding + 有底色）—— 也就是「勾选框装在卡片里」。
+      //
+      // ⚠️ 前面绕了三版都不行，记下来：
+      //    1) 数全页带边框的容器 —— 页面别处本来就有，恒 ≥2，空的；
+      //    2) 数「这一块里」的带边框容器 —— 区域判定在整棵树的根上也成立，
+      //       于是区域 = 整个编辑器，数出 35 张，还是空的；
+      //    3) 从内容往上找最近的卡片祖先 —— `ancestorsOf` 把**所有**匹配的
+      //       祖先都收进一个链，`pop()` 取到的是遍历顺序里最后一个（可能是别的
+      //       卡片），连正常结构都判成错。
+      //    教训：判据要**具体到那个元素**，别做「在某个范围里数一数」这种间接判断。
+      // 先定位**选词那张卡片**：以「按 order 插入」这个只属于它的标记为锚，
+      // 往上找最近的带 border + borderRadius 的祖先。
+      //
+      // ⚠️ 一开始直接在 region 里找「有勾选框子元素的网格」—— 找到的是
+      //    **个人提示词**那些卡片里的勾选框（页面别处也有），判据又跑到别处去了。
+      //    教训同上：必须锚定到被验的那一块，不能「在某个范围里找一类元素」。
+      let anchor = null;
+      (function walk(n) {
+        if (!n || typeof n !== "object" || anchor) return;
+        for (const k of n.children || []) {
+          if (
+            k &&
+            typeof k === "object" &&
+            k.type === "span" &&
+            flattenText(k).join("") === "按 order 插入"
+          ) {
+            anchor = k;
+            return;
+          }
+          walk(k);
+        }
+      })(region);
+      ok(!!anchor, "找到选词卡片的锚（「按 order 插入」）");
+
+      let pickerCard = null;
+      if (anchor) {
+        // 沿路径往上找**最近的**带 border + borderRadius 的祖先
+        const path = [];
+        (function walk(n) {
+          if (!n || typeof n !== "object" || pickerCard) return;
+          path.push(n);
+          if (n === anchor) {
+            for (let i = path.length - 1; i >= 0; i--) {
+              const st = (path[i].props && path[i].props.style) || {};
+              if (typeof st.border === "string" && st.borderRadius) {
+                pickerCard = path[i];
+                break;
+              }
+            }
+          }
+          for (const k of n.children || []) walk(k);
+          path.pop();
+        })(region);
+      }
+      ok(!!pickerCard, "**选词内容装在卡片里**（有边框和圆角）");
+
+      // 再确认勾选框在那个卡片的**卡片体**里（体 = borderTop + 底色 + padding）
+      if (pickerCard) {
+        let grid = null;
+        (function walk(n) {
+          if (!n || typeof n !== "object" || grid) return;
+          const st = (n.props && n.props.style) || {};
+          if (st.display === "grid" && String(st.gridTemplateColumns || "").includes("auto-fill")) grid = n;
+          for (const k of n.children || []) walk(k);
+        })(pickerCard);
+        ok(!!grid, "卡片里有勾选网格");
+        if (grid) {
+          const inBody = [];
+          (function walk(n, insideBody) {
+            if (!n || typeof n !== "object") return;
+            const st = (n.props && n.props.style) || {};
+            const isBody = typeof st.borderTop === "string" && !!st.background;
+            if (n === grid && insideBody) inBody.push(n);
+            for (const k of n.children || []) walk(k, insideBody || isBody);
+          })(pickerCard, false);
+          ok(
+            inBody.length === 1,
+            "**勾选框装在卡片体里**（有分隔线+底色的那一层，不是直接浮在页面背景上）",
+          );
+        }
+      }
+
+      // 预设区同理：存为预设那一行外面得有卡片体
+      let presetRow = null;
+      (function walk(n) {
+        if (!n || typeof n !== "object" || presetRow) return;
+        const t = flattenText(n).join("");
+        if (t.includes("把当前这套存为预设") && t.includes("存下来")) presetRow = n;
+        for (const k of n.children || []) walk(k);
+      })(region);
+      ok(!!presetRow, "找到「存为预设」那一行");
+    }
+  }
   // 两大块在同一个容器里 —— 这才叫「融合」
   {
     const holders = [];
