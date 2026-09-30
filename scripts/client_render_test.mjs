@@ -1364,6 +1364,41 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     // 「领域」「输出」两组是空的，不该出现 hint 文字
     ok(!text.includes("项目知识、业务规则"), "空分类不渲染（领域）");
     ok(!text.includes("输出格式、交付物约定"), "空分类不渲染（输出）");
+
+    // ⚠️ 回归守卫：**内置分类不许被标成「自定义分类」**。
+    //
+    //    踩过：`renderGroupCard(g, seen[g.id])` —— 第二个参数本该是
+    //    「这是不是自定义分类」，却传了 `seen[g.id]`。而 `seen` 是「这个 id
+    //    有没有被处理过」的记账表，内置分类在初始化时全被标成 true ——
+    //    结果**每个分类都挂上了「自定义分类」徽章**（用户看到「领域」标着
+    //    自定义，就是这么来的）。
+    //
+    //    判据：按类别卡片逐个看 —— 「自定义分类」只允许出现在真自定义的
+    //    那张卡片头上。
+    const heads = collectByClass(el, "pm-head");
+    for (const h of heads) {
+      const t = flattenText(h).join(" ");
+      if (!t.includes("自定义分类")) continue;
+      ok(
+        t.includes("安全审查"),
+        `**只有自定义分类才带那个徽章**（实际带徽章的是「${t}」）`,
+      );
+    }
+    const catHeads = heads.filter((h) => {
+      const t = flattenText(h).join(" ");
+      return t.includes("条") && !t.includes("tokens");
+    });
+    ok(
+      catHeads.length >= 4,
+      `类别卡片头数（实际 ${catHeads.length}：身份/工具/其他/安全审查）`,
+    );
+    ok(
+      !catHeads.some((h) => {
+        const t = flattenText(h).join(" ");
+        return t.includes("自定义分类") && !t.includes("安全审查");
+      }),
+      "**内置分类的类别头上没有「自定义分类」徽章**",
+    );
   }
 
   // ── 进入编辑态 → 表单里应有分类**下拉框**（不是 datalist）──

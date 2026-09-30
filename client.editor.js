@@ -2205,7 +2205,18 @@ window.__ModuleLoader__.load({
           for (var gk = 0; gk < groups.length; gk++) {
             var g = groups[gk];
             if (g.items.length === 0) continue;
-            body.push(renderGroupCard(g, seen[g.id]));
+            // ⚠️ 第二个参数是「这是不是自定义分类」，**不是** `seen[g.id]`。
+            //
+            //    `seen` 是「这个 id 有没有被处理过」的记账表，内置分类在初始化时
+            //    就全被标成 true —— 直接把它传进去的后果是**每个分类都被打上
+            //    「自定义分类」徽章**（用户看到「领域」标着自定义，就是这个 bug）。
+            //    判据要用「在不在内置表里」反推。
+            body.push(
+              renderGroupCard(
+                g,
+                !builtinCategories.some(function (b) { return b.id === g.id; }),
+              ),
+            );
           }
         }
 
