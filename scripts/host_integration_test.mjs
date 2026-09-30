@@ -10,10 +10,18 @@ import { createSuite } from "./lib/test-harness.mjs";
 
 const { ok, eq, done } = createSuite("宿主集成测试");
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const DSH_HOME = mkdtempSync(join(tmpdir(), "pm-host-"));
 process.env.DSH_HOME = DSH_HOME;
+
+// 版本号只从 package.json 取 —— 硬编码的话每发一版就要来改测试。
+const PLUGIN_VERSION = JSON.parse(
+  readFileSync(join(HERE, "..", "package.json"), "utf8"),
+).version;
 
 // ⚠️ **测试用自己的 fixture 提示词库，不碰用户真实的那个。**
 //
@@ -709,7 +717,11 @@ const TMP_ID = "zz-test-only";
   const out = t.execute();
   eq(out.plugin, "dsh-prompt-manager", "工具回报 plugin id");
   eq(out.name, "提示词管理", "工具回报中文名");
-  eq(out.pluginVersion, "0.11.1", "工具回报版本");
+  // ⚠️ 从 package.json 读，别硬编码 —— 这个断言因为「忘了跟着改」红过三次
+  //    （v0.10.2 / v0.11.1 各一次，重排版本号又一次）。版本号本来就有三处要同步，
+  //    测试不该是第四处。
+  eq(out.pluginVersion, PLUGIN_VERSION, "工具回报的版本跟 package.json 一致");
+  ok(/^\d+\.\d+\.\d+$/.test(PLUGIN_VERSION), `版本号是 x.y.z 形态（${PLUGIN_VERSION}）`);
   eq(out.stateVersion, 2, "工具回报状态版本 2");
   ok(Array.isArray(out.defaults), "工具回报全局默认");
   ok(Array.isArray(out.prompts) && out.prompts.length >= 4, "工具回报提示词清单");

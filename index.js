@@ -42,7 +42,7 @@ import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 
 const PLUGIN_ID = "dsh-prompt-manager";
 const PLUGIN_NAME = "提示词管理";
-const PLUGIN_VERSION = "0.11.1";
+const PLUGIN_VERSION = "0.2.8";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
 export const STATE_PATH = "/api/prompt-manager/state";
@@ -353,7 +353,7 @@ const promptTool = {
         "生效前提：那个会话的 agent 还活着。未加载的会话会在被打开时自动补挂。",
         "提示词有分类（category）：identity / domain / tool / output / other，也可以自定义。" +
           "分类只影响界面分组；真正决定插入位置的是 order。",
-        "v0.2.2 起已删除 replace（替换）模式 —— 它会顶掉 dsh 原生的身份声明和全部工具用法说明。",
+        "v0.1.9 起已删除 replace（替换）模式 —— 它会顶掉 dsh 原生的身份声明和全部工具用法说明。",
         "状态文件每条记录约 60 字节；不做自动清理（没有安全的「会话是否存在」接口），" +
           "需要时用 prune() 手动清。",
       ],

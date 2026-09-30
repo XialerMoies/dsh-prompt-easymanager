@@ -121,6 +121,38 @@ const readme = readFileSync(at("README.md"), "utf8");
   ok(lines <= 220, `README 不超过 220 行（现在 ${lines}）`);
 }
 
+// ── 3b. 版本号三处必须一致 ──────────────────────────────────────────────────
+//
+// 版本号写在三个地方，每次发版都要手动同步，**漏过三次**：
+//   v0.10.2（测试断言没跟）、v0.11.1（同上）、重排版本号（同上）。
+// 现在测试改成从 package.json 读，这条断言负责盯住剩下两处。
+{
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+  const idx = readFileSync(at("index.js"), "utf8");
+  const m = idx.match(/PLUGIN_VERSION\s*=\s*"([^"]+)"/);
+
+  ok(m !== null, "index.js 里有 PLUGIN_VERSION");
+  eq(m?.[1], pkg.version, "index.js 的 PLUGIN_VERSION 跟 package.json 一致");
+  eq(pkg.dsh?.version, pkg.version, "package.json 里 dsh.version 跟顶层 version 一致");
+  ok(/^\d+\.\d+\.\d+$/.test(pkg.version), `版本号是 x.y.z 形态（${pkg.version}）`);
+}
+
+// ── 3c. 版本号只在一处硬编码 ────────────────────────────────────────────────
+{
+  // 测试里不许再硬编码版本号 —— 那样每发一版都要来改测试。
+  const tests = readdirSync(at("scripts"), { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith("_test.mjs"))
+    .map((e) => e.name);
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+
+  const hard = [];
+  for (const f of tests) {
+    const src = readFileSync(at("scripts", f), "utf8");
+    if (src.includes(`"${pkg.version}"`)) hard.push(f);
+  }
+  eq(hard, [], "测试里没有硬编码当前版本号（应从 package.json 读）");
+}
+
 // ── 4. docs/ 顶层只放给用户的 ───────────────────────────────────────────────
 {
   const USER_DOCS = new Set(["system-prompt.md", "section-overrides-design.md"]);
