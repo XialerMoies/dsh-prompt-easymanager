@@ -44,7 +44,6 @@ window.__ModuleLoader__.load({
       var HEADING = api.style.HEADING;
       var SUMSUM = api.style.SUMSUM;
       var ROW = api.style.ROW;
-      var PILL_SWITCH = api.style.PILL_SWITCH;
       var CARD_HEADING = api.style.CARD_HEADING;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;

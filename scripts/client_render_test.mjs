@@ -264,6 +264,33 @@ function flattenText(node, out = []) {
 }
 
 /**
+ * 收集所有 `title`（还有 aria-label）。
+ *
+ * 「?」图标的说明挂在 title 上，不是可见文字 —— flattenText 看不到它。
+ * 用户明确要求把常驻灰字挪进「悬停/点击出现」的提示里，所以判据也得跟着变：
+ * 断言「挂在 title 上、够得着」，而不是「屏幕上看得见」。
+ */
+function collectTitles(node, out = []) {
+  if (node === null || node === undefined || typeof node !== "object") return out;
+  const p = node.props || {};
+  if (typeof p.title === "string") out.push(p.title);
+  if (typeof p["aria-label"] === "string") out.push(p["aria-label"]);
+  for (const c of node.children || []) collectTitles(c, out);
+  return out;
+}
+
+/** 深度优先找第一个满足条件的元素（找不到返回 null）。 */
+function findEl(node, pred) {
+  if (node === null || node === undefined || typeof node !== "object") return null;
+  if (node.props && pred(node)) return node;
+  for (const c of node.children || []) {
+    const hit = findEl(c, pred);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
  * 收集所有 input / textarea 的 value。
  * 表单里的正文是 `value` 属性，不在 children 里 —— flattenText 看不到它。
  */
@@ -1913,10 +1940,19 @@ function makeSectionsData(over = {}) {
 {
   const data = makeSectionsData();
   shims.setStates([...EDITOR_BASE, data, false, null, {}, "global", ""]);
-  const text = flattenText(renderEditor({})).join(" ");
+  const el = renderEditor({});
+  const text = flattenText(el).join(" ");
   ok(!text.includes("只改某个会话"), "**设置页里没有作用范围开关了**");
-  ok(text.includes("全局默认"), "设置页说明了自己改的是全局默认");
-  ok(text.includes("会话头"), "**并指出会话级的东西去哪找**（否则用户找不到）");
+
+  // ⚠️ 「改的是哪一层」这段话**从屏幕上挪进了「?」图标的 title 里**。
+  //    以前是两行常驻灰字压在标题下面，每一眼都要读一遍 —— 用户嫌乱。
+  //    所以判据也变了：不是「屏幕上看得见」，而是「挂在 title 上、够得着」。
+  const tip = collectTitles(el).find((t) => t.includes("全局默认")) || "";
+  ok(tip !== "", "**作用范围说明挂在「?」的 title 上**（不是丢了）");
+  ok(tip.includes("会话头"), "**并指出会话级的东西去哪找**（否则用户找不到）");
+  ok(tip.includes("dsh 自己往系统提示词里放"), "title 里说清了这些段落是什么");
+  ok(tip.includes("不会被官方更新顶掉"), "title 里说清了官方更新不会顶掉改动");
+  ok(!text.includes("官方以后新增段落会自动出现在这里"), "**屏幕上不再常驻这段长说明**");
 }
 // ── 提示词组合（生效列表）+ 快速预设 ──────────────────────────────────────
 //
@@ -1965,7 +2001,10 @@ function makeSectionsData(over = {}) {
   ok(text.includes("当前：预设「写代码」"), "标题上写明了当前在哪个预设");
   ok(text.includes("覆盖"), "**说明了应用预设是覆盖不是合并**");
   ok(text.includes("把当前状态存为预设"), "有存为预设的入口");
-  ok(text.includes("全局默认"), "说明了当前改的是哪一层");
+  // ⚠️ 这一条**不能**挪进 title：它是「我现在改的是哪一层」，
+  //    全局默认 / 只改这个会话的区别很要紧，藏起来用户会改错地方。
+  //    但也不该占一整行灰字 —— 放进标题里就行。
+  ok(text.includes("全局默认"), "标题上写明了当前改的是哪一层（全局默认）");
 
   // 「不注入」这种占位条目不该出现在组合列表里
   ok(!/生效（\d）[\s\S]{0,300}不注入/.test(text), "**mode:none 的占位条目不参与组合**");
@@ -1995,7 +2034,7 @@ function makeSectionsData(over = {}) {
   baseSess[13] = "";
   shims.setStates([...baseSess, presetData, false, "", null]);
   text = flattenText(renderEditor({})).join(" ");
-  ok(text.includes("还没挑会话"), "**选了会话层但没选会话时明确提示**");
+  ok(text.includes("还没挑会话"), "**选了会话层但没选会话时明确提示**（现在在标题上，不是常驻警告条）");
 
   // presetsData 为 null（还没读完）不许炸
   shims.setStates([...base, null, false, "", null]);
@@ -2026,8 +2065,36 @@ function makeSectionsData(over = {}) {
   const withEnabled = (v) => base.slice(0, -1).concat([v]);
 
   shims.setStates(withEnabled(true));
-  let text = flattenText(renderEditor({})).join(" ");
+  let el = renderEditor({});
+  let text = flattenText(el).join(" ");
   ok(text.includes("使用我的提示词配置"), "开启时显示「使用我的提示词配置」");
+
+  // ── 开关本身：借用 dsh 原生开关的类名和结构 ──────────────────────────
+  //
+  // 用户给的参考就是 dsh 自己的开关：
+  //   <button type="button" role="switch" aria-checked="true" class="_switch_…">
+  //     <span class="_thumb_…"></span>
+  //   </button>
+  // 那段 CSS 在**全局样式表**里（web-frontend/dist/assets/index-*.css），
+  // 所以插件能直接借，外观自动跟着主题令牌走。
+  //
+  // ⚠️ 那个哈希是内容派生的，dsh 升级可能变。所以这里断言的是：
+  //    结构对（role/aria-checked）+ 有类名 + **有内联兜底几何**。
+  //    类名一旦失效，至少还是个圆角胶囊，不会退回方按钮。
+  const sw = findEl(el, (n) => n.props && n.props.role === "switch");
+  ok(!!sw, "**有 role=switch 的开关**（原生语义，键盘和读屏能用）");
+  if (sw) {
+    eq(sw.props["aria-checked"], true, "**aria-checked 跟状态一致**（原生开关靠它驱动视觉）");
+    ok(
+      typeof sw.props.className === "string" && sw.props.className.startsWith("_switch_"),
+      `用了 dsh 原生开关类名（实际 ${JSON.stringify(sw.props.className)}）`,
+    );
+    eq(sw.props.style.borderRadius, "999px", "**内联兜底仍在**：类名失效也是个胶囊，不是方按钮");
+    eq(sw.props.style.width, "36px", "兜底尺寸跟原生一致（36×20）");
+    const th = findEl(sw, (n) => n.props && typeof n.props.className === "string" && n.props.className.startsWith("_thumb_"));
+    ok(!!th, "滑块用了原生 thumb 类名");
+    if (th) ok(!!th.props.style.transform, "thumb 内联兜底带 transform 位移");
+  }
   ok(text.includes("关掉就完全回到原生 dsh"), "说明了关掉会怎样");
   ok(text.includes("配置都留着"), "**说明了配置不会被清掉**（否则用户不敢关）");
 

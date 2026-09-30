@@ -77,10 +77,6 @@ window.__ModuleLoader__.load({
       var COMBO_ROW_HL = api.style.COMBO_ROW_HL;
       var COMBO_SIDE = api.style.COMBO_SIDE;
       var COMBO_SIDE_HL = api.style.COMBO_SIDE_HL;
-      var PILL_SWITCH = api.style.PILL_SWITCH;
-      var PILL_ON = api.style.PILL_ON;
-      var PILL_OFF = api.style.PILL_OFF;
-      var PILL_KNOB = api.style.PILL_KNOB;
       var COMBO_BOARD = api.style.COMBO_BOARD;
       var COMBO_CHIPS = api.style.COMBO_CHIPS;
       var SELECT_SM = api.style.SELECT_SM;
@@ -1055,12 +1051,62 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * 总开关（胶囊）。
+         * 总开关（胶囊）—— **用 dsh 自己的开关**。
          *
          * ⚠️ 这是「一键回到原生」的出口：关掉 = 不注入自设提示词、不改写原生段落，
          *    等价于原生 dsh。但**配置全留着** —— 拨回来就原样恢复，所以装配时清空的
          *    是自己注入的段落，不是配置。
+         *
+         * ── 为什么用原生类名，而不是自己写内联样式 ──────────────────────────
+         *
+         * dsh 的开关是一段编译过的 CSS module（`_switch_15ung_5` / `_thumb_15ung_33`），
+         * 它在**全局样式表**里（web-frontend/dist/assets/index-*.css，由 index.html
+         * 直接引入），不是某个包的私有注入 —— 所以插件能直接借。
+         *
+         * 借它的好处是自动跟着主题走：
+         *     background:var(--dsw-alias-border-l3) / [aria-checked=true]→var(--dsw-alias-brand-primary)
+         *     thumb 用 transform:translate(16px)，transition .12s
+         *     自带 :disabled（opacity .5）和 :focus-visible 焦点环
+         * 自己硬编码颜色和尺寸，换个主题就不对了。
+         *
+         * ⚠️ 那个哈希是**内容派生**的，dsh 升级改了开关的 css 就会变。
+         *    所以内联兜底必须留着（看起来多余的 width/height 不是冗余）：
+         *    类名一旦失效，至少还是个圆角胶囊，不会再退回**方按钮**。
          */
+        var NATIVE_SWITCH = "_switch_15ung_5";
+        var NATIVE_THUMB = "_thumb_15ung_33";
+        var SWITCH_FALLBACK = {
+          position: "relative",
+          display: "inline-block",
+          flex: "0 0 auto",
+          boxSizing: "border-box",
+          width: "36px",
+          height: "20px",
+          padding: "2px",
+          border: "0",
+          borderRadius: "999px",
+          cursor: "pointer",
+        };
+        var THUMB_FALLBACK = {
+          display: "block",
+          width: "16px",
+          height: "16px",
+          borderRadius: "50%",
+          background: "#fff",
+        };
+        /** 类名在、样式也在时用原生外观；否则退回上面的兜底几何。 */
+        function switchStyle(on) {
+          return Object.assign({}, SWITCH_FALLBACK, {
+            background: on ? "var(--dsw-alias-brand-primary, #3b82f6)" : "var(--dsw-alias-border-l3, rgba(128,128,128,.35))",
+          });
+        }
+        function thumbStyle(on) {
+          return Object.assign({}, THUMB_FALLBACK, {
+            transition: "transform .12s ease",
+            transform: on ? "translate(16px)" : "none",
+          });
+        }
+
         function renderMasterSwitch() {
           var on = enabledDraft !== false;
           var busy = enabledDraft === null;
@@ -1069,22 +1115,25 @@ window.__ModuleLoader__.load({
             { style: Object.assign({}, CARD, { padding: "12px 14px", marginBottom: "12px" }) },
             [
               react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: "10px" } }, [
-                // 胶囊本体 —— 用 button 做，键盘可达
+                // 结构照抄原生：button[role=switch][aria-checked] + span(thumb)。
+                // 视觉状态由 aria-checked 驱动，所以别再往里塞自己的 display 样式。
                 react.createElement(
                   "button",
                   {
-                    key: "pill",
+                    key: "sw",
                     type: "button",
-                    className: "pm-btn",
+                    role: "switch",
+                    "aria-checked": on,
+                    "aria-label": "使用我的提示词配置",
+                    className: NATIVE_SWITCH,
                     title: on ? "点击关闭：完全用 dsh 原始提示词" : "点击开启：使用你配置的提示词",
                     disabled: busy,
                     onClick: function () {
                       toggleEnabled(!on);
                     },
-                    style: Object.assign({}, PILL_SWITCH, on ? PILL_ON : PILL_OFF),
+                    style: switchStyle(on),
                   },
-                  // 滑块行程跟着胶囊尺寸走：宽 30 - 左右各 1px 边框 - 滑块 14 - 左 1px = 14px
-                  react.createElement("span", { style: Object.assign({}, PILL_KNOB, { left: on ? "14px" : "1px" }) }),
+                  react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle(on) }),
                 ),
                 react.createElement(
                   "span",
@@ -1094,7 +1143,7 @@ window.__ModuleLoader__.load({
               ]),
               react.createElement(
                 "div",
-                { key: "h", style: Object.assign({}, HINT_TEXT, { margin: "4px 0 0 40px" }) },
+                { key: "h", style: Object.assign({}, HINT_TEXT, { margin: "4px 0 0 46px" }) },
                 on ? "关掉就完全回到原生 dsh。配置都留着。" : "配置都还在，开回来就恢复。",
               ),
             ],
@@ -1108,6 +1157,16 @@ window.__ModuleLoader__.load({
             { style: Object.assign({}, CARD_HEADING, { marginTop: "4px" }) },
             [
               react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合"),
+              // ⚠️ 「改的是哪一层」必须留在**看得见**的地方。
+              //    全局默认和「只改这个会话」改错了地方很要紧；藏进 title 里
+              //    用户就不会去看了。但也别占一整行灰字 —— 放进标题就够。
+              react.createElement(
+                "span",
+                { key: "scope", style: HEADING_COUNT },
+                sectionScope === "session"
+                  ? (sectionSessionId ? "只改这个会话" : "还没挑会话")
+                  : "全局默认 · 所有会话",
+              ),
               react.createElement(
                 "span",
                 { key: "c", style: HEADING_COUNT },
@@ -1146,16 +1205,8 @@ window.__ModuleLoader__.load({
 
           var children = [head];
 
-          if (sectionScope === "session" && !sectionSessionId) {
-            children.push(
-              react.createElement(
-                "div",
-                { key: "nosid", style: WARN },
-                "还没挑会话 —— 在下面「系统提示词」那里选。",
-              ),
-            );
-          }
-
+          // 「还没挑会话」不放常驻警告条 —— 标题上已经写了（见上面的 scope 标签），
+          // 真去勾选时 setActivePrompts 也会 flash 一句「先选一个会话」。
           children.push(react.createElement("div", { key: "pick" }, renderPicker()));
 
           // ── 快速预设 ────────────────────────────────────────────────────
@@ -1282,6 +1333,63 @@ window.__ModuleLoader__.load({
           return react.createElement("div", null, children);
         }
 
+        /**
+         * 一个「?」图标，说明挂在 title 上（悬停出原生提示，也能点、能聚焦）。
+         *
+         * 为什么不用一小段灰字：
+         *   这两段说明（段落是干什么的 + 改的是哪一层）以前是两行常驻灰字，
+         *   压在标题下面，每一眼都要读一遍。挪进 title 之后，需要的时候才有。
+         *
+         * ⚠️ 用 `title` 而不是自己写弹层：原生提示不用管点击外部关闭、
+         *    不用管层级（z-index）、不用管 Esc，也不会被设置页的滚动容器裁掉。
+         *    dsh 自己的图标提示也是这么给的。
+         */
+        function renderHelpIcon(text) {
+          return react.createElement(
+            "span",
+            {
+              key: "help",
+              title: text,
+              "aria-label": text,
+              tabIndex: 0,
+              style: {
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: "none",
+                width: "14px",
+                height: "14px",
+                color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
+                cursor: "help",
+              },
+            },
+            react.createElement(
+              "svg",
+              { width: "14", height: "14", viewBox: "0 0 16 16", "aria-hidden": "true" },
+              react.createElement("circle", {
+                cx: "8",
+                cy: "8",
+                r: "6.6",
+                fill: "none",
+                stroke: "currentColor",
+                strokeWidth: "1.3",
+              }),
+              react.createElement(
+                "text",
+                {
+                  x: "8",
+                  y: "11.4",
+                  textAnchor: "middle",
+                  fontSize: "9",
+                  fontWeight: "700",
+                  fill: "currentColor",
+                },
+                "?",
+              ),
+            ),
+          );
+        }
+
         /** 「系统提示词」整块。 */
         function renderSections() {
           var head = react.createElement(
@@ -1289,6 +1397,14 @@ window.__ModuleLoader__.load({
             { style: Object.assign({}, CARD_HEADING, { marginTop: "4px" }) },
             [
               react.createElement("span", { key: "n", style: HEADING_TITLE }, "系统提示词"),
+              // 两段说明并成一个「?」—— 详见 renderHelpIcon
+              renderHelpIcon(
+                "这些是 dsh 自己往系统提示词里放的段落。可以逐段改写或关掉，也能还原。" +
+                  "官方以后新增段落会自动出现在这里，改过的会标出来 —— 你的改动不会被官方更新顶掉。" +
+                  "\n\n" +
+                  "这里改的是全局默认，所有会话都生效。" +
+                  "只想改某一个会话的话，用会话头那一行的「提示词」按钮。",
+              ),
               react.createElement(
                 "span",
                 { key: "c", style: HEADING_COUNT },
@@ -1312,30 +1428,9 @@ window.__ModuleLoader__.load({
             ],
           );
 
-          var intro = react.createElement(
-            "div",
-            { style: HINT_TEXT },
-            "这些是 dsh 自己往系统提示词里放的段落。可以逐段改写或关掉，也能还原。" +
-              "官方以后新增段落会自动出现在这里，改过的会标出来 —— 你的改动不会被官方更新顶掉。",
-          );
-
-          // ── 这里只配**全局默认** ──────────────────────────────────────
-          //
-          // ⚠️ 会话级的选择**不放在设置页** —— 设置页天然是「全局配置」的地方，
-          //    把「只改这个会话」的开关混在这儿，用户分不清自己改的是哪一层。
-          //    会话级的东西在**会话头**那个按钮里（跟「标准模式」同一行）。
-          var scopeHint = react.createElement(
-            "div",
-            { style: HINT_TEXT },
-            "这里改的是**全局默认**，所有会话都生效。" +
-              "只想改某一个会话的话，用会话头那一行的「提示词」按钮。",
-          );
-
           if (sections === null) {
             return react.createElement("div", null, [
               head,
-              intro,
-              scopeHint,
               react.createElement("div", { key: "l", style: STATUS_LINE }, "读取中…"),
             ]);
           }
@@ -1382,7 +1477,7 @@ window.__ModuleLoader__.load({
             for (var sj = 0; sj < slots.length; sj++) items.push(renderEmptySlot(slots[sj]));
           }
 
-          return react.createElement("div", null, [head, intro, scopeHint].concat(items));
+          return react.createElement("div", null, [head].concat(items));
         }
 
         /** 保存全局默认。 */

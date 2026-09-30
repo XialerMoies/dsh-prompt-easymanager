@@ -375,50 +375,6 @@
           borderTop: "1px solid rgba(128,128,128,.25)",
           flexWrap: "wrap",
         };
-        /**
-         * 胶囊开关。
-         *
-         * ⚠️ 它是用 `<button>` 做的（为了键盘可达），所以必须自己把浏览器的默认
-         *    按钮样式压掉 —— 不写 `appearance` / `boxSizing` / `margin` 的话，
-         *    真机上得到的是个**方按钮**而不是胶囊：`borderRadius` 被 UA 外观盖住。
-         *    （用户看到的就是「方胶囊」。）
-         *
-         * 尺寸也调小了一档：34×20 → 30×18，滑块 14。
-         */
-        var PILL_SWITCH = {
-          position: "relative",
-          display: "inline-flex",
-          alignItems: "center",
-          width: "30px",
-          height: "18px",
-          boxSizing: "border-box",
-          appearance: "none",
-          WebkitAppearance: "none",
-          borderRadius: "999px",
-          border: "1px solid rgba(128,128,128,.4)",
-          background: "rgba(128,128,128,.22)",
-          cursor: "pointer",
-          padding: "0",
-          margin: "0",
-          flex: "none",
-          transition: "background .15s ease, border-color .15s ease",
-        };
-        var PILL_ON = Object.assign({}, PILL_SWITCH, {
-          background: "var(--dsw-alias-state-business-primary, rgba(59,130,246,.85))",
-          borderColor: "var(--dsw-alias-state-business-primary, rgba(59,130,246,.85))",
-        });
-        var PILL_OFF = PILL_SWITCH;
-        var PILL_KNOB = {
-          position: "absolute",
-          top: "1px",
-          left: "1px",
-          width: "14px",
-          height: "14px",
-          borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "0 1px 2px rgba(0,0,0,.3)",
-          transition: "transform .15s ease",
-        };
 
         // ── 面板 / 卡片 / 表单：给 chunk 用的样式 ─────────────────────────
         //
@@ -837,10 +793,6 @@
             PANEL_HEAD: PANEL_HEAD,
             PANEL_BODY: PANEL_BODY,
             PANEL_FOOT: PANEL_FOOT,
-            PILL_SWITCH: PILL_SWITCH,
-            PILL_ON: PILL_ON,
-            PILL_OFF: PILL_OFF,
-            PILL_KNOB: PILL_KNOB,
             ADVISE: ADVISE,
             CARD: CARD,
             CARDS_GRID: CARDS_GRID,
