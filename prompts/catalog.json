@@ -1,4 +1,14 @@
 {
   "version": 1,
-  "prompts": []
+  "prompts": [
+    {
+      "id": "test",
+      "name": "测试",
+      "description": "测试用",
+      "category": "identity",
+      "mode": "append",
+      "order": 20,
+      "file": "test.md"
+    }
+  ]
 }

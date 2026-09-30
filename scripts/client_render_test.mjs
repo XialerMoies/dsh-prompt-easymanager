@@ -2090,10 +2090,11 @@ function makeSectionsData(over = {}) {
   // ⚠️ 它管的是**注入这件事本身**，不是「用不用我的配置」——
   //    名字和说明都得照这个说，否则用户会以为关掉只是「不注入默认那几条」。
   ok(text.includes("提示词全局注入"), "**开关叫「提示词全局注入」**（管的是注不注入，不是用不用配置）");
-  ok(text.includes("开 · 所有会话都注入"), "开启时说明作用范围");
+  ok(text.includes("开 · 新会话自动挂默认"), "开启时说明作用范围（说的是「默认」这一层）");
   const swTip = collectTitles(el).find((t) => t.includes("提示词注入的总开关")) || "";
   ok(swTip !== "", "**总开关的说明挂在 title 上**（不占常驻行）");
-  ok(swTip.includes("回到完全原生的 dsh"), "title 里说清了关掉会怎样");
+  // ⚠️ 措辞别写成「全部停用」—— 那过头了。关掉只掐「默认」那一层。
+  ok(swTip.includes("会话页自己选过的提示词照旧注入"), "**title 里说清关掉后什么还生效**（不是全停）");
 
   // ── 总开关要排在内容最前面 ────────────────────────────────────────────
   //
@@ -2170,18 +2171,18 @@ function makeSectionsData(over = {}) {
   {
     const elOff = renderEditor({});
     text = flattenText(elOff).join(" ");
-    ok(text.includes("关 · 等同原生 dsh"), "关闭时说明状态");
+    ok(text.includes("关 · 只在会话页自己选的还注入"), "关闭时说明还有什么在生效");
     ok(text.includes("提示词全局注入"), "关闭时开关名不变（名字说的是它管什么，不是当前状态）");
     // 关掉的效果说明也在 title 上，不占常驻行
     const tipOff = collectTitles(elOff).find((t) => t.includes("提示词注入的总开关")) || "";
-    ok(tipOff.includes("全部停用"), "title 里说清了关掉时哪些东西停用");
+    ok(tipOff.includes("段落改写也照旧生效"), "**title 里说清改写不受影响**（两件事别混）");
   }
 
   // enabledDraft 为 null（还没读完）不该炸，也不该误显示成"关"
   shims.setStates(withEnabled(null));
   try {
     text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("开 · 所有会话都注入"), "还没读完时按「开」显示（默认开），不误报成关");
+    ok(text.includes("开 · 新会话自动挂默认"), "还没读完时按「开」显示（默认开），不误报成关");
   } catch (e) {
     ok(false, "enabledDraft 为 null 时不许炸 —— 抛了 " + e.message);
   }

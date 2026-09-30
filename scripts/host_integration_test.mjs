@@ -1203,9 +1203,14 @@ const TMP_ID = "zz-test-only";
   eq(a.json.id, "同名", "第一个用原名");
   eq(b.json.id, "同名-2", "**重名自动加序号，不覆盖**");
 }
-// ══ 35. 总开关：关掉 = 完全用 dsh 原始提示词 ══════════════════════════════
+// ══ 35. 全局注入开关：关掉只掐「默认」那一层 ══════════════════════════════
 //
-// 关掉的实现方式是**在装配时清空本插件自己注入的段落**，不是"不挂载"。
+// ⚠️ 语义（用户定的）：
+//     **关闭 = 不再往每个会话都塞默认那几条。**
+//     但 ① 用户在会话页自己选的提示词照旧注入；
+//        ② 段落改写跟「注不注入」是两件事，不受它影响。
+//
+// 关掉的实现方式是**在装配时把来自默认的那些段落正文清空**，不是"不挂载"。
 // 后者要遍历所有 agent 卸载重挂、还有竞态；前者跟段落覆盖同一个机制，
 // **下一个模型步骤就生效**。
 {
@@ -1222,13 +1227,12 @@ const TMP_ID = "zz-test-only";
   const ctx9 = makeCtx([live9.agent]);
   apply(ctx9);
 
-  // 装一条改写，确认开关关掉后它也不生效了
+  // 装一条改写 —— 它是「改原生段落」，跟注不注入提示词无关
   await call(ctx9, SECTIONS_PATH, {
     method: "POST",
     body: { name: "harness:identity", action: "replace", text: "我改的身份", scope: "global" },
   });
 
-  // 开 → 监听器改写生效
   const l0 = live9.assembleListeners[0];
   ok(typeof l0 === "function", "注入器挂上了装配监听器");
   const asm = async () => ({
@@ -1244,9 +1248,9 @@ const TMP_ID = "zz-test-only";
   eq(a.sections[0].text, "我改的身份", "**开关开着时改写生效**");
   eq(a.sections[1].text, "我注入的提示词正文", "开关开着时注入保留");
 
-  // 关 → 注入清空、改写停用
+  // 关
   const off = await call(ctx9, STATE_PATH, { method: "POST", body: { enabled: false } });
-  eq(off.status, 200, "关掉总开关 → 200");
+  eq(off.status, 200, "关掉全局注入 → 200");
   eq(off.json.enabled, false, "回报已关");
 
   // ⚠️ 编辑器读完 POST 的响应后会立刻重新 GET /edit（load()）。
@@ -1255,15 +1259,19 @@ const TMP_ID = "zz-test-only";
 
   a = await asm();
   await l0(a, {}, async () => a);
-  eq(a.sections[0].text, "官方身份", "**开关关掉后改写不再生效（回到官方原文）**");
-  eq(a.sections[1].text, "", "**开关关掉后自己注入的段落被清空**（等价于没注入）");
+  eq(
+    a.sections[0].text,
+    "我改的身份",
+    "**关掉注入之后段落改写照样生效**（改原生段落跟注不注入是两件事）",
+  );
+  eq(a.sections[1].text, "", "**来自默认的注入被清空**（`my-prompt` 不是显式选的）");
 
   // 再开回来
   await call(ctx9, STATE_PATH, { method: "POST", body: { enabled: true } });
   eq((await call(ctx9, EDIT_PATH)).json.enabled, true, "开回来之后 GET edit 也读得到");
   a = await asm();
   await l0(a, {}, async () => a);
-  eq(a.sections[0].text, "我改的身份", "**开回来之后改写恢复**");
+  eq(a.sections[0].text, "我改的身份", "开回来之后改写仍在");
   eq(a.sections[1].text, "我注入的提示词正文", "注入也恢复");
 
   // 缺字段 → 400
@@ -1277,6 +1285,77 @@ const TMP_ID = "zz-test-only";
   // 落盘
   const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
   eq(disk.enabled, true, "开关持久化了");
+}
+
+// ══ 36. 全局注入关掉时，**会话级自己选的照旧注入** ═════════════════════════
+//
+// 这是全局开关的核心语义，也是它存在的理由：
+//   「关闭 = 不再往每个会话都塞默认那几条」，而不是「禁止注入」。
+//   用户在会话页（会话头部那个按钮）自己挑的提示词，关掉全局注入也要生效。
+//
+// ⚠️ 两件事必须一起成立才有意义：
+//   ① 没显式指定的会话 → 默认被掐掉（上面 35 已经验了）
+//   ② **显式指定过的会话 → 照旧注入**（这一条）
+//   只验①的话，「全停」也能过 —— 那正是改之前的行为。
+{
+  const liveA = makeAgent("session-D1");
+  const liveB = makeAgent("session-D2");
+  const ctxD = makeCtx([liveA.agent, liveB.agent]);
+  apply(ctxD);
+
+  // D1 吃默认（不显式指定）；D2 显式选一条
+  await call(ctxD, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract"] } });
+  // 显式指定 D2：走 assign 路由（这就是会话页那个按钮做的事）
+  const asg = await call(ctxD, ASSIGN_PATH, {
+    method: "POST",
+    body: { sessionId: "session-D2", promptIds: ["format-contract-a"] },
+  });
+  eq(asg.status, 200, "给 D2 显式指定一条 → 200");
+
+  // 关掉全局注入
+  await call(ctxD, STATE_PATH, { method: "POST", body: { enabled: false } });
+
+  // 两个 agent 各自的装配结果
+  const asmOf = (live) => ({
+    sections: [
+      { name: "harness:identity", text: "官方身份" },
+      { name: "prompt-manager:format-contract", text: "默认那条的正文" },
+      { name: "prompt-manager:format-contract-a", text: "D2 自己选的那条正文" },
+    ],
+    contexts: [],
+    tools: [],
+  });
+
+  const aA = asmOf(liveA);
+  const lA = liveA.assembleListeners[0];
+  ok(typeof lA === "function", "D1 挂上了装配监听器");
+  await lA(aA, {}, async () => aA);
+  eq(
+    aA.sections[1].text,
+    "",
+    "**D1 吃默认 → 关掉后被清空**",
+  );
+
+  const aB = asmOf(liveB);
+  const lB = liveB.assembleListeners[0];
+  ok(typeof lB === "function", "D2 挂上了装配监听器");
+  await lB(aB, {}, async () => aB);
+  eq(
+    aB.sections[2].text,
+    "D2 自己选的那条正文",
+    "**D2 显式选的那条照旧注入**（关掉全局注入 ≠ 禁止注入）",
+  );
+  eq(
+    aB.sections[1].text,
+    "",
+    "**D2 不吃默认，所以默认那条对它本来就没挂**（清不清都是空）",
+  );
+
+  // 开回来 → D1 的默认恢复
+  await call(ctxD, STATE_PATH, { method: "POST", body: { enabled: true } });
+  const aA2 = asmOf(liveA);
+  await lA(aA2, {}, async () => aA2);
+  eq(aA2.sections[1].text, "默认那条的正文", "开回来后 D1 的默认恢复");
 }
 rmSync(DSH_HOME, { recursive: true, force: true });
 

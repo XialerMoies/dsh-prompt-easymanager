@@ -320,23 +320,31 @@ export function createSessionInjector({
             const sections = result?.sections;
             if (!Array.isArray(sections)) return result;
 
-            // ── 总开关：关掉就完全用 dsh 原始提示词 ──────────────────────────
+            // ── 全局注入关掉：只掐「默认」那一层 ──────────────────────────
             //
-            // ⚠️ **走同一条装配路径，而不是"不挂载"。**
+            // ⚠️ **不是「不挂载」，也不是「全停」。**
             //
             //    「不挂载」做不到即时生效 —— agent 已经 registered 了，
             //    要让它不挂就得遍历所有 agent 卸载、再重挂，中间还有竞态。
+            //    所以走装配期：把**来自默认**的那些段落正文清空
+            //    （`renderPrompt` 会丢弃空段落），下一个模型步骤就生效。
             //
-            //    而这里把**本插件自己注入的段落正文清空**，效果等价于没注入
-            //    （`renderPrompt` 会丢弃空段落），而且是**下一个模型步骤就生效**。
-            //    和段落覆盖同一个机制，不多一条路。
+            // ⚠️ 清哪些是有讲究的：**只清这个会话没有显式指定的那些**。
+            //    用户在会话页自己选的提示词不该被这个开关掐掉 ——
+            //    开关关的是「往每个会话都塞默认那几条」，不是「禁止注入」。
+            //    所以这里逐个 id 问 explicitEntry，而不是无脑清 SELF_PREFIX。
             if (isEnabled && isEnabled(agentId) === false) {
               for (const section of sections) {
-                if (section && typeof section.name === "string" && section.name.startsWith(SELF_PREFIX)) {
-                  if (section.text !== "") section.text = "";
-                }
+                if (!section || typeof section.name !== "string") continue;
+                if (!section.name.startsWith(SELF_PREFIX)) continue;
+                // section 名形如 `prompt-manager:<id>` —— 抠出 id 看它是不是显式选的
+                const promptId = section.name.slice(SELF_PREFIX.length);
+                if (explicitEntry(agentId)?.value?.includes(promptId)) continue;
+                if (section.text !== "") section.text = "";
               }
-              return result; // 改写也一并停用
+              // ⚠️ **不 return** —— 段落改写跟「注不注入提示词」是两件事，
+              //    这个开关只管后者。关掉注入还把用户的改写一起停掉，
+              //    是在替用户做他没要求的决定。
             }
 
             // ⚠️ **按 agent 取覆盖表** —— 改写是按会话的，不同会话可以不一样。
@@ -419,11 +427,20 @@ export function createSessionInjector({
 
   /**
    * 某会话**实际生效**的提示词 id 列表。
-   * 显式指定过就用显式的（哪怕是空数组 = 不注入）；否则用全局默认。
+   *
+   * 三层优先级：
+   *   1. 这个会话被**显式指定**过 → 用它的（哪怕是空数组 = 显式不注入）
+   *   2. 没显式指定 → 用全局默认
+   *   3. 但**全局注入关掉时，第 2 层整体作废**（见 isEnabled）
+   *
+   * ⚠️ 第 3 层只掐「默认」，**不掐「显式」** —— 这是用户定的语义：
+   *    关闭全局注入 = 不再往每个会话都塞那几条；用户在会话页自己选的照旧注入。
+   *    会话页那个「跟随默认」也正是这个意思：选它才吃默认，自己有选择就不吃。
    */
   function resolvedIds(sessionId) {
     const e = explicitEntry(sessionId);
     if (e) return [...e.value];
+    if (isEnabled && isEnabled(sessionId) === false) return [];
     return [...defaults];
   }
 
