@@ -1,14 +1,10 @@
-// ───────────────────────────────────────────────────────────────────────────
-// dsh-prompt-manager · CHUNK
+// dsh-prompt-manager · 多选面板与会话头部入口（包内 chunk）
 //
-// 这是**包内 chunk**，由 client.js 用 require.async("./client.xxx.js") 拉起。
-// 不是独立插件：必须注册成 "dsh-prompt-manager" 的 chunk，否则宿主报
-// 「bundle loaded without registering」。
+// 由 client.js 用 require.async("./client.picker.js") 拉起；必须注册成
+// id "dsh-prompt-manager" + chunk 文件名，否则宿主报「loaded without registering」。
 //
-// 改完**必须重启 dsh** —— chunk 的 rev 跟着 client.js 的 mtime 走，浏览器会拿
-// 旧 rev 去请求，文件对不上就是 404，表现为设置页整片空白。
-// ───────────────────────────────────────────────────────────────────────────
-// 多选面板与会话头部入口
+// ⚠️ 改完必须重启 dsh —— chunk 的 rev 跟着 client.js 的 mtime 走，
+//    浏览器会拿旧 rev 请求，文件对不上就是 404，表现为设置页整片空白。
 
 window.__ModuleLoader__.load({
   id: "dsh-prompt-manager",
@@ -20,11 +16,11 @@ window.__ModuleLoader__.load({
     var reactDom = require("react-dom");
 
     /**
-     * 由宿主调用：把「注册期就存在、chunk 等不到」的东西注入进来。
+     * 宿主调用入口，把「注册期就存在、chunk 等不到」的东西注入进来。
      *
-     * 原先这些名字是**闭包白拿**的 —— 同一个文件里，外层 var 内层直接用。
-     * 一拆文件就全变成 ReferenceError，而且是**渲染期**才炸，表现是
-     * 「点了之后控件全没了」。所以这里必须显式解构，不能省。
+     * ⚠️ 下面这些名字原先在本文件里是**闭包白拿**的（外层 var 内层直接用），
+     *    拆成 chunk 后必须靠 api 显式传，漏传就是渲染期 ReferenceError ——
+     *    React 随即卸载整棵子树，表现是「点了之后控件全没了」。
      */
     function create(api) {
       var SELECT_SM = api.style.SELECT_SM;

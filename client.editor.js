@@ -1,14 +1,10 @@
-// ───────────────────────────────────────────────────────────────────────────
-// dsh-prompt-manager · CHUNK
+// dsh-prompt-manager · 设置页 · 提示词编辑（包内 chunk）
 //
-// 这是**包内 chunk**，由 client.js 用 require.async("./client.xxx.js") 拉起。
-// 不是独立插件：必须注册成 "dsh-prompt-manager" 的 chunk，否则宿主报
-// 「bundle loaded without registering」。
+// 由 client.js 用 require.async("./client.editor.js") 拉起；必须注册成
+// id "dsh-prompt-manager" + chunk 文件名，否则宿主报「loaded without registering」。
 //
-// 改完**必须重启 dsh** —— chunk 的 rev 跟着 client.js 的 mtime 走，浏览器会拿
-// 旧 rev 去请求，文件对不上就是 404，表现为设置页整片空白。
-// ───────────────────────────────────────────────────────────────────────────
-// 设置页 · 提示词编辑
+// ⚠️ 改完必须重启 dsh —— chunk 的 rev 跟着 client.js 的 mtime 走，
+//    浏览器会拿旧 rev 请求，文件对不上就是 404，表现为设置页整片空白。
 
 window.__ModuleLoader__.load({
   id: "dsh-prompt-manager",
@@ -20,11 +16,11 @@ window.__ModuleLoader__.load({
     var reactDom = require("react-dom");
 
     /**
-     * 由宿主调用：把「注册期就存在、chunk 等不到」的东西注入进来。
+     * 宿主调用入口，把「注册期就存在、chunk 等不到」的东西注入进来。
      *
-     * 原先这些名字是**闭包白拿**的 —— 同一个文件里，外层 var 内层直接用。
-     * 一拆文件就全变成 ReferenceError，而且是**渲染期**才炸，表现是
-     * 「点了之后控件全没了」。所以这里必须显式解构，不能省。
+     * ⚠️ 下面这些名字原先在本文件里是**闭包白拿**的（外层 var 内层直接用），
+     *    拆成 chunk 后必须靠 api 显式传，漏传就是渲染期 ReferenceError ——
+     *    React 随即卸载整棵子树，表现是「点了之后控件全没了」。
      */
     function create(api) {
       var SECTION = api.style.SECTION;
@@ -1080,17 +1076,9 @@ window.__ModuleLoader__.load({
         /**
          * 总开关（胶囊）。
          *
-         * ⚠️ **这是「一键回到原生」的出口。**
-         *
-         *    关掉 = 本插件对提示词的一切干预全部停用：不注入自设提示词、
-         *    不改写原生段落。等价于原生 dsh。
-         *
-         *    但要**保留所有配置** —— 用户拨回来就该原样恢复。所以这里不是
-         *    「清空配置」，而是装配时清空自己注入的段落（见 session-injection.mjs）。
-         *
-         *    为什么需要它：调完一堆东西之后想对比「原生 dsh 是什么样」，
-         *    或者怀疑某个改动搞坏了什么想一键排除 —— 没有这个开关就只能
-         *    一条条去清。
+         * ⚠️ 这是「一键回到原生」的出口：关掉 = 不注入自设提示词、不改写原生段落，
+         *    等价于原生 dsh。但**配置全留着** —— 拨回来就原样恢复，所以装配时清空的
+         *    是自己注入的段落，不是配置。
          */
         function renderMasterSwitch() {
           var on = enabledDraft !== false;

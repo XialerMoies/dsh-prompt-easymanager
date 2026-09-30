@@ -1,58 +1,24 @@
 // 提示词管理 (dsh-prompt-manager) · 客户端宿主
 //
-// 这个文件现在只做三件事：
-//   1. 把两个槽位注册给宿主（会话头部入口 / 设置页那一栏）
-//   2. 渲染会话头部那一个按钮本身
-//   3. 用具名 chunk 把大块 UI 按需拉起来
+// 这个文件只做三件事：注册两个槽位、渲染会话头部那一个按钮、按需拉下面的 chunk。
 //
-// 组件在哪儿（全部由宿主用 require.async 按需拉）：
 //   client.picker.js    多选面板 + 会话头部入口
 //   client.preview.js   最终系统提示词预览
 //   client.editor.js    设置页「提示词管理」整栏（最大的一块）
 //
-// 浮层外壳（Overlay + OVERLAY / PANEL 那一族常量）没有独立 chunk：
-// 面板和预览各自在里面定义同一个 Overlay 组件，常量则从这里随 api.style 交下去。
-// 原文备查见 docs/overlay-component.md。
+// 浮层外壳（Overlay + OVERLAY / PANEL 那一族常量）没有独立 chunk：面板和预览
+// 各自定义同一个 Overlay 组件，常量从这里随 api.style 交下去。原文见
+// docs/overlay-component.md。
 //
-// ── 为什么样式常量留在这个文件 ────────────────────────────────────────────────
-// 宿主自己渲染会话头部那一个按钮，**注册期**就得有；而 chunk 是异步到的，等不了。
-// 所以这一批留在宿主，给 chunk 用的那几个纯函数通过 CHUNK_API 传过去 ——
-// 同一个东西在几个文件里各写一份，迟早改一处漏一处。
-//
-// ── 三条踩过的坑，别再踩 ──────────────────────────────────────────────────────
-// ⚠️ chunk 的注册键必须写全："<包名>/<chunk 文件名>"。
-//    register() 拿 id 去掉结尾的 /client 当 ownerId，再拼上 chunk 字段；
-//    importChunk 找的正是 ownerId + "/" + 文件名。写短了会在**运行时**报
-//    「bundle loaded without registering」，不是构建期。
-//
-// ⚠️ dsh.client.external 帮不上忙：那里列的名字必须是**别的包**的 boot row，
-//    写本包的文件名会被判成「本包要求自己」，构建期直接抛错。
-//    官方 dsh-client-ui-sidebar-documentpreview 的 client.pdf.js 也是按需拉的。
-//
-// ⚠️ chunk 的 rev 跟着 **client.js 的 mtime** 走。改完 chunk 必须重启 dsh，
-//    否则浏览器拿着旧 rev 请求，文件对不上就是 404，表现是设置页整片空白。
-//
-// ⚠️ 浮层必须 portal 到 document.body —— 渲染在会话头部那一行里面的话，
-//    position:fixed 会被祖先的 transform/overflow/contain 关住而**完全看不见**
-//    （点击有响应、fetch 也成功，但画面上什么都没有）。
-//    一方插件（dsh-client-ui-attachment、dsh-client-ui-chat）都这么做的。
-//
-// ⚠️ 所有 style 常量必须有定义。读一个从未声明的标识符会抛 ReferenceError
-//    （不是静默的 undefined），React 随即卸载整棵子树 —— 表现就是
-//    「点了之后所有控件消失」。scripts/client_render_test.mjs 有静态扫描盯着这点。
-//
-// 渲染期对数据必须容错：数组里的 null 项、缺字段，都不能让渲染抛错。
+// 各处的坑写在**挨着代码的地方**，不堆在这儿 —— 头注释写得越长越没人看。
 
 (() => {
   try {
-    // ── 共用常量与小工具（模块级，纯函数）──────────────────────────────────
+    // ── 共用常量与小工具（模块级）──────────────────────────────────────────
     //
-    // ⚠️ 这些**只能放在模块级同步定义**，不能做成 chunk 按需拉。
-    //    一是 factory 是**同步**的：它必须直接 `return module.exports`，
-    //    在里面等 Promise（也就是 throw 一个 pending Promise）就等于抛异常，
-    //    宿主拿到的是「没有导出」，报 `import failed: [object Promise]`。
-    //    二是 `fmtTokens(p.tokens)` 是当函数调的，拿不到就是 undefined is not a function。
-    //
+    // ⚠️ 只能同步定义在模块级，不能做成 chunk：factory 是同步的，在里面等 Promise
+    //    就等于抛异常，宿主报 `import failed: [object Promise]`；而且
+    //    `fmtTokens(p.tokens)` 是当函数调的，拿不到就是 undefined is not a function。
     //    这里曾经是一个独立的 client.helpers.js —— 别改回去。
     const ROUTE_STATE = "/api/prompt-manager/state";
     const ROUTE_ASSIGN = "/api/prompt-manager/assign";
@@ -62,7 +28,7 @@
     const ROUTE_EDIT = "/api/prompt-manager/edit";
     const ROUTE_SECTIONS = "/api/prompt-manager/sections";
     const ROUTE_PRESETS = "/api/prompt-manager/presets";
-    /** 原生段落中文名 —— 查不到就走 sectionLabel 的兜底。见文件头说明。 */
+    /** 原生段落的中文显示名。⚠️ **只用于显示**，存储/匹配一律用原始 name。 */
     const SECTION_LABELS = {
       "harness:identity": "harness 身份",
       "harness:source": "Harness 安装位置",
@@ -129,24 +95,16 @@
 
     // ── chunk 的加载器（模块级，只求值一次）────────────────────────────────
     //
-    // ⚠️ 必须放在 factory **外面**（模块级，每个文件只求值一次）。
-    //    useChunk 拿 loader 当缓存键；loader 每次渲染都新建的话，
-    //    缓存永远 miss，每次都重新 await 一个 Promise —— 组件就一直抛，
-    //    表现是「那一栏一直是空的」，而且不报错。
+    // loader 是 useChunk 的缓存键，每次渲染都新建的话缓存永远 miss ——
+    // 组件会一直抛 Promise，表现是「那一栏一直是空的」且不报错。
     //
-    // ⚠️ require.async 收的是**相对说明符**（"./client.xxx.js"），不是注册键。
-    //    注册键 "dsh-prompt-manager/client.xxx.js" 由 importChunk 自己拼：
-    //      ownerId = 本包 id 去掉结尾的 /client  →  "dsh-prompt-manager"
-    //      key     = ownerId + "/" + 文件名
-    //    一开始这里写成了完整注册键，被 `if (!spec.startsWith("./"))` 当成
-    //    「别的包」去 import，找不到 —— chunk 永远拉不起来。
-    //    （scripts/client_render_test.mjs 复刻了同一条规则，抓住了它。）
+    // require.async 收的是相对说明符（"./client.xxx.js"），**不是**注册键
+    // "dsh-prompt-manager/client.xxx.js" —— 那个是 importChunk 自己拼的。
     var loadPicker = function () { return req.async("./client.picker.js"); };
     var loadPreview = function () { return req.async("./client.preview.js"); };
     var loadEditor = function () { return req.async("./client.editor.js"); };
 
-    // 宿主的 module-table require（就是 factory 的那个参数）。见下方 factory 开头。
-    var req = null;
+    var req = null; // factory 的材料化参数，见下面 factory 开头
 
     // chunk 缓存：loader → { p, m, e, done }
     var chunkCache = new Map();
@@ -154,13 +112,8 @@
     /**
      * 取一个 chunk（Suspense 风格：没到就抛 Promise，到了就返回模块）。
      *
-     * ⚠️ 别把状态挂在 useState 的初值上再改它 —— 那条路是看运气的：
-     *    `useState(loader)` 每次渲染都返回**新**对象，没有 `.s`，
-     *    于是「首次进入」永远不成立，chunk 根本没被拉起来。
-     *    （调试时 `box.s === 0` 恒为 false，就是栽在这。）
-     *
-     * 这里的键是 loader 本身 —— 上面那几个常量函数，每次渲染引用相同，
-     * 所以命中与否只取决于「拉过没有」，跟渲染次数、时序都无关。
+     * 键是 loader 本身，所以命中与否只取决于「拉过没有」，跟渲染次数、时序无关。
+     * ⚠️ 别改成「把状态挂在 useState 初值上再改它」——每次渲染都是新对象，恒不命中。
      */
     function useChunk(loader) {
       var box = chunkCache.get(loader);
@@ -397,11 +350,16 @@
           transition: "transform .15s ease",
         };
 
-        // 交给 chunk 的那一份：宿主独有的东西（注册期就存在、chunk 等不到）
-        // 全部显式列在这里，chunk 那边 create(api) 解构回去。
-        //
-        // ⚠️ 这里**不许**出现任何 await / throw Promise —— 这一段在 factory 里，
-        //    factory 必须同步 `return module.exports`。
+        /**
+         * 交给 chunk 的那一份：宿主独有的东西显式列在这里，chunk 的 create(api)
+         * 解构回去 —— 同一个东西在几个文件里各写一份，迟早改一处漏一处。
+         *
+         * 样式常量留在宿主是因为宿主注册期就要用（把 chunk 的异步依赖收在这一层）。
+         *
+         * ⚠️ 这一段在 factory 里，**不许**出现 await / throw Promise ——
+         *    factory 必须同步 `return module.exports`，否则宿主报
+         *    `import failed: [object Promise]`。
+         */
         var CHUNK_API = {
           style: {
             ROW: ROW,
@@ -447,19 +405,14 @@
         };
 
         /**
-         * 会话头部那一份：多选面板 + 预览面板一起备好。
+         * 会话头部那一份：多选面板 + 预览一起备好。
          *
-         * ⚠️ 这两块必须**一起**拉，不能各拉各的。
-         *    多选面板里点「预览」会直接渲染 PreviewPanel（面板是常驻的，
-         *    预览是弹层，两者同一个 React 树）—— 只拉面板的话，点预览那一刻
-         *    就是 `PreviewPanel is not defined`，而且是**点了才炸**：
-         *    React 随即卸载整棵子树，看起来就是「点了预览之后控件全没了」。
-         *
-         *    预览那一份在这里就解出来，随 props 交给面板；面板自己不做异步 ——
-         *    chunk 之间的依赖全收在宿主这一层，哪块依赖哪块一眼可见。
+         * ⚠️ 必须**一起**拉。面板里点「预览」会直接渲染 PreviewPanel（面板常驻、
+         *    预览是弹层，同一个 React 树）—— 只拉面板的话，点预览那一刻就是
+         *    `PreviewPanel is not defined`，React 随即卸载整棵子树。
+         *    预览在这里解出来随 props 交给面板，面板自己不做异步。
          */
         function loadPromptUi() {
-          // 预览先、面板后：面板要用到一个现成的 PreviewPanel（见上面那段注释）。
           return loadPreview().then(function (previewMod) {
             return loadPicker().then(function (pickerMod) {
               return {
