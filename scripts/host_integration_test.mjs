@@ -6,6 +6,9 @@
 //    这里用临时目录隔离，绝不碰用户真实的 ~/.dsh。
 
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { createSuite } from "./lib/test-harness.mjs";
+
+const { ok, eq, done } = createSuite("宿主集成测试");
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -93,21 +96,6 @@ const {
   PRESETS_PATH,
 } = await import("../index.js");
 
-let pass = 0;
-let fail = 0;
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
 
 // ── 假宿主 ──────────────────────────────────────────────────────────────────
 function makeCtx(liveAgents = []) {
@@ -1218,5 +1206,4 @@ const TMP_ID = "zz-test-only";
 }
 rmSync(DSH_HOME, { recursive: true, force: true });
 
-console.log(`\n宿主集成测试：${pass} 通过, ${fail} 失败`);
-process.exit(fail === 0 ? 0 : 1);
+done();

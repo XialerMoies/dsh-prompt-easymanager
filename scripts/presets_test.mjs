@@ -12,24 +12,9 @@ import {
   matchPreset,
   summarizePreset,
 } from "./lib/presets.mjs";
+import { createSuite } from "./lib/test-harness.mjs";
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
+const { ok, eq, done } = createSuite("快速预设逻辑测试");
 
 const ov = (action, text) => ({ action, text: text ?? "", original: "", originalHash: "", savedAt: "t", acceptedDrift: false });
 
@@ -170,9 +155,4 @@ const ov = (action, text) => ({ action, text: text ?? "", original: "", original
   ok(!g.includes("自设"), "空预设不提提示词（不啰嗦）");
 }
 
-console.log(`\n快速预设逻辑测试：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();

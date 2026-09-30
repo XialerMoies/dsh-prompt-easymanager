@@ -11,29 +11,15 @@
 // 不需要真 react，也不需要浏览器。
 
 import { readFileSync } from "node:fs";
+import { createSuite } from "./lib/test-harness.mjs";
+
+const { ok, eq, done } = createSuite("客户端渲染测试");
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLIENT = join(HERE, "..", "client.js");
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
 
 // ── 影子层 ──────────────────────────────────────────────────────────────────
 function makeShims() {
@@ -1769,9 +1755,4 @@ function makeSectionsData(over = {}) {
     ok(false, "enabledDraft 为 null 时不许炸 —— 抛了 " + e.message);
   }
 }
-console.log(`\n客户端渲染测试：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();

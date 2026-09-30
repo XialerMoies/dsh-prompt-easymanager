@@ -1,27 +1,13 @@
 // 提示词写入（编辑器后端）测试
 // 运行：node scripts/prompt_store_test.mjs
 import { createPromptStore, createPromptLibrary } from "./lib/prompt-library.mjs";
+import { createSuite } from "./lib/test-harness.mjs";
+
+const { ok, eq, done } = createSuite("写入测试");
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
 
 function fresh() {
   const dir = mkdtempSync(join(tmpdir(), "pm-store-"));
@@ -191,9 +177,4 @@ function fresh() {
   eq(kept.category, undefined, "保存别的条目不会给老条目补 category 字段");
 }
 
-console.log(`\n写入测试：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();

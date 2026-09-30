@@ -29,27 +29,13 @@
 // 这样 dsh 升级改了表，这个测试会当场红。
 
 import { readFileSync, existsSync } from "node:fs";
+import { createSuite } from "./lib/test-harness.mjs";
+
+const { ok, eq, done } = createSuite("分类 order 冲突检查");
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATEGORIES, suggestedOrder } from "./lib/prompt-library.mjs";
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -231,9 +217,4 @@ const nativeList = Object.entries(NATIVE).sort((a, b) => a[1] - b[1]);
   eq(after[0].name, "plan:policy", "换个名字就换位置 —— 所以绝不能撞 order");
 }
 
-console.log(`\n分类 order 冲突检查：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();

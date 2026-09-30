@@ -29,24 +29,10 @@ import {
   resolveOverrides,
   summarizePlan,
 } from "./lib/section-overrides.mjs";
+import { createSuite } from "./lib/test-harness.mjs";
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
+const { ok, eq, done } = createSuite("段落覆盖逻辑测试");
+
 
 /** 造一个「全局视图」（官方原文）。 */
 const global = (...rows) => rows.map(([name, text]) => ({ name, text }));
@@ -359,9 +345,4 @@ const assemblyOf = (...rows) => ({ sections: rows.map(([name, text]) => ({ name,
   eq(plan.apply.map((r) => r.name).sort(), ["harness:identity", "tool:bash"], "合并表能正常参与判定");
   eq(plan.drifted.length, 0, "两边 hash 都对得上，没有误报漂移");
 }
-console.log(`\n段落覆盖逻辑测试：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();

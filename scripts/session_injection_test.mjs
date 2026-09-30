@@ -1,28 +1,14 @@
 // 注入核心测试：多条挂载、全局默认、未知 id、子代理过滤、预览、幽灵引用清理
 // 运行：node scripts/session_injection_test.mjs
 import { createSessionInjector, sessionKey } from "./lib/session-injection.mjs";
+import { createSuite } from "./lib/test-harness.mjs";
+
+const { ok, eq, done } = createSuite("注入核心测试");
 import { createPromptLibrary } from "./lib/prompt-library.mjs";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
 
 // ── 测试用提示词库 ──────────────────────────────────────────────────────────
 const dir = mkdtempSync(join(tmpdir(), "pm-inj-"));
@@ -696,9 +682,4 @@ rmSync(dir, { recursive: true, force: true });
   ok(p.logged.reason.includes("没有一条带正文"), "原因写清楚，不是含糊的『取不到』");
 }
 
-console.log(`\n注入核心测试：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();

@@ -1,6 +1,9 @@
 // 提示词库测试：目录解析、模式校验、正文来源、错误收集
 // 运行：node scripts/prompt_library_test.mjs
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { createSuite } from "./lib/test-harness.mjs";
+
+const { ok, eq, done } = createSuite("提示词库测试");
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,22 +14,6 @@ import {
   suggestedOrder,
 } from "./lib/prompt-library.mjs";
 
-let pass = 0;
-let fail = 0;
-function ok(cond, label) {
-  if (cond) {
-    pass += 1;
-  } else {
-    fail += 1;
-    console.error("  ❌ " + label);
-  }
-}
-function eq(actual, expected, label) {
-  ok(
-    JSON.stringify(actual) === JSON.stringify(expected),
-    label + "（实际 " + JSON.stringify(actual) + "，期望 " + JSON.stringify(expected) + "）",
-  );
-}
 
 const dir = mkdtempSync(join(tmpdir(), "pm-lib-"));
 const promptsDir = join(dir, "prompts");
@@ -219,5 +206,4 @@ ok(estimateTokens("中".repeat(100)) === 100, "100 个中文 = 100 token");
 
 rmSync(dir, { recursive: true, force: true });
 
-console.log(`\n提示词库测试：${pass} 通过, ${fail} 失败`);
-process.exit(fail === 0 ? 0 : 1);
+done();

@@ -42,7 +42,7 @@ import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 
 const PLUGIN_ID = "dsh-prompt-manager";
 const PLUGIN_NAME = "提示词管理";
-const PLUGIN_VERSION = "0.10.1";
+const PLUGIN_VERSION = "0.10.2";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
 export const STATE_PATH = "/api/prompt-manager/state";
@@ -417,6 +417,15 @@ export function apply(ctx) {
   // 直连 ctx.connection（依赖 apply 声明的 inject）；取不到时大声报错而不是静默 no-op。
   const jsonHeaders = { "cache-control": "no-store" };
 
+/**
+ * 统一的 JSON 响应。
+ *
+ * 36 条路由本来每处都手写 `{ headers: jsonHeaders }`（带状态的还要写两遍）——
+ * 一个地方忘了加就变成可缓存的响应。收成一个函数，漏不了。
+ */
+const jsonOf = (body, status) =>
+  Response.json(body, status === undefined ? { headers: jsonHeaders } : { status, headers: jsonHeaders });
+
   ctx.effect(() => {
     const connection =
       ctx.connection ?? (typeof ctx.get === "function" ? ctx.get("connection") : undefined);
@@ -457,18 +466,15 @@ export function apply(ctx) {
         try {
           body = await request.json();
         } catch {
-          return Response.json({ error: "请求体不是合法 JSON" }, { status: 400, headers: jsonHeaders });
+          return jsonOf({ error: "请求体不是合法 JSON" }, 400);
         }
         if (!("enabled" in (body ?? {}))) {
-          return Response.json({ error: "缺少 enabled 字段" }, { status: 400, headers: jsonHeaders });
+          return jsonOf({ error: "缺少 enabled 字段" }, 400);
         }
         const next = body.enabled !== false;
         writeState({ enabled: next });
         diag.lastToggle = next ? "enabled" : "disabled";
-        return Response.json(
-          { ok: true, enabled: next, note: next ? "已启用你的提示词配置" : "已切回 dsh 原始提示词" },
-          { headers: jsonHeaders },
-        );
+        return jsonOf({ ok: true, enabled: next, note: next ? "已启用你的提示词配置" : "已切回 dsh 原始提示词" });
       }
 
       // ── GET state：分配表 + 默认 + 提示词库 + 诊断 ──────────────────
@@ -481,8 +487,7 @@ export function apply(ctx) {
             .map((p) => p && p.category)
             .filter((c) => c && !CATEGORIES.some((k) => k.id === c)),
         )].sort();
-        return Response.json(
-          {
+        return jsonOf({
             assignments: snap.assignments, // { sessionId: [promptId, ...] }
             defaults: snap.defaults,
             /**
@@ -507,9 +512,7 @@ export function apply(ctx) {
             customCategories: custom,
             catalogPath: CATALOG_PATH,
             diag: publicDiag(),
-          },
-          { headers: jsonHeaders },
-        );
+          });
       }
 
       // ── GET/POST sections：原生系统提示词段落的拆分 / 编辑 / 关掉 / 还原 ──
@@ -530,8 +533,7 @@ export function apply(ctx) {
             globalSections: found.sections,
           });
           diag.lastSections = found.outcome;
-          return Response.json(
-            {
+          return jsonOf({
               outcome: found.outcome,
               error: found.error ?? null,
               agentId: found.agentId ?? null,
@@ -576,9 +578,7 @@ export function apply(ctx) {
                 total: found.sections.length,
               },
               actions: OVERRIDE_ACTIONS,
-            },
-            { headers: jsonHeaders },
-          );
+            });
         }
 
         if (request.method === "POST") {
@@ -587,14 +587,14 @@ export function apply(ctx) {
             body = await request.json();
           } catch {
             diag.lastSections = "bad-json";
-            return Response.json({ error: "请求体不是合法 JSON" }, { status: 400, headers: jsonHeaders });
+            return jsonOf({ error: "请求体不是合法 JSON" }, 400);
           }
 
           const name = typeof body?.name === "string" ? body.name : "";
           const action = typeof body?.action === "string" ? body.action : "";
           if (!name) {
             diag.lastSections = "missing-name";
-            return Response.json({ error: "缺少 name" }, { status: 400, headers: jsonHeaders });
+            return jsonOf({ error: "缺少 name" }, 400);
           }
 
           const state = readState();
@@ -608,10 +608,7 @@ export function apply(ctx) {
           const scope = body?.scope === "session" ? "session" : "global";
           if (scope === "session" && !sessionId) {
             diag.lastSections = "missing-session";
-            return Response.json(
-              { error: "scope: session 时必须带 ?session=<sessionId>" },
-              { status: 400, headers: jsonHeaders },
-            );
+            return jsonOf({ error: "scope: session 时必须带 ?session=<sessionId>" }, 400);
           }
 
           // 拿到**这一层**的表（会话层不存在就现建）
@@ -629,10 +626,7 @@ export function apply(ctx) {
           } else if (action === "replace" || action === "disable") {
             if (typeof body?.text !== "string" && action === "replace") {
               diag.lastSections = "missing-text";
-              return Response.json(
-                { error: "replace 需要 text" },
-                { status: 400, headers: jsonHeaders },
-              );
+              return jsonOf({ error: "replace 需要 text" }, 400);
             }
             // 先取这一段**当前的官方原文**做漂移基准。
             // 此刻如果已经存在覆盖，listSections 给的是原文（不带 scope），所以
@@ -641,13 +635,10 @@ export function apply(ctx) {
             const live = found.sections.find((s) => s.name === name);
             if (live === undefined) {
               diag.lastSections = "unknown-section";
-              return Response.json(
-                {
+              return jsonOf({
                   error: `找不到段落 ${name} —— 它可能刚被官方删掉或改名了`,
                   knownNames: found.sections.map((s) => s.name),
-                },
-                { status: 404, headers: jsonHeaders },
-              );
+                }, 404);
             }
             const built = makeOverride({
               action,
@@ -661,18 +652,12 @@ export function apply(ctx) {
             const existing = normalizeOverride(table[name]);
             if (existing === null) {
               diag.lastSections = "acknowledge-missing";
-              return Response.json(
-                { error: `段落 ${name} 没有覆盖记录，无从确认` },
-                { status: 404, headers: jsonHeaders },
-              );
+              return jsonOf({ error: `段落 ${name} 没有覆盖记录，无从确认` }, 404);
             }
             table[name] = { ...existing, acceptedDrift: true };
           } else {
             diag.lastSections = "bad-action";
-            return Response.json(
-              { error: `action 必须是 replace / disable / restore / acknowledge，收到 ${JSON.stringify(action)}` },
-              { status: 400, headers: jsonHeaders },
-            );
+            return jsonOf({ error: `action 必须是 replace / disable / restore / acknowledge，收到 ${JSON.stringify(action)}` }, 400);
           }
 
           // 只写**这一层**，另一层原样保留
@@ -696,8 +681,7 @@ export function apply(ctx) {
           );
           const plan2 = planOverrides({ overrides: effective, globalSections: found2.sections });
           diag.lastSections = `${action}:${scope}:ok`;
-          return Response.json(
-            {
+          return jsonOf({
               ok: true,
               action,
               name,
@@ -715,9 +699,7 @@ export function apply(ctx) {
                 untouched: plan2.untouched.length,
                 total: found2.sections.length,
               },
-            },
-            { headers: jsonHeaders },
-          );
+            });
         }
       }
 
@@ -750,8 +732,7 @@ export function apply(ctx) {
           }));
           list.sort((a, b) => a.name.localeCompare(b.name));
 
-          return Response.json(
-            {
+          return jsonOf({
               presets: list,
               layers: { global: globalLayer, session: sessionLayer },
               /**
@@ -763,9 +744,7 @@ export function apply(ctx) {
                 session: sessionLayer ? matchPreset(sessionLayer, s.presets) : null,
               },
               sessionId: hasSession ? sessionId : null,
-            },
-            { headers: jsonHeaders },
-          );
+            });
         }
 
         if (request.method === "POST") {
@@ -774,7 +753,7 @@ export function apply(ctx) {
             body = await request.json();
           } catch {
             diag.lastPresets = "bad-json";
-            return Response.json({ error: "请求体不是合法 JSON" }, { status: 400, headers: jsonHeaders });
+            return jsonOf({ error: "请求体不是合法 JSON" }, 400);
           }
           const action = typeof body?.action === "string" ? body.action : "";
 
@@ -783,15 +762,12 @@ export function apply(ctx) {
             const name = typeof body?.name === "string" ? body.name.trim() : "";
             if (!name) {
               diag.lastPresets = "missing-name";
-              return Response.json({ error: "缺少预设名字" }, { status: 400, headers: jsonHeaders });
+              return jsonOf({ error: "缺少预设名字" }, 400);
             }
             const scope = body?.scope === "session" ? "session" : "global";
             if (scope === "session" && !hasSession) {
               diag.lastPresets = "missing-session";
-              return Response.json(
-                { error: "存会话层预设时必须带 ?session=<sessionId>" },
-                { status: 400, headers: jsonHeaders },
-              );
+              return jsonOf({ error: "存会话层预设时必须带 ?session=<sessionId>" }, 400);
             }
 
             const s = readState();
@@ -813,7 +789,7 @@ export function apply(ctx) {
             });
             writeState({ presets: { ...s.presets, [id]: preset } });
             diag.lastPresets = `save:${id}`;
-            return Response.json({ ok: true, id, preset }, { headers: jsonHeaders });
+            return jsonOf({ ok: true, id, preset });
           }
 
           // ── 应用：覆盖写回它自己的那一层 ────────────────────────────────
@@ -823,17 +799,11 @@ export function apply(ctx) {
             const preset = s.presets[id];
             if (!preset) {
               diag.lastPresets = "unknown-preset";
-              return Response.json(
-                { error: `没有这条预设：${id}`, known: Object.keys(s.presets) },
-                { status: 404, headers: jsonHeaders },
-              );
+              return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
             }
             if (preset.scope === "session" && !hasSession) {
               diag.lastPresets = "missing-session";
-              return Response.json(
-                { error: `预设「${preset.name}」是会话层的，应用时必须带 ?session=<sessionId>` },
-                { status: 400, headers: jsonHeaders },
-              );
+              return jsonOf({ error: `预设「${preset.name}」是会话层的，应用时必须带 ?session=<sessionId>` }, 400);
             }
 
             const plan = planApply(preset);
@@ -867,16 +837,13 @@ export function apply(ctx) {
             // 覆盖是每次装配现取的，所以不用重挂 agent。
 
             diag.lastPresets = `apply:${id}`;
-            return Response.json(
-              {
+            return jsonOf({
                 ok: true,
                 id,
                 name: preset.name,
                 scope: plan.scope,
                 applied: { prompts: plan.prompts.length, sections: Object.keys(plan.sections).length },
-              },
-              { headers: jsonHeaders },
-            );
+              });
           }
 
           // ── 删除 ────────────────────────────────────────────────────────
@@ -885,20 +852,17 @@ export function apply(ctx) {
             const s = readState();
             if (!s.presets[id]) {
               diag.lastPresets = "unknown-preset";
-              return Response.json({ error: `没有这条预设：${id}` }, { status: 404, headers: jsonHeaders });
+              return jsonOf({ error: `没有这条预设：${id}` }, 404);
             }
             const next = { ...s.presets };
             delete next[id];
             writeState({ presets: next });
             diag.lastPresets = `delete:${id}`;
-            return Response.json({ ok: true, id }, { headers: jsonHeaders });
+            return jsonOf({ ok: true, id });
           }
 
           diag.lastPresets = "bad-action";
-          return Response.json(
-            { error: `action 必须是 save / apply / delete，收到 ${JSON.stringify(action)}` },
-            { status: 400, headers: jsonHeaders },
-          );
+          return jsonOf({ error: `action 必须是 save / apply / delete，收到 ${JSON.stringify(action)}` }, 400);
         }
       }
 
@@ -911,7 +875,7 @@ export function apply(ctx) {
           }
           const result = await injector.preview(sessionId);
           diag.lastPreview = result.outcome ?? "unknown";
-          return Response.json(result, { headers: jsonHeaders });
+          return jsonOf(result);
         }
 
         // ── POST reload：重读 catalog.json ──────────────────────────────
@@ -921,10 +885,7 @@ export function apply(ctx) {
             r = library.reload();
           } catch (err) {
             diag.lastPost = "reload-threw";
-            return Response.json(
-              { error: err?.message ?? String(err) },
-              { status: 500, headers: jsonHeaders },
-            );
+            return jsonOf({ error: err?.message ?? String(err) }, 500);
           }
           diag.reloadCount += 1;
           diag.lastPost = `reload:${r.count}`;
@@ -938,10 +899,7 @@ export function apply(ctx) {
               injector.assign(sessionId, snap.assignments[sessionId]);
             }
           }
-          return Response.json(
-            { count: r.count, errors: r.errors, prompts: libraryList(), pruned },
-            { headers: jsonHeaders },
-          );
+          return jsonOf({ count: r.count, errors: r.errors, prompts: libraryList(), pruned });
         }
 
         // ── POST assign：给会话指定提示词（数组）────────────────────────
@@ -990,15 +948,12 @@ export function apply(ctx) {
             const unknown = promptIds.filter((id) => typeof id !== "string" || !library.has(id));
             if (unknown.length > 0) {
               diag.lastPost = "unknown-prompt";
-              return Response.json(
-                {
+              return jsonOf({
                   ok: false,
                   outcome: "unknown-prompt",
                   error: `提示词库里没有：${unknown.join("、")}`,
                   prompts: libraryList(),
-                },
-                { status: 400, headers: jsonHeaders },
-              );
+                }, 400);
             }
           }
 
@@ -1013,10 +968,7 @@ export function apply(ctx) {
         // ── GET/POST defaults：全局默认（新会话用）──────────────────────
         if (path === DEFAULTS_PATH) {
           if (request.method === "GET") {
-            return Response.json(
-              { defaults: injector.getDefaults() },
-              { headers: jsonHeaders },
-            );
+            return jsonOf({ defaults: injector.getDefaults() });
           }
           let body;
           try {
@@ -1033,15 +985,12 @@ export function apply(ctx) {
           const unknown = ids.filter((id) => typeof id !== "string" || !library.has(id));
           if (unknown.length > 0) {
             diag.lastPost = "unknown-prompt";
-            return Response.json(
-              {
+            return jsonOf({
                 ok: false,
                 outcome: "unknown-prompt",
                 error: `提示词库里没有：${unknown.join("、")}`,
                 defaults: injector.getDefaults(),
-              },
-              { status: 400, headers: jsonHeaders },
-            );
+              }, 400);
           }
           const result = injector.setDefaults(ids);
           diag.lastPost = `defaults:${ids.join(",") || "(none)"}`;
@@ -1074,8 +1023,7 @@ export function apply(ctx) {
           const custom = [...new Set(
             items.map((p) => p.category).filter((c) => c && !CATEGORIES.some((k) => k.id === c)),
           )].sort();
-          return Response.json(
-            {
+          return jsonOf({
               prompts: items,
               // 内置分类表（含建议 order）+ 目录里已存在的自定义分类
               categories: CATEGORIES,
@@ -1085,9 +1033,7 @@ export function apply(ctx) {
               catalogPath: CATALOG_PATH,
               promptsDir: PROMPTS_DIR,
               libraryErrors: libraryErrors(),
-            },
-            { headers: jsonHeaders },
-          );
+            });
         }
 
         // ── POST edit：设置页的编辑器用（增改 / 删）──────────────────────
@@ -1102,10 +1048,7 @@ export function apply(ctx) {
           const action = body?.action;
           if (action !== "upsert" && action !== "delete") {
             diag.lastPost = "bad-action";
-            return Response.json(
-              { ok: false, error: `action 必须是 upsert 或 delete，收到 ${JSON.stringify(action)}` },
-              { status: 400, headers: jsonHeaders },
-            );
+            return jsonOf({ ok: false, error: `action 必须是 upsert 或 delete，收到 ${JSON.stringify(action)}` }, 400);
           }
 
           let result;
@@ -1117,7 +1060,7 @@ export function apply(ctx) {
 
           if (!result.ok) {
             diag.lastPost = `edit:${action}:failed`;
-            return Response.json(result, { status: 400, headers: jsonHeaders });
+            return jsonOf(result, 400);
           }
 
           // 写完立刻重载，让改动马上生效
@@ -1132,10 +1075,7 @@ export function apply(ctx) {
           }
           diag.editCount = (diag.editCount ?? 0) + 1;
           diag.lastPost = `edit:${action}:${result.id}`;
-          return Response.json(
-            { ...result, pruned, prompts: libraryList(), libraryErrors: libraryErrors() },
-            { headers: jsonHeaders },
-          );
+          return jsonOf({ ...result, pruned, prompts: libraryList(), libraryErrors: libraryErrors() });
         }
 
         return new Response("Not Found", { status: 404 });

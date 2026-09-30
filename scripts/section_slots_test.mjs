@@ -17,24 +17,10 @@
 //      硬报会误伤。这里用真机数据验证：跑出来正好 10 个空槽位，一个不多一个不少。
 
 import { SECTION_SLOTS, SLOT_KIND, findEmptySlots } from "./lib/section-slots.mjs";
+import { createSuite } from "./lib/test-harness.mjs";
 
-let pass = 0;
-let fail = 0;
-const failures = [];
-function ok(cond, label) {
-  if (cond) pass += 1;
-  else {
-    fail += 1;
-    failures.push(label);
-    console.error("  ❌ " + label);
-  }
-}
-function eq(a, b, label) {
-  ok(
-    JSON.stringify(a) === JSON.stringify(b),
-    label + "（实际 " + JSON.stringify(a) + "，期望 " + JSON.stringify(b) + "）",
-  );
-}
+const { ok, eq, done } = createSuite("槽位表测试");
+
 
 const byKey = new Map(SECTION_SLOTS.map((s) => [s.key, s]));
 
@@ -210,9 +196,4 @@ const byKey = new Map(SECTION_SLOTS.map((s) => [s.key, s]));
   ok(noMcp.some((e) => e.key === "MCP_SERVERS"), "两者都没有时才报空");
 }
 
-console.log(`\n槽位表测试：${pass} 通过, ${fail} 失败`);
-if (failures.length) {
-  console.log("失败项：");
-  for (const f of failures) console.log("  - " + f);
-}
-process.exit(fail === 0 ? 0 : 1);
+done();
