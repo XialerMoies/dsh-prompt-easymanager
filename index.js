@@ -864,6 +864,33 @@ const jsonOf = (body, status) =>
               });
           }
 
+          // ── 改名 ────────────────────────────────────────────────────────
+          //
+          // 界面上预设名是**卡片标题**，旁边一个铅笔图标改它。
+          // 改名要同时换 id（id 是从名字派生的）—— 所以返回新 id，
+          // 客户端得跟着更新「当前选中的是哪条」。
+          if (action === "rename") {
+            const id = typeof body?.id === "string" ? body.id : "";
+            const name = typeof body?.name === "string" ? body.name.trim() : "";
+            if (!name) {
+              diag.lastPresets = "missing-name";
+              return jsonOf({ error: "缺少预设名字" }, 400);
+            }
+            const s = readState();
+            const preset = s.presets[id];
+            if (!preset) {
+              diag.lastPresets = "unknown-preset";
+              return jsonOf({ error: `没有这条预设：${id}` }, 404);
+            }
+            const nextId = presetId(name, Object.keys(s.presets).filter((x) => x !== id));
+            const next = { ...s.presets };
+            delete next[id];
+            next[nextId] = { ...preset, name };
+            writeState({ presets: next });
+            diag.lastPresets = `rename:${id}->${nextId}`;
+            return jsonOf({ ok: true, id: nextId, oldId: id, name });
+          }
+
           // ── 删除 ────────────────────────────────────────────────────────
           if (action === "delete") {
             const id = typeof body?.id === "string" ? body.id : "";
@@ -880,7 +907,7 @@ const jsonOf = (body, status) =>
           }
 
           diag.lastPresets = "bad-action";
-          return jsonOf({ error: `action 必须是 save / apply / delete，收到 ${JSON.stringify(action)}` }, 400);
+          return jsonOf({ error: `action 必须是 save / apply / rename / delete，收到 ${JSON.stringify(action)}` }, 400);
         }
       }
 

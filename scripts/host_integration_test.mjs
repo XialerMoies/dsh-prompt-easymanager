@@ -1116,6 +1116,38 @@ const TMP_ID = "zz-test-only";
   eq(saved.json.preset.prompts, ["format-contract"], "快照里带上提示词");
   ok(saved.json.preset.sections["harness:identity"] !== undefined, "快照里带上段落改写");
 
+  // ②b 改名 —— 界面上的预设名是**卡片标题**，旁边一个铅笔改它
+  {
+    const renamed = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "rename", id: "写代码", name: "写代码（v2）" },
+    });
+    eq(renamed.status, 200, "改名 → 200");
+    // ⚠️ id 是从名字派生的，所以改名会**换 id** —— 客户端得拿新 id 更新选中项
+    eq(renamed.json.id, "写代码（v2）", "**改名换 id**（id 派生自名字）");
+    eq(renamed.json.oldId, "写代码", "回报旧 id 以便客户端对账");
+    const list1 = await call(ctx8, PRESETS_PATH, { method: "GET" });
+    eq(list1.json.presets.map((p) => p.name), ["写代码（v2）"], "列表里只剩新名字那条");
+    // 改回去，后面的用例还用「写代码」这个 id
+    const back = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "rename", id: "写代码（v2）", name: "写代码" },
+    });
+    eq(back.json.id, "写代码", "改回原名 → id 也回到原样");
+
+    // 边界：空名字 / 不存在的预设
+    const empty = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "rename", id: "写代码", name: "   " },
+    });
+    eq(empty.status, 400, "空名字 → 400");
+    const missing = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "rename", id: "没有这条", name: "x" },
+    });
+    eq(missing.status, 404, "改不存在的预设 → 404");
+  }
+
   // ③ 改成别的状态
   await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
   await call(ctx8, SECTIONS_PATH, {

@@ -405,6 +405,16 @@ window.__ModuleLoader__.load({
         var catSt = react.useState([]);
         var closedCats = catSt[0];
         var setClosedCats = catSt[1];
+        /**
+         * 正在改预署名（标题变成输入框）。
+         * 跟 `presetName` 分开：那个是「存新预设时填的名字」，这个是「改现有预设名」。
+         */
+        var rnSt = react.useState(false);
+        var renaming = rnSt[0];
+        var setRenaming = rnSt[1];
+        var rnDraftSt = react.useState("");
+        var renameDraft = rnDraftSt[0];
+        var setRenameDraft = rnDraftSt[1];
         var timerRef = react.useRef(null);
         var mountedRef = react.useRef(true);
 
@@ -562,13 +572,17 @@ window.__ModuleLoader__.load({
                     ? "已存为「" + payload.name + "」"
                     : payload.action === "apply"
                       ? "已切换到「" + (d && d.name) + "」"
-                      : "已删除",
+                      : payload.action === "rename"
+                        ? "已改名为「" + (d && d.name) + "」"
+                        : "已删除",
                 );
                 // 应用预设会动 defaults / assignments，注入那边也要重读
                 loadPresets(scope, sid);
                 loadSections(scope, sid);
                 setErr(null);
-                return null;
+                // ⚠️ 把响应交出去 —— 改名会**换 id**（id 从名字派生），
+                //    调用方要拿新 id 更新「当前选中是哪条」。
+                return d || null;
               })
               .catch(function (e) {
                 if (mountedRef.current) flash("失败：" + ((e && e.message) || String(e)));
@@ -1301,186 +1315,236 @@ window.__ModuleLoader__.load({
          *    会话」改错了地方很要紧，藏进 title 用户就不会去看了；但也不该占
          *    一整行灰字，放进标题就够。
          */
+        /**
+         * 提示词组合 —— **一整张卡片**：标题就是「你现在在哪套配置上」。
+         *
+         * 结构（用户定的）：
+         *     标题（预设名 / 未保存的配置）+ ✎      [预设下拉] [保存] [重新读取]
+         *     ─────────────────────────────────────────────────────
+         *     ☐ 提示词 …  ☐ 提示词 …        ← 勾选就是在改当前这套
+         *
+         * 为什么是这个形状：
+         *   · 预设 = 一套配置的**名字**。所以它该是这张卡片的**标题**，
+         *     而不是别处的一个按钮 —— 一眼就知道自己在哪套上。
+         *   · 勾选 = 改这套配置。改完按 [保存] 落盘；换一套用下拉。
+         *   · 以前把「选哪些」和「预设」拆成两张卡片、外加一排胶囊，
+         *     同一件事在三处出现，用户问「你为什么要做到那么麻烦」。
+         */
         function renderCombo() {
+          var scopeKey = sectionScope === "session" ? "session" : "global";
+          var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
+          var list = (presetsData && presetsData.presets) || [];
+          // 当前在哪套上：匹配到就是它；没匹配到 = 这套是手改的，还没名字
+          var currentId = matched ? matched.id : "";
+          var currentName = matched ? matched.name : "未保存的配置";
+          var bus = presetsBusy || !presetsData;
+
+          // ── 标题：预设名 + 改名铅笔（或改名输入框）────────────────────
+          var titleNode;
+          if (renaming) {
+            titleNode = react.createElement("input", {
+              key: "rn",
+              type: "text",
+              className: "pm-input",
+              style: Object.assign({}, SELECT_SM, { maxWidth: "220px" }),
+              value: renameDraft,
+              autoFocus: true,
+              disabled: presetsBusy,
+              onChange: function (ev) {
+                setRenameDraft(ev.target.value);
+              },
+              onKeyDown: function (ev) {
+                if (ev.key === "Enter") commitRename();
+                if (ev.key === "Escape") setRenaming(false);
+              },
+              onBlur: function () {
+                setRenaming(false);
+              },
+            });
+          } else {
+            titleNode = react.createElement("span", { key: "t", style: HEADING_TITLE }, currentName);
+          }
+
           var head = react.createElement(
             "div",
             { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
             [
-              react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合"),
+              titleNode,
+              // 改名铅笔：只有「当前这套是一条真预设」时才有意义
+              currentId && !renaming
+                ? react.createElement(
+                    "button",
+                    {
+                      key: "pen",
+                      type: "button",
+                      className: "pm-btn",
+                      style: Object.assign({}, DETAIL_BTN, { padding: "1px 6px" }),
+                      disabled: bus,
+                      title: "改这套预设的名字",
+                      onClick: function () {
+                        setRenaming(true);
+                        setRenameDraft(currentName);
+                      },
+                    },
+                    "✎",
+                  )
+                : null,
               react.createElement(
                 "span",
-                { key: "scope", style: HEADING_COUNT },
+                {
+                  key: "scope",
+                  style: HEADING_COUNT,
+                  title: "当前改的是哪一层",
+                },
                 sectionScope === "session"
                   ? (sectionSessionId ? "只改这个会话" : "还没挑会话")
                   : "全局默认 · 所有会话",
               ),
-              // 预设的匹配状态也挂在这一行的末尾 —— 它描述的是「当前这套配置」
-              react.createElement(
-                "span",
-                { key: "c", style: HEADING_COUNT },
-                presetsData && presetsData.matched
-                  ? (presetsData.matched[sectionScope === "session" ? "session" : "global"]
-                      ? "· 预设「" +
-                        presetsData.matched[sectionScope === "session" ? "session" : "global"].name +
-                        "」"
-                      : "· 相对预设已改动")
-                  : "",
-              ),
               react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+              // 预设下拉：换一套
+              react.createElement(
+                "select",
+                {
+                  key: "sel",
+                  className: "pm-input",
+                  style: SELECT_SM,
+                  disabled: bus,
+                  value: currentId,
+                  title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
+                  onChange: function (ev) {
+                    var id = ev.target.value;
+                    if (id) applyPreset(id);
+                  },
+                },
+                [
+                  // 手改过（没匹配上任何预设）时给一个占位项，否则 select 会跳到第一条
+                  currentId
+                    ? null
+                    : react.createElement("option", { key: "__none", value: "" }, "未保存的配置"),
+                  list.length === 0
+                    ? react.createElement("option", { key: "__empty", value: "" }, "（还没有预设）")
+                    : null,
+                  list.map(function (p) {
+                    return react.createElement("option", { key: p.id, value: p.id }, p.name);
+                  }),
+                ],
+              ),
+              // 保存：把当前这套存成新预设 / 覆盖当前那条
+              react.createElement(
+                "button",
+                {
+                  key: "sav",
+                  type: "button",
+                  className: "pm-btn",
+                  style: bus ? BTN_BUSY : BTN,
+                  disabled: bus,
+                  title: currentId
+                    ? "把当前勾选覆盖到预设「" + currentName + "」"
+                    : "把当前勾选存成一套新预设",
+                  onClick: function () {
+                    savePreset();
+                  },
+                },
+                presetsBusy ? "保存中…" : "保存",
+              ),
               react.createElement(
                 "button",
                 {
                   key: "r",
                   type: "button",
                   className: "pm-btn",
-                  style: presetsBusy ? BTN_BUSY : BTN,
-                  disabled: presetsBusy,
+                  style: bus ? BTN_BUSY : BTN,
+                  disabled: bus,
+                  title: "重新从盘上读一遍",
                   onClick: function () {
                     loadPresets(sectionScope, sectionSessionId);
                   },
                 },
-                "重新读取",
+                "↻",
               ),
             ],
           );
 
-          if (presetsData === null) {
+          if (!presetsData) {
             return react.createElement("div", null, [
               head,
               react.createElement("div", { key: "l", style: STATUS_LINE }, "读取中…"),
             ]);
           }
 
-          var children = [head];
-
-          // ── 选哪些生效 ──────────────────────────────────────────────────
-          // （「还没挑会话」不放常驻警告条 —— 标题上已经写了，真去勾选时
-          //   setActivePrompts 也会 flash 一句「先选一个会话」。）
-          children.push(react.createElement("div", { key: "pick" }, renderPicker()));
-
-          // ── 存 / 换一套（快速预设）──────────────────────────────────────
-          // 内容收进 presetChildren，最后整体套一张卡片（见下面那段）。
-          var presetChildren = [];
-          var list = presetsData.presets || [];
-          if (list.length === 0) {
-            presetChildren.push(
-              react.createElement(
-                "div",
-                { key: "pe", style: STATUS_LINE },
-                "还没有预设。上面调好一套（哪些提示词生效 + 哪些段落改写），在下面存下来。",
-              ),
-            );
-          } else {
-            var matchedId =
-              presetsData.matched &&
-              presetsData.matched[sectionScope === "session" ? "session" : "global"]
-                ? presetsData.matched[sectionScope === "session" ? "session" : "global"].id
-                : null;
-            var chips = [];
-            for (var li = 0; li < list.length; li++) {
-              (function (p) {
-                chips.push(
-                  react.createElement(
-                    "span",
-                    { key: p.id, style: { display: "inline-flex", alignItems: "center", gap: "2px" } },
-                    [
-                      react.createElement(
-                        "button",
-                        {
-                          key: "a",
-                          type: "button",
-                          className: "pm-btn",
-                          style: presetsBusy ? BTN_BUSY : p.id === matchedId ? BTN_PRIMARY : BTN,
-                          disabled: presetsBusy,
-                          title: p.summary + (p.note ? " · " + p.note : ""),
-                          onClick: function () {
-                            doPreset({ action: "apply", id: p.id }, p.scope, sectionSessionId);
-                          },
-                        },
-                        p.name + (p.id === matchedId ? " ✓" : ""),
-                      ),
-                      react.createElement(
-                        "button",
-                        {
-                          key: "d",
-                          type: "button",
-                          className: "pm-btn",
-                          style: presetsBusy ? BTN_BUSY : BTN,
-                          disabled: presetsBusy,
-                          title: "删除这个预设（不影响当前配置）",
-                          onClick: function () {
-                            doPreset({ action: "delete", id: p.id }, sectionScope, sectionSessionId);
-                          },
-                        },
-                        "×",
-                      ),
-                    ],
-                  ),
-                );
-              })(list[li]);
-            }
-            presetChildren.push(react.createElement("div", { key: "pl", style: COMBO_CHIPS }, chips));
-          }
-
-          // 存为预设 —— 紧跟在预设胶囊下面，它们是一件事
-          presetChildren.push(
-            react.createElement("div", { key: "ps", style: ACTIONS }, [
-              react.createElement("span", { key: "l", style: HINT_TEXT }, "把当前这套存为预设："),
-              react.createElement("input", {
-                key: "i",
-                type: "text",
-                className: "pm-input",
-                style: SELECT_SM,
-                value: presetName,
-                placeholder: "名字，比如「写代码」",
-                disabled: presetsBusy,
-                onChange: function (e) {
-                  setPresetName(e.target.value);
-                },
-              }),
-              react.createElement(
-                "button",
-                {
-                  key: "s",
-                  type: "button",
-                  className: "pm-btn",
-                  style: presetsBusy || !presetName.trim() ? BTN_BUSY : BTN_PRIMARY,
-                  disabled: presetsBusy || !presetName.trim(),
-                  onClick: function () {
-                    doPreset(
-                      { action: "save", name: presetName.trim(), scope: sectionScope },
-                      sectionScope,
-                      sectionSessionId,
-                    ).then(function () {
-                      setPresetName("");
-                    });
-                  },
-                },
-                "存下来",
-              ),
-              // 「覆盖不是合并」收进「?」—— 它是「决定要不要点」之前才需要读的
-              // 一句，常驻占一行灰字不值。三块卡片的说明统一走这个图标。
-              renderHelpIcon(
-                "应用预设是**覆盖**不是合并 —— 它会把你当前的配置整个换成预设里那份" +
-                  "（包括去掉预设里没有的提示词）。所以先存再切。",
-              ),
-            ]),
-          );
-
-          // 预设整块也套卡片 —— 页面上每个内容块都是卡片，统一。
+          // ── 卡片体：勾选网格 ──────────────────────────────────────────
           //
-          // ⚠️ 之前这块是裸元素堆着（说明文字 / 胶囊 / 输入行 / 警告各一行），
-          //    跟上面选词卡片和下面「个人提示词」的完成度差着量级。
-          //    用户原话：「这功能的外观样式你倒是做好了啊，做个毛坯房干什么」。
-          children.push(
-            react.createElement(
-              "div",
-              { key: "presets", style: Object.assign({}, CARD, { marginTop: "10px" }) },
-              react.createElement("div", { style: CARD_DETAILS }, presetChildren),
-            ),
-          );
+          // ⚠️ 只有**一个**子元素：卡片体本身就是那张卡。头单独一行在外面 ——
+          //    因为卡片头要放标题+下拉+保存（一行控件），而卡片体里是勾选网格。
+          //    包成同一个 CARD 的话那头就得塞进卡片里，跟勾选挤一起。
+          return react.createElement("div", null, [
+            head,
+            react.createElement("div", { key: "card", style: CARD }, renderPicker()),
+            list.length > 0
+              ? react.createElement(
+                  "div",
+                  { key: "pn", style: HINT_TEXT },
+                  "勾选即在改这套配置，改完按「保存」落盘；下拉可换另一套。",
+                )
+              : null,
+          ]);
+        }
 
-          return react.createElement("div", null, children);
+        /** 换一套：应用预设（把它的内容写回当前层）。 */
+        function applyPreset(id) {
+          var p = ((presetsData && presetsData.presets) || []).filter(function (x) {
+            return x.id === id;
+          })[0];
+          doPreset({ action: "apply", id: id }, p ? p.scope : sectionScope, sectionSessionId);
+        }
+
+        /**
+         * 保存当前勾选。
+         *
+         * ⚠️ 当前这套**已经有名字**时是**覆盖它自己**，不是又存一份同名的 ——
+         *    同名会让列表里堆一串「写代码」「写代码 2」「写代码 3」。
+         *    覆盖走同一条 save（同名 → presetId 命中同一条）。
+         */
+        function savePreset() {
+          var scopeKey = sectionScope === "session" ? "session" : "global";
+          var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
+          if (matched) {
+            doPreset(
+              { action: "save", name: matched.name, scope: sectionScope },
+              sectionScope,
+              sectionSessionId,
+            );
+            return;
+          }
+          var name = presetName.trim();
+          if (!name) {
+            flash("先给它起个名字");
+            setRenaming(true);
+            setRenameDraft("");
+            return;
+          }
+          doPreset(
+            { action: "save", name: name, scope: sectionScope },
+            sectionScope,
+            sectionSessionId,
+          ).then(function () {
+            setPresetName("");
+          });
+        }
+
+        /** 改名：把当前这条预设换个名字（id 跟着变，所以要跟着更新选中）。 */
+        function commitRename() {
+          var next = renameDraft.trim();
+          setRenaming(false);
+          if (!next) return;
+          var scopeKey = sectionScope === "session" ? "session" : "global";
+          var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
+          if (!matched || matched.name === next) return;
+          doPreset(
+            { action: "rename", id: matched.id, name: next },
+            sectionScope,
+            sectionSessionId,
+          );
         }
 
         /**
