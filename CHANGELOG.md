@@ -118,7 +118,7 @@ chunk 永远拉不起来。
 
 3. **`client.overlay.js` 是死代码。** 按「浮层只有 17 行，两边各留一份」处理，
    结果宿主白拉了一个**没有任何人读它导出**的文件。删掉了，
-   原文留在 [docs/overlay-component.md](docs/overlay-component.md) 备查。
+   原文留在 [docs/dev/overlay-component.md](docs/dev/overlay-component.md) 备查。
 
    顺带发现一个更值钱的：`OVERLAY` / `PANEL` / `PANEL_HEAD` 那一族常量
    其实是被**面板和预览两个 chunk 从 `api.style` 取的** —— 不是各自复制的。

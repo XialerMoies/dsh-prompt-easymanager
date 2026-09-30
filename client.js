@@ -8,7 +8,7 @@
 //
 // 浮层外壳（Overlay + OVERLAY / PANEL 那一族常量）没有独立 chunk：面板和预览
 // 各自定义同一个 Overlay 组件，常量从这里随 api.style 交下去。原文见
-// docs/overlay-component.md。
+// docs/dev/overlay-component.md。
 //
 // 各处的坑写在**挨着代码的地方**，不堆在这儿 —— 头注释写得越长越没人看。
 

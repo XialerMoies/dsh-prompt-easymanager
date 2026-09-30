@@ -58,7 +58,7 @@
 
 > `replace`（替换）模式曾在 v0.2.0 存在，v0.2.2 删除。它注册 `complete: true` 的
 > section，会顶掉 dsh 原生的身份声明和二十余段工具用法说明 —— 收益极低、代价极高。
-> 想改某一段，用「段落改写」。详见 [CHANGELOG](../CHANGELOG.md)。
+> 想改某一段，用「段落改写」。
 
 ---
 
@@ -93,7 +93,6 @@ dsh 按 `order` 升序排 section（`dsh-system-prompt/lib/index.js` 的
 
 ⚠️ **不要照抄原生段落的 order 当分界线。** `2900` 就是 `tools:ptc-only` **自己的**
 order，填 2900 会正好和它撞在同一格，谁在前谁在后取决于稳定排序的实现。
-`section_order_test.mjs` 拿真实的 `SECTION_ORDERS` 逐个比对，防的就是这个。
 
 **改完不用重启** —— 点会话头部那个 `↻` 按钮重载即可（编辑路由保存后是自动重载）。
 
@@ -101,11 +100,12 @@ order，填 2900 会正好和它撞在同一格，谁在前谁在后取决于稳
 
 ## 原生段落键 ↔ 段名
 
-完整对照表：**[native-sections-verified.md](native-sections-verified.md)**
+界面上显示的段落中文名，都是从 dsh 源码里 `section({ name, order })` 成对读出来的，
+不是从键名猜的。键名写错比译错更隐蔽 —— 曾经写过 `ptc:only`，而真实的键是
+`tools:ptc-only`，那个键一次都没命中过，界面上一路走兜底显示成「tools · ptc · only」。
 
-那份表是从 dsh 源码里 `section({ name, order })` 成对读出来的，不是从键名猜的。
-键名写错比译错更隐蔽 —— 曾经写过 `ptc:only`，而真实的键是 `tools:ptc-only`，
-那个键一次都没命中过，界面上一路走兜底显示成「tools · ptc · only」。
+**官方以后新增段落，这里查不到会走兜底**：`tool:xxx` → 「工具用法 · xxx」，
+其余 → 把 `:` 换成「 · 」。不用改代码也能有个像样的名字。
 
 ---
 

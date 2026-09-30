@@ -13,7 +13,7 @@
 //     });
 //
 // 用 scripts/_extract_section_names.mjs 把全树的 `.section({...})` 配对抠出来，
-// 得到 27 个键的确定映射。完整表格见 docs/native-sections-verified.md。
+// 得到 27 个键的确定映射。完整表格见 docs/dev/native-sections-verified.md。
 //
 // ⚠️ **不要凭键名推段名。** 我推错过两次，而且推错不会报错、只会静默失效：
 //      PTC_ONLY        → 推 `ptc:only`        实际 `tools:ptc-only`
