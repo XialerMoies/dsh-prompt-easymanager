@@ -1036,7 +1036,7 @@ window.__ModuleLoader__.load({
           if (mine && mine.attached) statusText += " · 下一步即生效";
           else if (mine && !mine.agentLive) statusText += " · 该会话 agent 未加载";
         }
-        var title = "提示词管理 · " + statusText;
+        var title = "个人提示词 · " + statusText;
 
         return react.createElement(
           "span",

@@ -773,7 +773,7 @@ const TMP_ID = "zz-test-only";
   const t = ctx4.__registered.tools[0];
   const out = t.execute();
   eq(out.plugin, "dsh-prompt-manager", "工具回报 plugin id");
-  eq(out.name, "提示词管理", "工具回报中文名");
+  eq(out.name, "个人提示词", "工具回报中文名");
   // ⚠️ 从 package.json 读，别硬编码 —— 这个断言因为「忘了跟着改」红过三次
   //    （v0.10.2 / v0.11.1 各一次，重排版本号又一次）。版本号本来就有三处要同步，
   //    测试不该是第四处。
@@ -786,7 +786,7 @@ const TMP_ID = "zz-test-only";
   eq(out.liveAgents.rootsCount, 1, "工具回报存活 agent（当前实例有 1 个）");
   ok(out.notes.some((n) => n.includes("下一步即生效")), "工具说明含生效时机");
   ok(out.notes.some((n) => n.includes("全局默认")), "工具说明含全局默认");
-  ok(t.description.includes("提示词管理"), "工具描述可读");
+  ok(t.description.includes("个人提示词"), "工具描述可读");
   ok(t.parameters.additionalProperties === false, "工具无参数");
 }
 

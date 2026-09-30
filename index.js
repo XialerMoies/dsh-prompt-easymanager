@@ -1,4 +1,4 @@
-// 提示词管理 —— 宿主半体（提示词库、按会话挂载、全局默认、分类、编辑器路由、prompt_manager 工具）
+// 个人提示词 —— 宿主半体（提示词库、按会话挂载、全局默认、分类、编辑器路由、prompt_manager 工具）
 //
 // 为 DSH 的**每个会话**独立选择系统提示词，并提供最终系统提示词的实时预览。
 //
@@ -41,7 +41,7 @@ import {
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 
 const PLUGIN_ID = "dsh-prompt-manager";
-const PLUGIN_NAME = "提示词管理";
+const PLUGIN_NAME = "个人提示词";
 const PLUGIN_VERSION = "0.2.8";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
@@ -344,7 +344,7 @@ const objectOutput = {
 const promptTool = {
   name: "prompt_manager",
   description:
-    "查看「提示词管理」插件的运行状态：可用提示词清单、每个会话当前的分配与挂载情况、" +
+    "查看「个人提示词」插件的运行状态：可用提示词清单、每个会话当前的分配与挂载情况、" +
     "以及诊断信息。用于排查「选了提示词但没生效」。",
   parameters: { type: "object", properties: {}, additionalProperties: false },
   output: objectOutput,

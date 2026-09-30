@@ -1128,9 +1128,21 @@ window.__ModuleLoader__.load({
           return THUMB_FALLBACK;
         }
 
+        /**
+         * 提示词全局注入开关。
+         *
+         * ⚠️ 它管的是**注入这件事本身**，不是「用不用我的配置」——
+         *    名字和说明都得照这个说，否则用户会以为关掉只是「不注入默认那几条」。
+         *
+         * 说明收进 title（不占常驻行）：这段是「怎么回事」，不是「现在什么状态」。
+         */
         function renderMasterSwitch() {
           var on = enabledDraft !== false;
           var busy = enabledDraft === null;
+          var help =
+            "这是提示词注入的总开关。\n\n" +
+            "开启：本插件对提示词的干预生效 —— 注入自设提示词、按需改写原生段落。\n" +
+            "关闭：以上全部停用，回到完全原生的 dsh。你的配置都留着，开回来就恢复。";
           return react.createElement(
             "div",
             { style: Object.assign({}, CARD, { padding: "12px 14px", marginBottom: "12px" }) },
@@ -1145,9 +1157,9 @@ window.__ModuleLoader__.load({
                     type: "button",
                     role: "switch",
                     "aria-checked": on,
-                    "aria-label": "使用我的提示词配置",
+                    "aria-label": "提示词全局注入",
                     className: NATIVE_SWITCH,
-                    title: on ? "点击关闭：完全用 dsh 原始提示词" : "点击开启：使用你配置的提示词",
+                    title: help,
                     disabled: busy,
                     onClick: function () {
                       toggleEnabled(!on);
@@ -1159,14 +1171,15 @@ window.__ModuleLoader__.load({
                 react.createElement(
                   "span",
                   { key: "t", style: { fontSize: "13px", fontWeight: 600 } },
-                  on ? "使用我的提示词配置" : "正在使用 dsh 原始提示词",
+                  "提示词全局注入",
+                ),
+                renderHelpIcon(help),
+                react.createElement(
+                  "span",
+                  { key: "st", style: HEADING_COUNT },
+                  on ? "开 · 所有会话都注入" : "关 · 等同原生 dsh",
                 ),
               ]),
-              react.createElement(
-                "div",
-                { key: "h", style: Object.assign({}, HINT_TEXT, { margin: "4px 0 0 46px" }) },
-                on ? "关掉就完全回到原生 dsh。配置都留着。" : "配置都还在，开回来就恢复。",
-              ),
             ],
           );
         }
@@ -1415,7 +1428,10 @@ window.__ModuleLoader__.load({
         function renderSections() {
           var head = react.createElement(
             "div",
-            { style: Object.assign({}, CARD_HEADING, { marginTop: "4px" }) },
+            // ⚠️ 间距给足。这一块跟上面「提示词组合」是两个不相干的功能，
+            //    标题又长得跟卡片标题很像 —— 只隔 4px 时视觉上糊成一片，
+            //    看着像同一块内容的一部分（用户提的就是这个）。
+            { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
             [
               react.createElement("span", { key: "n", style: HEADING_TITLE }, "系统提示词"),
               // 两段说明并成一个「?」—— 详见 renderHelpIcon
@@ -2125,7 +2141,7 @@ window.__ModuleLoader__.load({
 
         // 分组标题（对齐原生 .catalogHeading：h3 + 计数）
         var header = react.createElement("div", { style: CARD_HEADING }, [
-          react.createElement("h3", { key: "t", style: Object.assign({}, HEADING_TITLE, { margin: 0 }) }, "提示词管理"),
+          react.createElement("h3", { key: "t", style: Object.assign({}, HEADING_TITLE, { margin: 0 }) }, "个人提示词"),
           react.createElement("span", { key: "c", style: HEADING_COUNT }, prompts.length + " 条"),
           react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
           message
@@ -2161,7 +2177,11 @@ window.__ModuleLoader__.load({
         if (list === null) {
           body.push(react.createElement("div", { key: "loading", style: STATUS_LINE }, "读取中…"));
         } else {
-          // 「新会话默认」放在最前面 —— 它管的是所有新会话，比单条提示词重要
+          // ⚠️ 顺序：**全局注入开关 → 新会话默认 → 提示词卡片**。
+          //    总开关排最前 —— 它管的是「注不注入」这件事本身，比任何一条配置都靠上；
+          //    摆在后面的话，用户会以为它只影响它下面那一块。
+          body.push(react.createElement("div", { key: "master" }, renderMasterSwitch()));
+          // 「新会话默认」管的是所有新会话，比单条提示词重要
           body.push(react.createElement("div", { key: "defaults" }, renderDefaults()));
           // "新建"表单放在网格之外（它需要整行宽度）
           if (edit && edit.isNew) {
@@ -2233,7 +2253,6 @@ window.__ModuleLoader__.load({
         }
 
         body.push(
-          react.createElement("div", { key: "master" }, renderMasterSwitch()),
           react.createElement("div", { key: "combo" }, renderCombo()),
           react.createElement("div", { key: "sections" }, renderSections()),
         );

@@ -1,7 +1,7 @@
 {
   "name": "dsh-prompt-manager",
   "version": "0.2.8",
-  "description": "提示词管理 —— 为 DSH 的每个会话挂载若干条系统提示词（按分类组织、各自按 order 插入），支持全局默认、设置页编辑提示词库，以及最终系统提示词的实时预览。",
+  "description": "个人提示词 —— 为 DSH 的每个会话挂载若干条系统提示词（按分类组织、各自按 order 插入），支持全局默认、设置页编辑提示词库，以及最终系统提示词的实时预览。",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -34,7 +34,7 @@
   },
   "dsh": {
     "id": "dsh-prompt-manager",
-    "name": "提示词管理",
+    "name": "个人提示词",
     "version": "0.2.8",
     "repo": "local/dsh-prompt-manager",
     "permissions": "系统提示词注入（按会话）, 会话头部选择器, 只读系统提示词预览",

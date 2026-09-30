@@ -349,7 +349,7 @@ const regs = [];
   ok(tab.opts.id === "prompt-manager", "tab 占用 id 正确");
   ok(typeof tab.Component === "function", "tab 注册的是组件");
   ok(typeof tab.opts.label === "function", "tab 带 label 函数");
-  eq(tab.opts.label(), "提示词管理", "tab 标题正确");
+  eq(tab.opts.label(), "个人提示词", "tab 标题正确");
   ok(typeof tab.opts.order === "number", "tab 带 order");
 }
 
@@ -1011,7 +1011,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   }
   if (el) {
     const text = flattenText(el).join(" ");
-    ok(text.includes("提示词管理"), "标题在");
+    ok(text.includes("个人提示词"), "标题在");
     ok(text.includes("2 条"), "显示条数");
     ok(text.includes("格式契约"), "列出条目名");
     ok(text.includes("format-contract"), "显示 id");
@@ -2087,7 +2087,32 @@ function makeSectionsData(over = {}) {
   shims.setStates(withEnabled(true));
   let el = renderEditor({});
   let text = flattenText(el).join(" ");
-  ok(text.includes("使用我的提示词配置"), "开启时显示「使用我的提示词配置」");
+  // ⚠️ 它管的是**注入这件事本身**，不是「用不用我的配置」——
+  //    名字和说明都得照这个说，否则用户会以为关掉只是「不注入默认那几条」。
+  ok(text.includes("提示词全局注入"), "**开关叫「提示词全局注入」**（管的是注不注入，不是用不用配置）");
+  ok(text.includes("开 · 所有会话都注入"), "开启时说明作用范围");
+  const swTip = collectTitles(el).find((t) => t.includes("提示词注入的总开关")) || "";
+  ok(swTip !== "", "**总开关的说明挂在 title 上**（不占常驻行）");
+  ok(swTip.includes("回到完全原生的 dsh"), "title 里说清了关掉会怎样");
+
+  // ── 总开关要排在内容最前面 ────────────────────────────────────────────
+  //
+  // 它管的是「注不注入」这件事本身，比任何一条配置都靠上；
+  // 摆在后面的话，用户会以为它只影响它下面那一块。
+  {
+    const order = [];
+    (function walk(n) {
+      if (!n || typeof n !== "object") return;
+      const t = flattenText(n).join("");
+      if (t.includes("提示词全局注入")) order.push("master");
+      if (t.includes("新会话默认")) order.push("defaults");
+      if (t.includes("提示词组合")) order.push("combo");
+      if (t.includes("系统提示词")) order.push("sections");
+      for (const c of n.children || []) walk(c);
+    })(el);
+    const first = order[0];
+    ok(first === "master", `**总开关排在内容最前面**（实际第一个是 ${first}）`);
+  }
 
   // ── 开关本身：借用 dsh 原生开关的类名和结构 ──────────────────────────
   //
@@ -2138,19 +2163,25 @@ function makeSectionsData(over = {}) {
       eq(th.props.style.borderRadius, "50%", "滑块仍有形状兜底");
     }
   }
-  ok(text.includes("关掉就完全回到原生 dsh"), "说明了关掉会怎样");
-  ok(text.includes("配置都留着"), "**说明了配置不会被清掉**（否则用户不敢关）");
+  // 「配置不会被清掉」也收进了 title —— 用户在决定要不要关的时候才需要看到它
+  ok(swTip.includes("配置都留着"), "**title 里说明了配置不会被清掉**（否则用户不敢关）");
 
   shims.setStates(withEnabled(false));
-  text = flattenText(renderEditor({})).join(" ");
-  ok(text.includes("正在使用 dsh 原始提示词"), "关闭时显示「正在使用 dsh 原始提示词」");
-  ok(text.includes("配置都还在") && text.includes("开回来"), "**说明了配置还在、能开回来**");
+  {
+    const elOff = renderEditor({});
+    text = flattenText(elOff).join(" ");
+    ok(text.includes("关 · 等同原生 dsh"), "关闭时说明状态");
+    ok(text.includes("提示词全局注入"), "关闭时开关名不变（名字说的是它管什么，不是当前状态）");
+    // 关掉的效果说明也在 title 上，不占常驻行
+    const tipOff = collectTitles(elOff).find((t) => t.includes("提示词注入的总开关")) || "";
+    ok(tipOff.includes("全部停用"), "title 里说清了关掉时哪些东西停用");
+  }
 
   // enabledDraft 为 null（还没读完）不该炸，也不该误显示成"关"
   shims.setStates(withEnabled(null));
   try {
     text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("使用我的提示词配置"), "还没读完时按「开」显示（默认开），不误报成关");
+    ok(text.includes("开 · 所有会话都注入"), "还没读完时按「开」显示（默认开），不误报成关");
   } catch (e) {
     ok(false, "enabledDraft 为 null 时不许炸 —— 抛了 " + e.message);
   }

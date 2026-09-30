@@ -1,10 +1,10 @@
-// 提示词管理 (dsh-prompt-manager) · 客户端宿主
+// 个人提示词 (dsh-prompt-manager) · 客户端宿主
 //
 // 这个文件只做三件事：注册两个槽位、渲染会话头部那一个按钮、按需拉下面的 chunk。
 //
 //   client.picker.js    多选面板 + 会话头部入口
 //   client.preview.js   最终系统提示词预览
-//   client.editor.js    设置页「提示词管理」整栏（最大的一块）
+//   client.editor.js    设置页「个人提示词」整栏（最大的一块）
 //
 // 浮层外壳（Overlay + OVERLAY / PANEL 那一族常量）没有独立 chunk：面板和预览
 // 各自定义同一个 Overlay 组件，常量从这里随 api.style 交下去。原文见
@@ -911,14 +911,14 @@
               HeaderSlot,
             ),
           );
-          // 设置 → 插件 → 提示词管理（root 作用域）
+          // 设置 → 插件 → 个人提示词（root 作用域）
           ctx.slots.inject("settings.plugins.tab", () =>
             ctx.slots.register(
               {
                 name: "settings.plugins.tab",
                 id: "prompt-manager",
                 order: 40,
-                label: () => "提示词管理",
+                label: () => "个人提示词",
               },
               EditorSlot,
             ),
