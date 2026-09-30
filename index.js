@@ -1030,6 +1030,13 @@ const jsonOf = (body, status) =>
               customCategories: custom,
               // 当前全局默认 —— 编辑器要显示勾选状态
               defaults: injector.getDefaults(),
+              // ⚠️ 总开关的状态必须在这里回报。
+              //    漏了它编辑器读到 `undefined`，而 `d.enabled !== false` 恒为 true ——
+              //    表现是「胶囊怎么点都弹回去」：拨完 POST 成功，紧接着 load()
+              //    又把它读回 true。
+              //    取值用 readState()（真相来源），不要绕 injector ——
+              //    测试里的假注入器没有 isEnabled，会直接炸。
+              enabled: readState().enabled !== false,
               catalogPath: CATALOG_PATH,
               promptsDir: PROMPTS_DIR,
               libraryErrors: libraryErrors(),

@@ -490,6 +490,10 @@ ok(
   ok(typeof r.json.promptsDir === "string", "回报正文目录路径");
   // 编辑器要显示「新会话默认」的勾选状态，所以这份响应必须带 defaults
   ok(Array.isArray(r.json.defaults), "回报当前全局默认（编辑器要用）");
+  // ⚠️ 总开关的状态也必须在这份响应里。
+  //    漏过：编辑器 `setEnabledDraft(d.enabled !== false)` 读到 undefined 恒为 true，
+  //    表现是「胶囊怎么点都弹回去」—— POST 明明成功，紧接着 load() 又读回 true。
+  eq(typeof r.json.enabled, "boolean", "**回报总开关状态**（漏了它胶囊会弹回去）");
   // 分类：编辑器要下拉框的选项和每类的建议 order
   ok(Array.isArray(r.json.categories), "回报分类表");
   eq(r.json.categories.length, 5, "内置 5 类");
@@ -1192,6 +1196,10 @@ const TMP_ID = "zz-test-only";
   eq(off.status, 200, "关掉总开关 → 200");
   eq(off.json.enabled, false, "回报已关");
 
+  // ⚠️ 编辑器读完 POST 的响应后会立刻重新 GET /edit（load()）。
+  //    所以这边必须也能读到 false，否则拨下去又被读回 true —— 胶囊「弹回去」。
+  eq((await call(ctx9, EDIT_PATH)).json.enabled, false, "**GET edit 也读得到已关**（否则胶囊弹回去）");
+
   a = await asm();
   await l0(a, {}, async () => a);
   eq(a.sections[0].text, "官方身份", "**开关关掉后改写不再生效（回到官方原文）**");
@@ -1199,6 +1207,7 @@ const TMP_ID = "zz-test-only";
 
   // 再开回来
   await call(ctx9, STATE_PATH, { method: "POST", body: { enabled: true } });
+  eq((await call(ctx9, EDIT_PATH)).json.enabled, true, "开回来之后 GET edit 也读得到");
   a = await asm();
   await l0(a, {}, async () => a);
   eq(a.sections[0].text, "我改的身份", "**开回来之后改写恢复**");
