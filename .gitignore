@@ -5,6 +5,9 @@ prompts-archive-*
 # 旧版验证脚本与测试题集 —— 跟当前插件无关，且含注入/越狱测试用例，不进仓库
 legacy/
 
+# 开发笔记 —— 自用，不给用户看（README 只留介绍/安装/用法/注意事项）
+DEV.md
+
 # 本地运行时产生的
 *.log
 .dsh-prompt-manager-state.json

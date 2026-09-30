@@ -39,7 +39,7 @@ profile 的依赖指向本地源码：
 > New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target "E:\ai-talk\杂谈\dsh-prompt-manager"
 > ```
 
-装完**重启 dsh**。改了客户端代码（`client.js` / `client.*.js`）也必须重启 —— 原因见「注意事项」。
+装完**重启 dsh**。之后凡是改了插件代码，也都要重启 —— 原因见「注意事项」。
 
 ---
 
@@ -73,13 +73,13 @@ profile 的依赖指向本地源码：
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-| 按钮 | 状态文件里写成 | 含义 |
-|---|---|---|
-| **应用** | `assignments[s] = [ids...]` | 显式用这几条 |
-| **跟随默认** | 删掉 `assignments[s]` | 回到全局默认 |
-| **不注入** | `assignments[s] = []` | **显式**不注入（即使默认里有东西也不挂） |
+| 按钮 | 含义 |
+|---|---|
+| **应用** | 显式用这几条 |
+| **跟随默认** | 回到全局默认 |
+| **不注入** | **显式**不注入（即使默认里有东西也不挂） |
 
-三个状态是分开的 —— 「跟随默认」和「显式不注入」不是一回事。
+**「跟随默认」和「不注入」不是一回事** —— 前者以后默认变了会跟着变，后者永远不挂。
 组合不合法时「应用」是禁用的，面板顶部直接说明原因。
 
 ### 设置页
@@ -110,67 +110,23 @@ profile 的依赖指向本地源码：
 
 ## 注意事项
 
-**① 改客户端代码必须重启 dsh。**
+**① 改了插件代码要重启 dsh。**
 
-`client.js` 和三个 `client.*.js` 是宿主用 `require.async` 按需拉的**包内 chunk**，
-chunk 的 `rev` 跟着 `client.js` 的 mtime 走。只改 chunk 不重启，浏览器会拿旧 rev 请求，
-文件对不上就是 404 —— 表现是**设置页整片空白**。
+界面那一半是按需加载的，改动后不重启，浏览器会去要一个已经变了的旧文件 ——
+表现是**设置页整片空白**。
+
+（设置页里改提示词**不用**重启，保存即生效。）
 
 **② 状态文件不会自动清理，这是故意的。**
 
-存在 `$DSH_HOME/dsh-prompt-manager-state.json`（缺省 `~/.dsh/`），每条记录约 60 字节。
-攒到 10,000 个会话也只有约 600 KB，不值得为它冒误删的风险 ——
-dsh 的 `SessionStore` 没有「某会话是否还存在」的查询接口，按「agent 还活着吗」删会
-**误删已关闭会话的分配**，而那正是要保留的数据（重新打开会话时要按它重新挂上）。
+记录存在 `$DSH_HOME/dsh-prompt-manager-state.json`（缺省 `~/.dsh/`），
+每条约 60 字节 —— 攒到 10,000 个会话也只有约 600 KB，不值得为它冒误删的风险。
+删掉它等于「没有默认、没有指定」，`defaults` 和 `assignments` 都会丢。
 
-需要清理时用 `injector.prune(existsFn)`，判据由调用方给。
+**③ 挂的提示词越多，上下文越贵。**
 
-**③ `legacy/` 已经不在用途内**，是旧版「无限四代」评分器的留档。
-
----
-
-## 开发
-
-```powershell
-npm test              # 全部 1086 条断言
-npm run harness:check # 六个半体的语法检查
-```
-
-宿主集成测试用 `DSH_HOME` 指向临时目录，**不会碰你真实的 `~/.dsh`**。
-
-动代码之前先看 [docs/implementation-notes.md](docs/implementation-notes.md) ——
-注册/卸载、子代理过滤、`assemble` 的 scope、客户端 chunk 的规矩，坑都在那儿。
-
----
-
-## 文件都干什么
-
-```
-index.js                  宿主半体：提示词库 + 会话分配 + 段落改写 + HTTP 路由 + 工具
-client.js                 客户端宿主：槽位注册 + 会话头部入口 + 按需拉 chunk
-client.picker.js          chunk：多选面板 + 会话头部入口
-client.preview.js         chunk：最终提示词预览
-client.editor.js          chunk：设置页「提示词管理」整栏
-cordis.patch.yml          插件挂载声明
-prompts/catalog.json      提示词库清单
-prompts/*.md              提示词正文
-scripts/lib/              库加载、注入核心、段落覆盖、槽位表、预设……（都有测试）
-scripts/*_test.mjs        九套测试
-docs/                     设计说明与核验记录，见下表
-legacy/                   旧版「无限四代」评分器，留档
-```
-
-### docs/
-
-| 文件 | 内容 |
-|---|---|
-| [system-prompt.md](docs/system-prompt.md) | **dsh 系统提示词的机制与参考** —— 生效时机、`order` 对照、提示词库格式、分类建议值 |
-| [native-sections-verified.md](docs/native-sections-verified.md) | 原生段落键 ↔ 段名对照（从 dsh 源码直接读出，不是推测） |
-| [section-overrides-design.md](docs/section-overrides-design.md) | 段落改写 / 关掉 / 还原的取舍 |
-| [implementation-notes.md](docs/implementation-notes.md) | 实现笔记：跟 dsh 内部搏斗踩过的坑（改代码前值得看） |
-| [identity-rewrite.md](docs/identity-rewrite.md) | 换掉 agent 身份认知的核验记录 |
-| [overlay-component.md](docs/overlay-component.md) | 浮层外壳（备查） |
-| [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么、为什么 |
+每条提示词都占 token，而且**改了系统提示词会让模型侧的 prompt cache 失效**，
+下一轮更贵。别在一轮对话里反复切。
 
 ---
 
