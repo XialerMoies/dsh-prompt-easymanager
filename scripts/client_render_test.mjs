@@ -290,6 +290,52 @@ function findEl(node, pred) {
   return null;
 }
 
+/** 收集所有带某个 class 的元素（`className` 是空格分隔的，按词匹配）。 */
+function collectByClass(node, cls, out = []) {
+  if (node === null || node === undefined || typeof node !== "object") return out;
+  const cn = node.props && node.props.className;
+  if (typeof cn === "string" && cn.split(/\s+/).includes(cls)) out.push(node);
+  for (const c of node.children || []) collectByClass(c, cls, out);
+  return out;
+}
+
+/**
+ * 数「一个**卡片头**的兄弟里套着另一个卡片头」的次数 —— 用来验卡片嵌套。
+ *
+ * ⚠️ 不能写成「数 head 里面还含 head」：类别卡片的体是个**没有 class 的 div**，
+ *    嵌套发生在「卡片 → 头 + 体 → 体里的卡片 → 头」这层，不在 head 里面。
+ *    第一版判据就是这么写错的，明明结构对了却报 0。
+ *
+ * 判据：某个元素的**直接子元素**里同时有
+ *   · 一个 `.pm-head`（它是这张卡片的头）
+ *   · 一个不含 `.pm-head` 的容器，而那个容器里还有 `.pm-head`（体里套着卡片）
+ * 平铺的分组（分类标题 + 网格）得到 0；类别卡片套提示词卡片时 ≥1。
+ */
+function countNestedCards(node) {
+  if (node === null || node === undefined || typeof node !== "object") return 0;
+  const kids = node.children || [];
+  const isHead = (k) =>
+    k && k.props && typeof k.props.className === "string" && k.props.className.split(/\s+/).includes("pm-head");
+  let n = 0;
+  if (kids.some(isHead)) {
+    for (const k of kids) {
+      if (isHead(k)) continue;
+      n += countHeadsIn(k);
+    }
+  }
+  for (const k of kids) n += countNestedCards(k);
+  return n;
+}
+
+/** 子树里所有 `.pm-head` 的数量。 */
+function countHeadsIn(node) {
+  if (node === null || node === undefined || typeof node !== "object") return 0;
+  const cn = node.props && node.props.className;
+  let n = typeof cn === "string" && cn.split(/\s+/).includes("pm-head") ? 1 : 0;
+  for (const c of node.children || []) n += countHeadsIn(c);
+  return n;
+}
+
 /**
  * 收集所有 input / textarea 的 value。
  * 表单里的正文是 `value` 属性，不在 children 里 —— flattenText 看不到它。
@@ -1027,6 +1073,44 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     ok(text.includes("追加"), "折叠态显示模式徽章");
     ok(text.includes("不注入"), "另一条的模式徽章也在");
     ok(text.includes("›"), "折叠态有展开箭头");
+
+    // ── 卡片结构：大类别卡片里套个人提示词卡片 ──────────────────────────
+    //
+    // 用户要的：**个人提示词的卡片跟系统提示词的卡片长得一样，
+    // 外面再套一层大类别卡片。**
+    //
+    // 这条断言盯的是那层嵌套本身 —— 只看文字的话，「分类标题 + 平铺网格」
+    // 和「类别卡片里套卡片」在 flattenText 眼里一模一样，结构塌了也发现不了。
+    //
+    // 判据：数「一个卡片头**里面**还含几个卡片头」。平铺时是 0；
+    // 类别卡片套一张提示词卡片时是 1。顺带验类别头上有分类名。
+    //
+    // ⚠️ **必须复用上面那棵 `el`，不能再调一次 renderEditor。**
+    //    影子层是按 hook 序号塞状态的，一个块里渲染两次，第二次拿到的
+    //    是错位的状态（真 React 不会 —— 状态挂在实例上）。
+    //    踩过：第二次渲染出来只剩一个「普通」分类，`其他` 那个不见了。
+    {
+      const nesting = countNestedCards(el);
+      const heads = collectByClass(el, "pm-head");
+      ok(nesting > 0, `**有卡片套在卡片里**（类别卡片 → 个人提示词卡片），实际 ${nesting}`);
+      ok(heads.length >= 3, `个人提示词那块的卡片头数（实际 ${heads.length}）`);
+      // 类别卡片头上要有分类名（平铺版是裸标题，没有卡片头）。
+      // ⚠️ 名字走 categoryName()：内置分类查表得中文名，**自定义分类原样显示 id**
+      //    （这是既有行为，不是 bug）。这个用例的 listData 没带 categories 表，
+      //    所以显示的就是 `other`。
+      const catHead = heads.find((h) => {
+        const t = flattenText(h).join(" ");
+        return t.includes("条") && t.includes("›") && !t.includes("tokens");
+      });
+      ok(!!catHead, "**有类别卡片头**（带条数和箭头，且不是某条提示词的卡片）");
+      if (catHead) {
+        const t = flattenText(catHead).join(" ");
+        ok(/\d+ 条/.test(t), "类别头上带条数");
+        ok(t.includes("›"), "类别头有折叠箭头（能整类收起来）");
+        // ⚠️ 类别头**不该**显示 token 数 —— 那是提示词卡片才有的
+        ok(!t.includes("tokens"), "**类别头不显示 token 数**（跟提示词卡片区分开）");
+      }
+    }
     ok(!text.includes("4300 字符"), "折叠态不显示字符数（在详情里）");
     ok(!text.includes("format-contract.md"), "折叠态不显示正文文件名");
     // 但「新会话默认」卡片是默认展开的 —— 它管所有新会话，优先级最高

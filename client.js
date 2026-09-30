@@ -425,6 +425,17 @@
         WebkitBoxOrient: "vertical",
         overflow: "hidden",
       };
+      /**
+       * 描述单独占一行时用的样式（在卡片头**下面**，不是里面）。
+       *
+       * ⚠️ 卡片头改成了 `flexDirection: "row"` 的一行（名字/徽章/字数/箭头），
+       *    描述塞进去会把那一行挤变形，所以它得挪到头的**外面**当第二行。
+       *    这是按钮之外的普通 `div`，所以要自己补横向内边距 —— 按钮有
+       *    `CARD_HEAD` 的 14px，这里没有。
+       */
+      var CARD_DESC_ROW = Object.assign({}, CARD_DESC, {
+        padding: "0 14px 10px",
+      });
       var CARD_DETAILS = {
         borderTop: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         background: "var(--dsw-alias-bg-module-platform, rgba(128,128,128,.08))",
@@ -799,6 +810,7 @@
             CARD_ACTIONS: CARD_ACTIONS,
             CARD_BAD: CARD_BAD,
             CARD_DESC: CARD_DESC,
+            CARD_DESC_ROW: CARD_DESC_ROW,
             CARD_DETAILS: CARD_DETAILS,
             CARD_HEAD: CARD_HEAD,
             CARD_HEADING: CARD_HEADING,

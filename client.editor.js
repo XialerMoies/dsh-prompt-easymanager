@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
       var CARD_TITLE = api.style.CARD_TITLE;
       var CARD_ID = api.style.CARD_ID;
       var CARD_DESC = api.style.CARD_DESC;
+      var CARD_DESC_ROW = api.style.CARD_DESC_ROW;
       var CHEVRON = api.style.CHEVRON;
       var CHEVRON_OPEN = api.style.CHEVRON_OPEN;
       var CARD_DETAILS = api.style.CARD_DETAILS;
@@ -390,6 +391,12 @@ window.__ModuleLoader__.load({
         var enSt = react.useState(null);
         var enabledDraft = enSt[0];
         var setEnabledDraft = enSt[1];
+        // 被**手动折起来**的类别卡片（存 `"cat:<分类id>"`，空 = 全都展开）。
+        // 见 renderGroupCard 里那段说明：默认开，折叠是显式动作。
+        // ⚠️ 新钩子加在末尾 —— 测试按索引塞状态，插在中间会打乱既有断言。
+        var catSt = react.useState([]);
+        var closedCats = catSt[0];
+        var setClosedCats = catSt[1];
         var timerRef = react.useRef(null);
         var mountedRef = react.useRef(true);
 
@@ -1900,6 +1907,101 @@ window.__ModuleLoader__.load({
           return react.createElement("span", { style: PILL }, "不注入");
         }
 
+        /**
+         * 一张个人提示词卡片。
+         *
+         * ⚠️ 头部结构**与系统提示词卡片（renderSectionCard）保持一致** ——
+         *    两块内容在同一个页面里上下挨着，头部长得不一样会显得是两套东西：
+         *      一行：名字（+ 原始 id 小字） → 徽章 → 字数 → 箭头
+         *      两行：id / 描述（有才显示）
+         *    原来这里是「标题 + 徽章 + 箭头」挤在 CARD_MAIN_ROW 里、下面单独一行
+         *    id、再一行描述 —— 高度和信息排布都跟系统那边对不上。
+         *
+         * ⚠️ 两个坑沿用 renderSectionCard 的结论（那边踩过，这边照抄）：
+         *    1. 内边距要用 `CARD_HEAD`（12px 14px）—— `CARD_MAIN_ROW` 只是布局行、
+         *       没有 padding，只用它内容会贴着边框；
+         *    2. `CARD_HEAD` 是 `flexDirection: "column"`，`CARD_MAIN_ROW` 没设
+         *       flexDirection，Object.assign 之后 column 会赢 —— 要一行就得显式
+         *       改回 row。否则名字/徽章/箭头竖成三行居中（真机上就是这么错的）。
+         */
+        /**
+         * 一个大类别卡片，里面装这个类别的个人提示词卡片。
+         *
+         * 用户要的：**个人提示词的卡片跟系统提示词的卡片长得一样，
+         * 外面再套一层大类别卡片。**
+         *
+         * 为什么要套这一层（而不只是给分组标题加个框）：
+         *   原来分类是「一段灰字标题 + 一个网格」，网格里的卡片各自独立，
+         *   分类归属只靠标题的位置暗示。套上类别卡片之后边界是画出来的，
+         *   而且可以折叠 —— 库大了以后能整类收起来。
+         *
+         * 折叠状态复用 openId（存 `"cat:<id>"`）：
+         *   个人提示词的 id 不可能以 `cat:` 开头（id 是文件名派生、不许有冒号），
+         *   所以两边塞进同一个格不会撞。
+         *
+         * ⚠️ 卡片头**照抄系统提示词卡片那套**（CARD_HEAD + CARD_MAIN_ROW +
+         *    显式 flexDirection: "row"），理由见 renderRow 上面那段。
+         */
+        function renderGroupCard(g, isCustom) {
+          var openKey = "cat:" + g.id;
+          // ⚠️ 默认**展开**。
+          //
+          //    全折叠的话，打开设置页只能看见一排分类名，库里有什么一条都看不到
+          //    —— 而「库里有几条提示词」正是进这个页面最先要知道的事。
+          //    所以折叠要做成**显式动作**：用户自己点了才折，没点过就一直是开的。
+          //    （不是「默认 null = 全折」那种，那样每次进来都得手点一遍。）
+          var isOpen = closedCats.indexOf(openKey) < 0;
+          var cards = [];
+          for (var i = 0; i < g.items.length; i++) cards.push(renderRow(g.items[i]));
+          return react.createElement(
+            "div",
+            {
+              key: "grp-" + g.id,
+              style: Object.assign({}, CARD, { marginBottom: "10px" }),
+            },
+            [
+              react.createElement(
+                "button",
+                {
+                  key: "head",
+                  type: "button",
+                  className: "pm-head",
+                  style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
+                    flexDirection: "row",
+                    minHeight: "0",
+                    padding: "10px 14px",
+                    cursor: "pointer",
+                  }),
+                  "aria-expanded": isOpen,
+                  onClick: function () {
+                    var next = closedCats.slice();
+                    var at = next.indexOf(openKey);
+                    if (at >= 0) next.splice(at, 1);
+                    else next.push(openKey);
+                    setClosedCats(next);
+                  },
+                },
+                [
+                  react.createElement("span", { key: "n", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto" }) }, categoryName(g.id)),
+                  isCustom
+                    ? react.createElement("span", { key: "t", style: PILL }, "自定义分类")
+                    : null,
+                  react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+                  react.createElement("span", { key: "c", style: HEADING_COUNT }, g.items.length + " 条"),
+                  react.createElement("span", { key: "ch", style: isOpen ? CHEVRON_OPEN : CHEVRON }, "›"),
+                ],
+              ),
+              isOpen
+                ? react.createElement(
+                    "div",
+                    { key: "body", style: CARD_DETAILS },
+                    react.createElement("div", { style: CARDS_GRID }, cards),
+                  )
+                : null,
+            ],
+          );
+        }
+
         function renderRow(p) {
           if (!p || !p.id) return null;
           var isEditing = edit && edit.id === p.id && !edit.isNew;
@@ -1913,22 +2015,35 @@ window.__ModuleLoader__.load({
               {
                 type: "button",
                 className: "pm-head",
-                style: CARD_HEAD,
+                style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
+                  flexDirection: "row",
+                  minHeight: "0",
+                  padding: "10px 14px",
+                  cursor: "pointer",
+                }),
                 "aria-expanded": isOpen,
                 onClick: function () {
                   toggleOpen(p.id);
                 },
               },
-              react.createElement("div", { style: CARD_MAIN_ROW }, [
-                react.createElement("span", { key: "t", style: CARD_TITLE }, p.name || p.id),
+              [
+                react.createElement(
+                  "span",
+                  { key: "t", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto" }) },
+                  p.name || p.id,
+                ),
+                // 原始 id 小字跟在后面 —— 名字给人看，这个给排查用。同一行，不占高度。
+                react.createElement("span", { key: "raw", style: RAW_NAME, title: p.id }, p.id),
+                react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
                 pillFor(p.mode),
-                react.createElement("span", { key: "c", style: isOpen ? CHEVRON_OPEN : CHEVRON }, "›"),
-              ]),
-              react.createElement("span", { key: "id", style: CARD_ID }, p.id),
-              p.description
-                ? react.createElement("span", { key: "d", style: CARD_DESC }, p.description)
-                : null,
+                react.createElement("span", { key: "c", style: HEADING_COUNT }, fmtTokens(p.tokens)),
+                react.createElement("span", { key: "ch", style: isOpen ? CHEVRON_OPEN : CHEVRON }, "›"),
+              ],
             ),
+            // 第二行留给描述：没有就不占位（原来无论有没有都留一行空）
+            p.description && !isOpen
+              ? react.createElement("div", { key: "d", style: CARD_DESC_ROW }, p.description)
+              : null,
             isOpen
               ? react.createElement(
                   "div",
@@ -2242,22 +2357,7 @@ window.__ModuleLoader__.load({
           for (var gk = 0; gk < groups.length; gk++) {
             var g = groups[gk];
             if (g.items.length === 0) continue;
-            body.push(
-              react.createElement(
-                "div",
-                { key: "grp-" + g.id, style: Object.assign({}, CARD_HEADING, { marginTop: "4px" }) },
-                [
-                  react.createElement("span", { key: "n", style: HEADING_TITLE }, categoryName(g.id)),
-                  react.createElement("span", { key: "c", style: HEADING_COUNT }, g.items.length + " 条"),
-                  seen[g.id] && !builtinCategories.some(function (b) { return b.id === g.id; })
-                    ? react.createElement("span", { key: "t", style: HEADING_COUNT }, "自定义分类")
-                    : null,
-                ],
-              ),
-            );
-            var groupCards = [];
-            for (var gm = 0; gm < g.items.length; gm++) groupCards.push(renderRow(g.items[gm]));
-            body.push(react.createElement("div", { key: "grid-" + g.id, style: CARDS_GRID }, groupCards));
+            body.push(renderGroupCard(g, seen[g.id]));
           }
         }
 
