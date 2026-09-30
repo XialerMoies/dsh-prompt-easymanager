@@ -923,14 +923,21 @@
               HeaderSlot,
             ),
           );
-          // 设置 → 插件 → 个人提示词（root 作用域）
-          ctx.slots.inject("settings.plugins.tab", () =>
+          // ⚠️ 注册到 `settings.section`（**设置面板侧边栏的独立一项**），
+          //    不是 `settings.plugins.tab`（那会塞进「插件」标签页里面当个子 Tab）。
+          //
+          //    dsh 的设置面板是按 `settings.section` 注册表渲染导航的
+          //    （`rows.map(row => <button>{navIcon(row.id)}{row.label}</button>)`），
+          //    所以 `id` + `order` + `label` 给全就是一个独立入口。
+          //    内置几项的 order：general 0 / models 10 / plugins 15 / agent-presets 20。
+          //    这里放 50，排在它们后面。
+          ctx.slots.inject("settings.section", () =>
             ctx.slots.register(
               {
-                name: "settings.plugins.tab",
+                name: "settings.section",
                 id: "prompt-manager",
-                order: 40,
-                label: () => "个人提示词",
+                order: 50,
+                label: () => "提示词管理",
               },
               EditorSlot,
             ),

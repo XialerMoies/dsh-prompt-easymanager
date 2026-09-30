@@ -390,13 +390,24 @@ const regs = [];
   ok(header.opts.name === "conversation.session.header.actions", "头部占用槽位正确");
   ok(typeof header.Component === "function", "头部注册的是组件");
 
-  const tab = regs.find((r) => r.opts.name === "settings.plugins.tab");
-  ok(!!tab, "注册了设置页 tab");
-  ok(tab.opts.id === "prompt-manager", "tab 占用 id 正确");
-  ok(typeof tab.Component === "function", "tab 注册的是组件");
-  ok(typeof tab.opts.label === "function", "tab 带 label 函数");
-  eq(tab.opts.label(), "个人提示词", "tab 标题正确");
-  ok(typeof tab.opts.order === "number", "tab 带 order");
+  // ⚠️ 注册的是 **settings.section**（设置面板侧边栏的独立一项），
+  //    不是 settings.plugins.tab（那样会塞进「插件」标签页里当个子 Tab）。
+  //    用户要求：「不要放在内置插件标签页作为一个 Tab 了，而是独立成一个标签页」。
+  const sec = regs.find((r) => r.opts.name === "settings.section");
+  ok(!!sec, "**注册到 settings.section**（设置面板的独立一项）");
+  ok(
+    !regs.some((r) => r.opts.name === "settings.plugins.tab"),
+    "**没有再注册 settings.plugins.tab**（不许缩回插件标签页里）",
+  );
+  if (sec) {
+    ok(sec.opts.id === "prompt-manager", "section id 正确");
+    ok(typeof sec.Component === "function", "section 注册的是组件");
+    ok(typeof sec.opts.label === "function", "section 带 label 函数");
+    eq(sec.opts.label(), "提示词管理", "**导航项标题是「提示词管理」**");
+    // 内置几项的 order：general 0 / models 10 / plugins 15 / agent-presets 20
+    ok(typeof sec.opts.order === "number", "section 带 order（决定排在哪）");
+    ok(sec.opts.order > 0, "**排在「通用」之后**（order > 0）");
+  }
 }
 
 // ── 3. factory 必须**同步**交出 exports ────────────────────────────────────
@@ -411,7 +422,7 @@ const regs = [];
 
 const headerReg = regs.find((r) => r.opts.id === "prompt-picker");
 const PickerSlot = headerReg.Component;
-const EditorSlot = regs.find((r) => r.opts.name === "settings.plugins.tab").Component;
+const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Component;
 
 // 走**真实路径**把两个槽位跑通：useChunk → require.async → chunk.create(api)。
 //
