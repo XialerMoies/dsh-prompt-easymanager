@@ -273,4 +273,33 @@ const readme = readFileSync(at("README.md"), "utf8");
   eq(stale, [], "源码注释里引用的 docs 路径都存在");
 }
 
+// ── 9. chunk 的 rev 会不会失效 ──────────────────────────────────────────────
+//
+// ⚠️ 这一条是防我自己的，踩过一次很贵的坑：
+//
+// dsh 给插件资源发的缓存头是 `public, max-age=31536000, immutable`（一年），
+// chunk 的 URL 是 `/plugins/<id>/client.editor.js?rev=<rev>`，而
+// **rev = sha1(client.js 的 mtimeMs + ctimeMs + size)** —— 只跟 client.js 走，
+// 不看任何 chunk（dsh-client-modules: artifactRevision / captureArtifactBaseline）。
+//
+// 所以只改 client.editor.js 而不动 client.js 时，rev 不变 → chunk URL 不变 →
+// 浏览器直接用手里的旧模块，改动**根本不生效**。
+// 表现是「改了、重启了、刷新了，界面还是老样子」，然后开始怀疑代码 —— 白查半天。
+//
+// 约定：**改了任何 client.<name>.js，就顺手碰一下 client.js 的 mtime**
+//       （`npm run bump:rev`），让 rev 必然变号。
+{
+  const { staleness } = await import("./bump-client-rev.mjs");
+  const { delta, newestChunk } = staleness();
+  // 留 2 秒容差：git checkout / 批量写盘会让 mtime 有毫秒级抖动
+  ok(
+    delta <= 2000,
+    "**没有「chunk 比 client.js 新」的情况**（否则 rev 不变、改动不生效）" +
+      (delta > 2000
+        ? ` —— 现在 ${newestChunk ? newestChunk.split(/[\\/]/).pop() : "?"} 比 client.js 新 ` +
+          `${Math.round(delta / 1000)}s，跑一下 npm run bump:rev`
+        : ""),
+  );
+}
+
 done();
