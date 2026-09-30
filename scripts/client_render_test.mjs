@@ -992,7 +992,10 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     ok(text.includes("新建"), "有新建按钮");
     ok(text.includes("刷新"), "有刷新按钮");
     ok(text.includes("X:\\test\\prompts"), "显示正文目录");
-    ok(text.includes("order 决定插入位置"), "底部有 order 说明");
+    // ⚠️ 页脚现在**只有**这一行。原来堆了四条并列说明（order 怎么算、哪层生效、
+    //    保存后会发生什么、正文写在哪），叠在一起就是一片灰字没人看。
+    ok(!text.includes("order 决定插入位置"), "**页脚不再堆 order 说明**（挪进每条卡片的详情里了）");
+    ok(!text.includes("主动重挂"), "**页脚不再解释重挂机制**（那是实现细节）");
     // 折叠态：模式徽章 + 展开箭头，但**不应**出现详情与操作按钮
     ok(text.includes("追加"), "折叠态显示模式徽章");
     ok(text.includes("不注入"), "另一条的模式徽章也在");
@@ -1948,11 +1951,13 @@ function makeSectionsData(over = {}) {
   shims.setStates([...base, presetData, false, "", null]);
   let text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("提示词组合"), "有「提示词组合」区块");
-  ok(text.includes("生效"), "有「生效」栏");
-  ok(text.includes("可用"), "有「可用」栏");
-  ok(text.includes("格式契约"), "生效栏里有格式契约");
-  ok(text.includes("编码规范"), "生效栏里有编码规范");
-  ok(!/生效（2）[\s\S]{0,200}文风要求/.test(text) || text.includes("文风要求"), "文风要求出现在某一侧");
+  ok(text.includes("格式契约"), "选词清单里有格式契约");
+  ok(text.includes("编码规范"), "选词清单里有编码规范");
+  // ⚠️ 两栏板（生效 / 可用）已删：那是同一批条目的两个视图，占两倍宽不加信息。
+  ok(!text.includes("可用（"), "**没有「可用」栏了**（两栏板已砍）");
+  ok(!text.includes("拖动"), "**文案里没有「拖动」**（拖动已删；顺序由 order 决定）");
+  ok(text.includes("order "), "每条显示 order（那才是决定插入位置的字段）");
+  ok(text.includes("已选"), "有「已选 N 条」的汇总");
   ok(text.includes("快速预设"), "有「快速预设」");
   ok(text.includes("写代码"), "列出了预设「写代码」");
   ok(text.includes("写作"), "列出了预设「写作」");
@@ -1960,7 +1965,6 @@ function makeSectionsData(over = {}) {
   ok(text.includes("当前：预设「写代码」"), "标题上写明了当前在哪个预设");
   ok(text.includes("覆盖"), "**说明了应用预设是覆盖不是合并**");
   ok(text.includes("把当前状态存为预设"), "有存为预设的入口");
-  ok(text.includes("勾选或拖动"), "说明了勾选和拖动都可以");
   ok(text.includes("全局默认"), "说明了当前改的是哪一层");
 
   // 「不注入」这种占位条目不该出现在组合列表里
@@ -2004,28 +2008,36 @@ function makeSectionsData(over = {}) {
 }
 // ── 总开关（胶囊）────────────────────────────────────────────────────────
 //
-// 状态顺序：... 18 enabledDraft
+// ⚠️ 状态顺序见文件上方那张表，**enabledDraft 在末尾**。
+//    别用 `[...base, v]` 覆盖它 —— base 已经是「到 enabledDraft 之前的全部」，
+//    再 append 一个就跑到 enabledDraft **后面**去了，等于没覆盖。
+//    （删掉 dragSt 那个槽时就踩了这个：下标整体前移一位，而 append 的还在原位。）
 {
   const base = [
     { prompts: [], defaults: [], categories: [], customCategories: [], assignments: {}, enabled: true },
     false, null, null, null, null, [], false,
     makeSectionsData(), false, null, {}, "global", "",
     { presets: [], layers: { global: { prompts: [], sections: {} }, session: null }, matched: { global: null, session: null }, sessionId: null },
-    false, "", null,
+    false, // presetsBusy
+    "", // presetName
+    null, // enabledDraft ← 就是它
   ];
-  shims.setStates([...base, true]);
+  /** 把 enabledDraft（最后一位）换成 v，返回完整状态表。 */
+  const withEnabled = (v) => base.slice(0, -1).concat([v]);
+
+  shims.setStates(withEnabled(true));
   let text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("使用我的提示词配置"), "开启时显示「使用我的提示词配置」");
-  ok(text.includes("关掉它就完全回到原生 dsh"), "说明了关掉会怎样");
+  ok(text.includes("关掉就完全回到原生 dsh"), "说明了关掉会怎样");
   ok(text.includes("配置都留着"), "**说明了配置不会被清掉**（否则用户不敢关）");
 
-  shims.setStates([...base, false]);
+  shims.setStates(withEnabled(false));
   text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("正在使用 dsh 原始提示词"), "关闭时显示「正在使用 dsh 原始提示词」");
-  ok(text.includes("都还在") && text.includes("开回来"), "**说明了配置还在、能开回来**");
+  ok(text.includes("配置都还在") && text.includes("开回来"), "**说明了配置还在、能开回来**");
 
   // enabledDraft 为 null（还没读完）不该炸，也不该误显示成"关"
-  shims.setStates([...base, null]);
+  shims.setStates(withEnabled(null));
   try {
     text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("使用我的提示词配置"), "还没读完时按「开」显示（默认开），不误报成关");

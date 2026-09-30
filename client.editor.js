@@ -390,10 +390,6 @@ window.__ModuleLoader__.load({
         var preNameSt = react.useState("");
         var presetName = preNameSt[0];
         var setPresetName = preNameSt[1];
-        /** 拖动经过哪一侧（"active" / "avail" / null）—— 只用于高亮 */
-        var dragSt = react.useState(null);
-        var dragOver = dragSt[0];
-        var setDragOver = dragSt[1];
         /** 总开关的本地态（带乐观更新 —— 拨一下立刻变色，失败再回滚） */
         var enSt = react.useState(null);
         var enabledDraft = enSt[0];
@@ -954,123 +950,108 @@ window.__ModuleLoader__.load({
           );
         }
 
-        /**
-         * 生效列表的一侧（可勾选、可拖放）。
-         *
-         * ⚠️ **勾选和拖动走同一条路** —— 两个入口都是为了表达「这条提示词在不在
-         *    生效列表里」，最终都调 setActivePrompts 写一次完整集合。
-         *    不做「拖动只改顺序」这种事：顺序由每条提示词自己的 order 决定，
-         *    不在这里管。
-         */
-        function renderComboSide(side, title, rows, ids, otherIds) {
-          var isActive = side === "active";
-          var highlighted = dragOver === side;
-          var children = [
-            react.createElement(
-              "div",
-              { key: "h", style: { fontSize: "12px", fontWeight: 600, margin: "0 0 6px" } },
-              title + "（" + rows.length + "）",
-            ),
-          ];
 
-          if (rows.length === 0) {
-            children.push(
-              react.createElement(
-                "div",
-                { key: "e", style: Object.assign({}, HINT_TEXT, { padding: "8px 0" }) },
-                isActive ? "还没有 —— 从左边勾选或拖进来" : "都已在生效列表里",
-              ),
+        /**
+         * 选哪些提示词生效（当前层）。
+         *
+         * 为什么只留一份清单、不做「生效 / 可用」两栏：
+         *   两栏是**同一批条目**的两个视图 —— 一条提示词要么在这边要么在那边，
+         *   占两倍宽度却不增加信息。一列勾选就够了。
+         *
+         * 为什么不做拖动排序：
+         *   顺序根本不是这里定的 —— 每条提示词有自己的 `order`，dsh 按它排。
+         *   这里能拖出「顺序」，纯粹是两栏板给人的错觉。勾选就够了。
+         *
+         * 这一段管的是「选哪些」，上面那堆卡片管的是「每条长什么样」——
+         * 两件事，所以两块都留，但这一块不该铺得比卡片还大。
+         */
+        function renderPicker() {
+          // 当前层的生效 id 列表（组合区自己算，不从 renderCombo 里借变量）
+          var layer =
+            sectionScope === "session"
+              ? presetsData.layers && presetsData.layers.session
+              : presetsData.layers && presetsData.layers.global;
+          var activeIds = (layer && Array.isArray(layer.prompts) ? layer.prompts : []).slice();
+
+          var usable = [];
+          for (var pi = 0; pi < prompts.length; pi++) {
+            if (prompts[pi] && prompts[pi].mode !== "none") usable.push(prompts[pi]);
+          }
+          var byId = {};
+          for (var bi = 0; bi < usable.length; bi++) byId[usable[bi].id] = usable[bi];
+
+          // 生效的排前面（按真实注入顺序），其余在后
+          var ordered = [];
+          var picked = {};
+          for (var ai = 0; ai < activeIds.length; ai++) {
+            var hit = byId[activeIds[ai]];
+            if (hit) {
+              ordered.push(hit);
+              picked[hit.id] = true;
+            }
+          }
+          for (var ri = 0; ri < usable.length; ri++) {
+            if (!picked[usable[ri].id]) ordered.push(usable[ri]);
+          }
+
+          if (usable.length === 0) {
+            return react.createElement(
+              "div",
+              { style: HINT_TEXT },
+              "库里还没有可选的提示词。上面「新建」加一条。",
             );
           }
 
-          for (var i = 0; i < rows.length; i++) {
+          var totalTokens = 0;
+          for (var ki = 0; ki < activeIds.length; ki++) {
+            if (byId[activeIds[ki]]) totalTokens += byId[activeIds[ki]].tokens || 0;
+          }
+
+          var rows = [];
+          for (var oi = 0; oi < ordered.length; oi++) {
             (function (p) {
-              var activeNow = ids.indexOf(p.id) >= 0;
-              children.push(
+              var on = !!picked[p.id];
+              rows.push(
                 react.createElement(
-                  "div",
-                  {
-                    key: p.id,
-                    // 拖动：HTML5 DnD。拖起时把 id 放进 dataTransfer，
-                    // 放下的那一侧读出来决定加还是减。
-                    draggable: !presetsBusy,
-                    onDragStart: function (e) {
-                      try {
-                        e.dataTransfer.setData("text/plain", p.id);
-                        e.dataTransfer.effectAllowed = "move";
-                      } catch {
-                        /* 某些浏览器只读，忽略 */
-                      }
-                    },
-                    onDragOver: function (e) {
-                      e.preventDefault(); // 不 preventDefault 就不允许放下
-                      if (dragOver !== side) setDragOver(side);
-                    },
-                    onDragLeave: function () {
-                      if (dragOver === side) setDragOver(null);
-                    },
-                    onDrop: function (e) {
-                      e.preventDefault();
-                      setDragOver(null);
-                      var id = "";
-                      try {
-                        id = e.dataTransfer.getData("text/plain");
-                      } catch {
-                        /* 忽略 */
-                      }
-                      if (!id) return;
-                      // 放下 = 把这条移进这一侧
-                      var base = ids.indexOf(id) < 0 ? ids.concat([id]) : ids;
-                      if (side === "avail") base = base.filter(function (x) { return x !== id; });
-                      if (base.length === ids.length && base.indexOf(id) >= 0) return; // 没变化
-                      setActivePrompts(computeOrder(base, prompts), sectionScope, sectionSessionId);
-                    },
-                    style: Object.assign({}, COMBO_ROW, highlighted ? COMBO_ROW_HL : {}),
-                  },
+                  "label",
+                  { key: p.id, style: Object.assign({}, COMBO_ROW, { cursor: presetsBusy ? "default" : "pointer" }) },
                   [
                     react.createElement("input", {
                       key: "cb",
                       type: "checkbox",
-                      checked: activeNow,
+                      checked: on,
                       disabled: presetsBusy,
                       onChange: function () {
-                        var next = activeNow
-                          ? ids.filter(function (x) { return x !== p.id; })
-                          : ids.concat([p.id]);
+                        var next = on
+                          ? activeIds.filter(function (x) { return x !== p.id; })
+                          : activeIds.concat([p.id]);
                         setActivePrompts(next, sectionScope, sectionSessionId);
                       },
                     }),
                     react.createElement("span", { key: "n", style: { flex: "1 1 auto" } }, p.name || p.id),
                     react.createElement(
                       "span",
-                      { key: "c", style: HEADING_COUNT },
-                      (p.category || "") + (p.mode === "none" ? "" : ""),
+                      { key: "o", style: HEADING_COUNT },
+                      "order " + (p.order == null ? "?" : p.order),
                     ),
+                    react.createElement("span", { key: "t", style: HEADING_COUNT }, fmtTokens(p.tokens)),
                   ],
                 ),
               );
-            })(rows[i]);
+            })(ordered[oi]);
           }
 
-          return react.createElement(
-            "div",
-            {
-              key: side,
-              style: Object.assign({}, COMBO_SIDE, highlighted ? COMBO_SIDE_HL : {}),
-            },
-            children,
-          );
-        }
-
-        /**
-         * 按分类建议顺序排一下 —— 让拖动进来的提示词落在合理位置。
-         *
-         * 只做**稳定排序**，不改任何人的 order（order 是每条提示词自己的属性，
-         * 由 editor 那边管）。看起来是"拖动改了顺序"，实际上是"顺序本来就按
-         * 分类定的"，这里只是保持一致。
-         */
-        function computeOrder(ids, allPrompts) {
-          return ids.slice();
+          return react.createElement("div", null, [
+            react.createElement(
+              "div",
+              { key: "sum", style: HINT_TEXT },
+              activeIds.length === 0
+                ? "一条都没选 —— 这个" + (sectionScope === "global" ? "默认" : "会话") + "不会注入任何提示词"
+                : "已选 " + activeIds.length + " 条 · 共 " + fmtTokens(totalTokens) +
+                  "（插入位置由各自的 order 决定）",
+            ),
+            react.createElement("div", { key: "rows", style: COMBO_CHIPS }, rows),
+          ]);
         }
 
         /**
@@ -1102,7 +1083,8 @@ window.__ModuleLoader__.load({
                     },
                     style: Object.assign({}, PILL_SWITCH, on ? PILL_ON : PILL_OFF),
                   },
-                  react.createElement("span", { style: Object.assign({}, PILL_KNOB, on ? { left: "18px" } : { left: "2px" }) }),
+                  // 滑块行程跟着胶囊尺寸走：宽 30 - 左右各 1px 边框 - 滑块 14 - 左 1px = 14px
+                  react.createElement("span", { style: Object.assign({}, PILL_KNOB, { left: on ? "14px" : "1px" }) }),
                 ),
                 react.createElement(
                   "span",
@@ -1112,10 +1094,8 @@ window.__ModuleLoader__.load({
               ]),
               react.createElement(
                 "div",
-                { key: "h", style: Object.assign({}, HINT_TEXT, { margin: "6px 0 0 46px" }) },
-                on
-                  ? "关掉它就完全回到原生 dsh —— 不注入自设提示词，也不改写原生段落。配置都留着，开回来就恢复。"
-                  : "你配好的东西都还在，只是暂时不生效。开回来即可恢复。",
+                { key: "h", style: Object.assign({}, HINT_TEXT, { margin: "4px 0 0 40px" }) },
+                on ? "关掉就完全回到原生 dsh。配置都留着。" : "配置都还在，开回来就恢复。",
               ),
             ],
           );
@@ -1164,29 +1144,6 @@ window.__ModuleLoader__.load({
             ]);
           }
 
-          // 当前层的生效 id 列表
-          var layer =
-            sectionScope === "session"
-              ? presetsData.layers && presetsData.layers.session
-              : presetsData.layers && presetsData.layers.global;
-          var activeIds = (layer && Array.isArray(layer.prompts) ? layer.prompts : []).slice();
-
-          var usable = [];
-          for (var pi = 0; pi < prompts.length; pi++) {
-            // 「不注入」这种 mode:none 的条目不参与 —— 它是占位，不是提示词
-            if (prompts[pi] && prompts[pi].mode !== "none") usable.push(prompts[pi]);
-          }
-          var activeRows = [];
-          var availRows = [];
-          for (var ui = 0; ui < usable.length; ui++) {
-            if (activeIds.indexOf(usable[ui].id) >= 0) activeRows.push(usable[ui]);
-            else availRows.push(usable[ui]);
-          }
-          // 生效列表按 activeIds 的顺序显示（那是真实的注入顺序）
-          activeRows.sort(function (a, b) {
-            return activeIds.indexOf(a.id) - activeIds.indexOf(b.id);
-          });
-
           var children = [head];
 
           if (sectionScope === "session" && !sectionSessionId) {
@@ -1194,27 +1151,12 @@ window.__ModuleLoader__.load({
               react.createElement(
                 "div",
                 { key: "nosid", style: WARN },
-                "选了「只改某个会话」但还没挑会话 —— 在下面「系统提示词」的开关那里选一个。",
+                "还没挑会话 —— 在下面「系统提示词」那里选。",
               ),
             );
           }
 
-          children.push(
-            react.createElement("div", { key: "board", style: COMBO_BOARD }, [
-              renderComboSide("active", "生效", activeRows, activeIds, []),
-              renderComboSide("avail", "可用", availRows, activeIds, []),
-            ]),
-          );
-          children.push(
-            react.createElement(
-              "div",
-              { key: "tip", style: HINT_TEXT },
-              "勾选或拖动切换。顺序由每条提示词自己的 order 决定，这里不管顺序。" +
-                (sectionScope === "global"
-                  ? "当前改的是**全局默认**（影响所有会话）。"
-                  : "当前改的是**这一个会话**。"),
-            ),
-          );
+          children.push(react.createElement("div", { key: "pick" }, renderPicker()));
 
           // ── 快速预设 ────────────────────────────────────────────────────
           children.push(
@@ -2170,14 +2112,17 @@ window.__ModuleLoader__.load({
           react.createElement("div", { key: "sections" }, renderSections()),
         );
 
+        // 页脚只留一行。原来这里有四条并列说明（order 怎么算、哪层生效、
+        // 保存后会发生什么、正文写在哪），叠在一起就是一片灰字，没人看。
+        // 真正需要的时候会出现在用得着的地方：order 在每条卡片里、层次在标题上。
         body.push(
-          react.createElement("div", { key: "hint", style: HINT }, [
-            react.createElement("span", { key: "a" }, "order 决定插入位置：100 在 persona 之后、工具说明之前；2900 在工具说明之后。"),
-            react.createElement("span", { key: "b" }, "改动保存后立即重载，并自动重挂所有已分配的会话 —— 下一步就生效。"),
+          react.createElement(
+            "div",
+            { key: "hint", style: HINT },
             list && list.promptsDir
-              ? react.createElement("span", { key: "c" }, "正文写在：" + list.promptsDir)
+              ? react.createElement("span", null, "正文写在 " + list.promptsDir)
               : null,
-          ]),
+          ),
         );
 
         return react.createElement("div", { style: SECTION }, [header].concat(body));
