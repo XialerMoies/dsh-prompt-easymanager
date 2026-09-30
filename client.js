@@ -78,8 +78,9 @@
         return "工具用法 · " + (TOOL_LABELS[key] || key);
       }
       if (name.startsWith("mcp:")) return "MCP · " + name.slice(4);
-      // ⚠️ 插件**自己注入**的段落也会出现在这个列表里（比如 prompt-manager:infinite-gen-3）。
-      //    这是修「列表只有全局层」那个 bug 之后的必然结果 —— 带 scope 读就看得见自己。
+      // ⚠️ 插件**自己注入**的段落也会出现在这个列表里（名字形如
+      //    `prompt-manager:<条目id>`）。这是修「列表只有全局层」那个 bug 之后的
+      //    必然结果 —— 带 scope 读就看得见自己。
       //    标成「本插件注入」是**故意的**：它跟原生段落不是一回事，用户要能一眼分出来。
       if (name.startsWith("prompt-manager:")) return "本插件注入 · " + name.slice(16);
       // 兜底：把分隔符换成人话，别原样甩一串英文键名

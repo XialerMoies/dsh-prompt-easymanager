@@ -22,22 +22,26 @@ dsh 的系统提示词是很多段拼起来的：persona、AGENTS.md、技能、
 
 ## 安装
 
-profile 的依赖指向本地源码：
+把插件目录放到任意位置，然后在 profile 的依赖里指向它：
 
 ```json
-"dsh-prompt-manager": "file:E:/ai-talk/杂谈/dsh-prompt-manager"
+"dsh-prompt-manager": "file:<插件目录的绝对路径>"
 ```
 
-`node_modules/dsh-prompt-manager` 是指向源码目录的 **junction**，改源码即刻生效。
+例如 `file:D:/tools/dsh-prompt-manager`（Windows 用正斜杠）。
 
-> ⚠️ **profile 设了 `nodeLinker: hoisted`，再跑 `pnpm install` 会把 junction 换成实体拷贝。**
-> 不会丢改动（pnpm 是从源码目录拷的），但之后改源码不再生效，需要重建 junction：
->
-> ```powershell
-> $nm = "$env:USERPROFILE\.dsh\profiles\web\node_modules"
-> Remove-Item "$nm\dsh-prompt-manager" -Recurse -Force
-> New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target "E:\ai-talk\杂谈\dsh-prompt-manager"
-> ```
+**想改源码即刻生效，就把 `node_modules/dsh-prompt-manager` 做成指向源码目录的
+junction（符号链接）**，而不是让包管理器拷贝一份：
+
+```powershell
+$nm   = "$env:USERPROFILE\.dsh\profiles\<profile>\node_modules"   # profile 名按你的来
+$src  = "<插件目录的绝对路径>"
+Remove-Item "$nm\dsh-prompt-manager" -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target $src
+```
+
+> ⚠️ **再跑一次 `pnpm install` 会把 junction 换成实体拷贝。**
+> 不会丢改动（pnpm 是从源码目录拷的），但之后改源码就不生效了 —— 重跑上面两行。
 
 装完**重启 dsh**。之后凡是改了插件代码，也都要重启 —— 原因见「注意事项」。
 
@@ -51,7 +55,7 @@ profile 的依赖指向本地源码：
 ### 会话头部
 
 ```
-[●] [无限四代 +1 ·默认 ▾]  [预览]  [↻]
+[●] [代码规范 +1 ·默认 ▾]  [预览]  [↻]
  │                          │       └─ 重读 catalog.json
  │                          └─ 展开最终系统提示词
  └─ 状态点：灰=未挂 / 绿=显式指定且已挂 / 蓝=来自默认且已挂 /
@@ -64,13 +68,14 @@ profile 的依赖指向本地源码：
 点开是多选面板：
 
 ```
-┌ 选择本会话的提示词            可以多选；各自按 order 排序插入（当前来自全局默认） ┐
-│ ✓ 格式契约      追加 · order 100 · 1197 tokens                                  │
-│   渗透测试约定   追加 · order 2900 · 340 tokens                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│ 已选 2 条 · 共 1537 tokens（格式契约@100 → 渗透测试约定@2900）                    │
-│                          [应用]  [跟随默认]  [不注入]                            │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│ 选择本会话的提示词            可以多选；各自按 order 排序插入（当前来自全局默认）   │
+│ ✓ 代码规范      追加 · order 100 · 420 tokens                                       │
+│   输出格式契约   追加 · order 9500 · 180 tokens                                     │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ 已选 2 条 · 共 600 tokens（代码规范@100 → 输出格式契约@9500）                       │
+│                                                        [应用]  [跟随默认]  [不注入] │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | 按钮 | 含义 |

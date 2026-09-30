@@ -57,6 +57,62 @@ const readme = readFileSync(at("README.md"), "utf8");
   eq(hit, [], "README 不链自用文档");
 }
 
+// ── 2b. 面向用户的地方不暴露作者环境 ────────────────────────────────────────
+//
+// README 里写过 `file:E:/ai-talk/杂谈/dsh-prompt-manager`，例子里还出现过
+// 作者自己那条提示词的名字 —— 用户既看不懂，也不需要知道。
+{
+  // 只查**会给用户看**的东西：README、docs/ 顶层的两份。
+  const userFacing = ["README.md", "docs/system-prompt.md", "docs/section-overrides-design.md"];
+
+  // 作者环境：绝对路径、仓库 owner、作者自用的提示词名。
+  const AUTHOR = [
+    /E:\\/,
+    /E:\//,
+    /[A-Z]:\\\\?(?:Users|ai-)/i,
+    /ai-talk/,
+    /杂谈/,
+    /XialerMoies/,
+    /无限[三四]代/,
+    /infinite-gen/,
+  ];
+
+  const leaks = [];
+  for (const f of userFacing) {
+    const src = readFileSync(at(f), "utf8");
+    src.split("\n").forEach((line, i) => {
+      for (const re of AUTHOR) {
+        if (re.test(line)) leaks.push(`${f}:${i + 1} ${line.trim().slice(0, 60)}`);
+      }
+    });
+  }
+  eq(leaks, [], "面向用户的文档里没有作者环境痕迹");
+}
+
+// ── 2c. 面向用户的文档里不许点名私有条目 ────────────────────────────────────
+{
+  // 例子要用通用名字（「代码规范」这种），不能拿作者库里的条目标题当示例。
+  const src = readFileSync(at("README.md"), "utf8");
+  const blocks = [...src.matchAll(/```[\s\S]*?```/g)].map((m) => m[0]);
+  const bad = blocks.filter((b) => /无限|infinite-gen|gen-4|gen-3/.test(b));
+  eq(bad.length, 0, "README 的示例块里用的是通用名字");
+}
+
+// ── 2d. ASCII 框的每行显示宽度要一致 ────────────────────────────────────────
+{
+  // 替换示例文字时框线歪过 —— 中文算 2 宽，靠肉眼数不出来。
+  const dw = (s) =>
+    [...s].reduce((a, c) => a + (/[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/.test(c) ? 2 : 1), 0);
+  const src = readFileSync(at("README.md"), "utf8");
+  const boxes = [...src.matchAll(/^┌[^\n]*\n(?:[^└\n]*\n)*?^└[^\n]*/gm)].map((m) => m[0]);
+  const uneven = [];
+  for (const box of boxes) {
+    const ws = [...new Set(box.split("\n").map(dw))];
+    if (ws.length > 1) uneven.push(ws.join("/"));
+  }
+  eq(uneven, [], `README 里的框线宽度一致（扫了 ${boxes.length} 个框）`);
+}
+
 // ── 3. README 不写版本历史 ──────────────────────────────────────────────────
 {
   // 版本变更进 CHANGELOG。README 里出现「## v0.」就是在长胖。
