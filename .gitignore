@@ -31,3 +31,10 @@ _revert*.mjs
 _probe*.mjs
 _cleanup.mjs
 _final.mjs
+
+# 我干活时临时写的脚本 / 数据（前缀下划线）。
+# ⚠️ 踩过：写来给 `git commit -F` 用的消息文件被误提交进仓库。
+#    凡是我们自己造的一次性文件一律用 `_` 开头，这里整类挡掉。
+_*.mjs
+_*.js
+_*.txt
