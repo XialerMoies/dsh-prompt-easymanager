@@ -204,6 +204,57 @@ const readme = readFileSync(at("README.md"), "utf8");
   );
 }
 
+// ── 6b. docs 里的 order 对照表必须跟 SECTION_SLOTS 逐行一致 ─────────────────
+//
+// ⚠️ 这张表我**凭印象手打过**，每个关键数字都错（`plan:policy` 写成 300 实际 500、
+//    领域类写成 500 实际 950、`tools:ptc-only` 写成和 `tools:sdk` 都在 2900）。
+//    用户照着它调 order 就会插错位置。所以钉死：表里每一行都得能在
+//    `SECTION_SLOTS`（从 dsh 源码读出、另有测试盯着的表）里找到。
+{
+  const { SECTION_SLOTS } = await import("./lib/section-slots.mjs");
+  const { CATEGORIES } = await import("./lib/prompt-library.mjs");
+
+  const md = readFileSync(at("docs", "system-prompt.md"), "utf8");
+  const block = md.match(/^```\n((?:\s*-?\d+\s+.*\n)+)```/m);
+  ok(block !== null, "docs/system-prompt.md 里有 order 对照表");
+
+  if (block) {
+    const rows = [...block[1].matchAll(/^\s*(-?\d+)\s+(.*?)\s*$/gm)].map((m) => ({
+      order: Number(m[1]),
+      label: m[2],
+    }));
+
+    // 原生段落那几行必须逐条对上（带「本插件」标记的是我们自己的建议位，跳过）
+    const nativeRows = rows.filter((r) => !r.label.includes("本插件"));
+    const expected = SECTION_SLOTS.map((s) => ({ order: s.order, name: s.name }));
+
+    const mismatch = [];
+    for (const s of expected) {
+      const hit = nativeRows.find((r) => r.order === s.order);
+      if (!hit) {
+        mismatch.push(`表里缺 ${s.order}（${s.name ?? "无 name"}）`);
+        continue;
+      }
+      if (s.name === null) {
+        // 官方预留没人注册的：表里的说明文字可以随便写，但不能写出一个具体段名
+        if (/^[a-z]+[:_]/.test(hit.label) && !hit.label.includes("（")) {
+          mismatch.push(`${s.order} 是孤儿槽位，表里却写了段名「${hit.label}」—— 那是猜的`);
+        }
+      } else if (!hit.label.startsWith(s.name)) {
+        mismatch.push(`${s.order} 表里写「${hit.label}」，实际是「${s.name}」`);
+      }
+    }
+    eq(mismatch, [], "order 对照表跟 SECTION_SLOTS 逐条一致");
+
+    // 本插件的建议 order 也要在表里，且不能撞原生值
+    const nativeValues = new Set(SECTION_SLOTS.map((s) => s.order));
+    const missingMine = CATEGORIES.filter(
+      (c) => !nativeValues.has(c.order) && !rows.some((r) => r.order === c.order),
+    ).map((c) => c.id);
+    eq(missingMine, [], "本插件的每个建议 order 都在表里（否则用户看不见自己会插哪）");
+  }
+}
+
 // ── 7. 引用的 docs 路径都带对了前缀 ────────────────────────────────────────
 {
   // 源码注释里写 `docs/xxx.md` 的，路径必须真的存在 —— 挪文件时最容易漏。

@@ -81,15 +81,64 @@ const SNAPSHOT = {
 };
 
 // ══ 2. 实时读 dsh 的源码，看快照还准不准 ══════════════════════════════════
+//
+// ⚠️ 别硬编码安装路径。原来这里写死了作者本机的 `D:\Node\node_global\…`，
+//    换台机器就**静默退回快照** —— 测试照样绿，但「dsh 升级改了表就当场红」
+//    这层保护没了，而且没人知道。
+//
+// 改成按「候选 node_modules 根 × 相对路径」找。顺序：
+//   1. 环境变量 DSH_SYSTEM_PROMPT_PATH（明确指定，永远优先）
+//   2. 从 node 可执行文件所在目录往上几级找（全局装 dsh 时它就在旁边，
+//      本机 node 在 D:\Node\、dsh 在 D:\Node\node_global\）
+//   3. 环境变量给的线索（npm 前缀、APPDATA）
+//   4. 常见的系统全局位置
+function candidateRoots() {
+  const roots = [];
+  const push = (p) => {
+    if (p && !roots.includes(p)) roots.push(p);
+  };
+
+  // node 往上三级 + 每级下的 node_modules / <name>_global/node_modules
+  let dir = dirname(process.execPath);
+  for (let i = 0; i < 4 && dir; i++) {
+    push(join(dir, "node_modules"));
+    for (const name of ["node_global", "npm-global", "global"]) {
+      push(join(dir, name, "node_modules"));
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  if (process.env.npm_config_prefix) {
+    push(join(process.env.npm_config_prefix, "node_modules"));
+    push(join(process.env.npm_config_prefix, "lib", "node_modules"));
+  }
+  if (process.env.APPDATA) push(join(process.env.APPDATA, "npm", "node_modules"));
+  if (process.env.HOME) push(join(process.env.HOME, ".npm-global", "lib", "node_modules"));
+
+  push("/usr/local/lib/node_modules");
+  push("/usr/lib/node_modules");
+
+  return roots;
+}
+
+const DSH_RELS = [
+  join("@deepseek-ai", "dsh", "node_modules", "@deepseek-ai", "dsh-system-prompt", "lib", "index.js"),
+  join("@deepseek-ai", "dsh-system-prompt", "lib", "index.js"),
+];
+
 function locateDshSystemPrompt() {
-  const candidates = [
-    // npm 全局安装（本机就是这种）
-    "D:\\Node\\node_global\\node_modules\\@deepseek-ai\\dsh\\node_modules\\@deepseek-ai\\dsh-system-prompt\\lib\\index.js",
-    // dsh 直接装在全局 node_modules 的扁平布局
-    "D:\\Node\\node_global\\node_modules\\@deepseek-ai\\dsh-system-prompt\\lib\\index.js",
-  ];
-  if (process.env.DSH_SYSTEM_PROMPT_PATH) candidates.unshift(process.env.DSH_SYSTEM_PROMPT_PATH);
-  return candidates.find((p) => existsSync(p)) ?? null;
+  if (process.env.DSH_SYSTEM_PROMPT_PATH) {
+    return existsSync(process.env.DSH_SYSTEM_PROMPT_PATH) ? process.env.DSH_SYSTEM_PROMPT_PATH : null;
+  }
+  for (const root of candidateRoots()) {
+    for (const rel of DSH_RELS) {
+      const p = join(root, rel);
+      if (existsSync(p)) return p;
+    }
+  }
+  return null;
 }
 
 function parseSectionOrders(src) {

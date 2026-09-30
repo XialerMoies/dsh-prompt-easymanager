@@ -68,25 +68,43 @@ dsh 按 `order` 升序排 section（`dsh-system-prompt/lib/index.js` 的
 `comparePromptSections: a.order - b.order`）。原生段落的真实位置：
 
 ```
--1000  harness:identity        ← harness 身份
-    0  deployment:persona-prefix
-   20  ← 身份类（本插件建议值）
-  100  ← 其他类（通用位置）
-  300  plan:policy
-  400  team:policy
-  500  ← 领域类
-  900  context:file-reference
-  950  ← 领域类（v0.3.7 起）
- 1000~ tool:*（每个工具各一段，共二十余段，到 2900 为止）
- 2900  tools:ptc-only / tools:sdk
- 3100  mcp-resource-servers
- 3200  ← 工具类（v0.3.7 起）
- 9000  ui:deliverable-file-references
- 9500  ← 输出类
- 9900  structured-output
-10000  harness:source
-10100  app:web-surface
-10200  deployment:persona-suffix
+ -1000  harness:identity
+     0  deployment:persona-prefix
+    20  （空位）  ← 本插件「身份」类的建议位置
+   100  （空位）  ← 本插件「其他」类的建议位置
+   500  plan:policy
+   600  team:policy
+   800  tools:ptc-only
+   900  context:file-reference
+   950  （空位）  ← 本插件「领域」类的建议位置
+  1000  tool:bash
+  1010  tool:pwsh
+  1100  tool:read
+  1200  tool:write
+  1300  tool:edit
+  1400  tool:glob
+  1500  tool:grep
+  1600  tool:jobs
+  1700  （官方预留，但没有任何插件注册它）
+  2000  tool:web_search
+  2100  tool:web_fetch
+  2200  （官方预留，但没有任何插件注册它）
+  2300  （官方预留，但没有任何插件注册它）
+  2400  tool:goal
+  2600  tool:${toolName}
+  2700  tool:ralph
+  2800  tool:${toolName}
+  2900  （官方预留，但没有任何插件注册它）
+  3000  （官方预留，但没有任何插件注册它）
+  3100  mcp-resource-servers
+  3200  （空位）  ← 本插件「工具」类的建议位置
+  5000  tools:sdk
+  9000  ui:deliverable-file-references
+  9500  （空位）  ← 本插件「输出」类的建议位置
+  9900  tool:${STRUCTURED_OUTPUT_TOOL}
+ 10000  harness:source
+ 10100  app:web-surface
+ 10200  deployment:persona-suffix
 ```
 
 想让某条紧跟在某段之后，就把它的 `order` 设成那一段的值 +1。

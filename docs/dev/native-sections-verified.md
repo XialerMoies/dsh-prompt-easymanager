@@ -1,6 +1,6 @@
 # 原生段落：键 ↔ 段名（**从源码直接读出，不是推测**）
 
-> 生成方式：见 `scripts/_extract_section_names.mjs`。
+> 生成方式：见 `scripts/extract_section_names.mjs`。
 > 它把 dsh 树里所有 `.section({...})` 注册点的 `name` 和
 > `order: getSectionOrder("KEY")` **配对抠出来** —— 键和段名在代码里是**挨着写的**。
 >

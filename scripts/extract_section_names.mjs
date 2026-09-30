@@ -14,13 +14,53 @@
 //
 // 常量形式的 name（`name: PERSONA_PREFIX_SECTION`）要回查 `const X = "..."`。
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-const ROOTS = [
-  "D:/Node/node_global/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai",
-  "D:/Node/node_global/node_modules/@deepseek-ai/dsh/node_modules",
+// ⚠️ 别硬编码安装路径（原来写死了作者本机的 D:/Node/node_global/…）。
+// 按「候选 node_modules 根 × 相对路径」找，跟 section_order_test.mjs 同一套思路。
+function candidateRoots() {
+  const roots = [];
+  const push = (p) => {
+    if (p && !roots.includes(p)) roots.push(p);
+  };
+  let dir = dirname(process.execPath);
+  for (let i = 0; i < 4 && dir; i++) {
+    push(join(dir, "node_modules"));
+    for (const name of ["node_global", "npm-global", "global"]) push(join(dir, name, "node_modules"));
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (process.env.npm_config_prefix) push(join(process.env.npm_config_prefix, "node_modules"));
+  if (process.env.APPDATA) push(join(process.env.APPDATA, "npm", "node_modules"));
+  push("/usr/local/lib/node_modules", "/usr/lib/node_modules");
+  return roots;
+}
+
+const RELS = [
+  "@deepseek-ai/dsh/node_modules/@deepseek-ai",
+  "@deepseek-ai/dsh-system-prompt",
 ];
+
+function roots() {
+  if (process.env.DSH_ROOT) return [process.env.DSH_ROOT];
+  const found = [];
+  for (const root of candidateRoots()) {
+    for (const rel of RELS) {
+      const p = join(root, rel);
+      if (existsSync(p)) found.push(p);
+    }
+  }
+  return found;
+}
+
+const ROOTS = roots();
+if (ROOTS.length === 0) {
+  console.error("找不到 dsh 的安装位置。设 DSH_ROOT 指向 dsh 的 node_modules 根，例如：");
+  console.error("  $env:DSH_ROOT = '<...>/node_modules'");
+  process.exit(1);
+}
 
 /** 收集所有 .js/.ts/.d.ts 文件（跳过太深的 node_modules 嵌套）。 */
 function walk(dir, depth = 0, out = []) {

@@ -371,7 +371,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     assignments: {},
     prompts: [
       { id: "none", name: "不注入", mode: "none", tokens: 0 },
-      { id: "gen4", name: "无限四代", mode: "append", tokens: 1197 },
+      { id: "gen4", name: "格式契约", mode: "append", tokens: 1200 },
     ],
     diag: { routeRegistered: true, sessions: [] },
   };
@@ -413,7 +413,9 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     renderedContext: { text: "ctx", tokens: 5, chars: 3 },
     logged: {
       ok: true,
-      text: "You are powered by the gpt-5 model.\ncwd is E:\\work",
+      // 模拟 dsh 已插值完的日志正文：这里的 cwd 是**替换后的结果**（不是模板）。
+      // 路径用 X:\test，跟任何人的真实环境脱钩。
+      text: "You are powered by the gpt-5 model.\ncwd is X:\\test\\work",
       tokens: 20,
       chars: 50,
       turn: 3,
@@ -431,7 +433,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
       { name: "bash", tokens: 400, chars: 900 },
       { name: "read", tokens: 100, chars: 200 },
     ],
-    variables: { model: "x", cwd: "E:\\y" },
+    variables: { model: "x", cwd: "X:\\test\\y" },
     conflict: null,
   };
   const data = { assignments: {}, prompts: [], diag: { routeRegistered: true, sessions: [] } };
@@ -451,7 +453,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     ok(text.includes("系统提示词正文（模型上次实际收到的）"), "会话日志块标题在");
     ok(text.includes("不含下面的工具定义"), "明确说明这份不含工具定义");
     ok(text.includes("gpt-5 model"), "会话日志里的提示词正文被渲染出来");
-    ok(text.includes("E:\\work"), "日志里的 cwd 已替换（不是模板）");
+    ok(text.includes("X:\\test\\work"), "日志里的 cwd 已替换（不是模板）");
     ok(text.includes("第 3 轮 / 第 1 步"), "显示日志事件的轮次/步数");
     ok(text.includes("prompt-manager:gen4"), "section 列表在");
     ok(text.includes("bash"), "工具列表在");
@@ -854,21 +856,21 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   const listData = {
     prompts: [
       {
-        id: "infinite-gen-4",
-        name: "无限四代",
+        id: "format-contract",
+        name: "格式契约",
         description: "正向格式载荷",
         mode: "append",
         order: 100,
         source: "file",
-        file: "infinite-gen-4.md",
-        tokens: 1197,
-        chars: 4290,
+        file: "format-contract.md",
+        tokens: 1200,
+        chars: 4300,
         text: "正文内容",
       },
       { id: "plain", name: "普通", description: "", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" },
     ],
-    catalogPath: "E:\\x\\catalog.json",
-    promptsDir: "E:\\x\\prompts",
+    catalogPath: "X:\\test\\catalog.json",
+    promptsDir: "X:\\test\\prompts",
     libraryErrors: [],
   };
   shims.setStates([listData, false, null, null, null]);
@@ -884,19 +886,19 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     const text = flattenText(el).join(" ");
     ok(text.includes("提示词管理"), "标题在");
     ok(text.includes("2 条"), "显示条数");
-    ok(text.includes("无限四代"), "列出条目名");
-    ok(text.includes("infinite-gen-4"), "显示 id");
+    ok(text.includes("格式契约"), "列出条目名");
+    ok(text.includes("format-contract"), "显示 id");
     ok(text.includes("正向格式载荷"), "显示说明");
     ok(text.includes("新建"), "有新建按钮");
     ok(text.includes("刷新"), "有刷新按钮");
-    ok(text.includes("E:\\x\\prompts"), "显示正文目录");
+    ok(text.includes("X:\\test\\prompts"), "显示正文目录");
     ok(text.includes("order 决定插入位置"), "底部有 order 说明");
     // 折叠态：模式徽章 + 展开箭头，但**不应**出现详情与操作按钮
     ok(text.includes("追加"), "折叠态显示模式徽章");
     ok(text.includes("不注入"), "另一条的模式徽章也在");
     ok(text.includes("›"), "折叠态有展开箭头");
-    ok(!text.includes("4290 字符"), "折叠态不显示字符数（在详情里）");
-    ok(!text.includes("infinite-gen-4.md"), "折叠态不显示正文文件名");
+    ok(!text.includes("4300 字符"), "折叠态不显示字符数（在详情里）");
+    ok(!text.includes("format-contract.md"), "折叠态不显示正文文件名");
     // 但「新会话默认」卡片是默认展开的 —— 它管所有新会话，优先级最高
     ok(text.includes("新会话默认"), "默认卡片在");
   }
@@ -908,24 +910,24 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   const listData = {
     prompts: [
       {
-        id: "infinite-gen-4",
-        name: "无限四代",
+        id: "format-contract",
+        name: "格式契约",
         description: "正向格式载荷",
         mode: "append",
         order: 100,
         source: "file",
-        file: "infinite-gen-4.md",
-        tokens: 1197,
-        chars: 4290,
+        file: "format-contract.md",
+        tokens: 1200,
+        chars: 4300,
         text: "正文内容",
       },
       { id: "plain", name: "普通", description: "", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" },
     ],
-    promptsDir: "E:\\x\\prompts",
+    promptsDir: "X:\\test\\prompts",
     libraryErrors: [],
   };
   // openId 在索引 5
-  shims.setStates([listData, false, null, null, null, "infinite-gen-4"]);
+  shims.setStates([listData, false, null, null, null, "format-contract"]);
   let el;
   try {
     el = renderEditor({});
@@ -936,9 +938,9 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   }
   if (el) {
     const text = flattenText(el).join(" ");
-    ok(text.includes("1197 tokens"), "展开后显示 token");
-    ok(text.includes("4290 字符"), "展开后显示字符数");
-    ok(text.includes("infinite-gen-4.md"), "展开后显示正文文件名");
+    ok(text.includes("1200 tokens"), "展开后显示 token");
+    ok(text.includes("4300 字符"), "展开后显示字符数");
+    ok(text.includes("format-contract.md"), "展开后显示正文文件名");
     ok(text.includes("100 = persona 之后"), "展开后解释 order 含义");
     ok(text.includes("编辑"), "展开后有编辑按钮");
     ok(text.includes("删除"), "展开后有删除按钮");
@@ -961,7 +963,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     prompts: [
       { id: "a", name: "甲", description: "d", mode: "append", order: 100, source: "file", file: "a.md", tokens: 5, chars: 20, text: "甲的正文" },
     ],
-    promptsDir: "E:\\x\\prompts",
+    promptsDir: "X:\\test\\prompts",
     libraryErrors: [],
   };
   // 打开编辑：edit 状态在索引 3
@@ -1060,11 +1062,11 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
 {
   const listData = {
     prompts: [
-      { id: "gen4", name: "无限四代", description: "载荷", mode: "append", order: 100, source: "file", file: "gen4.md", tokens: 1197, chars: 4290, text: "x" },
-      { id: "gen3", name: "无限三代", description: "", mode: "append", order: 100, source: "file", file: "gen3.md", tokens: 900, chars: 3000, text: "y" },
+      { id: "gen4", name: "格式契约", description: "载荷", mode: "append", order: 100, source: "file", file: "gen4.md", tokens: 1200, chars: 4300, text: "x" },
+      { id: "gen3", name: "格式契约甲", description: "", mode: "append", order: 100, source: "file", file: "gen3.md", tokens: 900, chars: 3000, text: "y" },
       { id: "none", name: "不注入", description: "", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" },
     ],
-    promptsDir: "E:\\x\\prompts",
+    promptsDir: "X:\\test\\prompts",
     defaults: ["gen4"],
     libraryErrors: [],
   };
@@ -1087,7 +1089,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     ok(!text.includes("有未保存的改动"), "没有未保存改动时不提示");
     ok(text.includes("保存默认"), "有保存按钮");
     ok(text.includes("清空"), "有清空按钮");
-    ok(text.includes("无限四代") && text.includes("无限三代"), "两条可选");
+    ok(text.includes("格式契约") && text.includes("格式契约甲"), "两条可选");
     // 「不注入」模式的条目不参与默认
     const boxes = [];
     (function walk(n) {
@@ -1122,7 +1124,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
 
   // 库里没有可用的（只有 none 条目）
   shims.setStates([
-    { prompts: [{ id: "none", name: "不注入", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" }], promptsDir: "E:\\x", defaults: [], libraryErrors: [] },
+    { prompts: [{ id: "none", name: "不注入", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" }], promptsDir: "X:\\test", defaults: [], libraryErrors: [] },
     false, null, null, null, null, [], false,
   ]);
   try {
@@ -1164,7 +1166,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
       { id: "p-custom", name: "安全规矩", category: "安全审查", mode: "append", order: 100, source: "file", file: "p-custom.md", tokens: 30, chars: 90, text: "c" },
       { id: "p-none", name: "不注入", category: "other", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" },
     ],
-    promptsDir: "E:\\x\\prompts",
+    promptsDir: "X:\\test\\prompts",
     categories: CATS,
     customCategories: ["安全审查"],
     defaults: [],
@@ -1311,7 +1313,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
 
   // ── 边界：没有 categories 字段（老宿主）也要能渲染 ──
   shims.setStates([
-    { prompts: [{ id: "a", name: "甲", category: "身份", mode: "append", order: 20, source: "file", file: "a.md", tokens: 1, chars: 2, text: "x" }], promptsDir: "E:\\x", defaults: [], libraryErrors: [] },
+    { prompts: [{ id: "a", name: "甲", category: "身份", mode: "append", order: 20, source: "file", file: "a.md", tokens: 1, chars: 2, text: "x" }], promptsDir: "X:\\test", defaults: [], libraryErrors: [] },
     false, null, null, null, null, [], false,
   ]);
   try {
@@ -1821,7 +1823,7 @@ function makeSectionsData(over = {}) {
 {
   const lib = [
     { id: "none", name: "不注入", mode: "none", category: "other" },
-    { id: "P1", name: "无限四代", mode: "append", category: "output", order: 9500, tokens: 1200 },
+    { id: "P1", name: "格式契约", mode: "append", category: "output", order: 9500, tokens: 1200 },
     { id: "P2", name: "编码规范", mode: "append", category: "domain", order: 950, tokens: 300 },
     { id: "P3", name: "文风要求", mode: "append", category: "domain", order: 950, tokens: 100 },
   ];
@@ -1848,7 +1850,7 @@ function makeSectionsData(over = {}) {
   ok(text.includes("提示词组合"), "有「提示词组合」区块");
   ok(text.includes("生效"), "有「生效」栏");
   ok(text.includes("可用"), "有「可用」栏");
-  ok(text.includes("无限四代"), "生效栏里有无限四代");
+  ok(text.includes("格式契约"), "生效栏里有格式契约");
   ok(text.includes("编码规范"), "生效栏里有编码规范");
   ok(!/生效（2）[\s\S]{0,200}文风要求/.test(text) || text.includes("文风要求"), "文风要求出现在某一侧");
   ok(text.includes("快速预设"), "有「快速预设」");

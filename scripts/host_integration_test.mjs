@@ -26,7 +26,7 @@ const PLUGIN_VERSION = JSON.parse(
 // ⚠️ **测试用自己的 fixture 提示词库，不碰用户真实的那个。**
 //
 // 以前这里直接读 `<插件>/prompts/catalog.json`，于是测试**依赖用户的库里留着
-// 几条特定 id 的提示词**（`infinite-gen-3` / `infinite-gen-4`）。
+// 几条特定 id 的提示词**（`format-contract-a` / `format-contract`）。
 // 用户把那几条长文删掉之后，测试立刻红了 —— 那是测试设计的问题：
 // 要么污染用户的库，要么测试跟着用户的数据飘。
 //
@@ -34,17 +34,17 @@ const PLUGIN_VERSION = JSON.parse(
 const FIXTURE_DIR = join(DSH_HOME, "fixture-prompts");
 mkdirSync(FIXTURE_DIR, { recursive: true });
 writeFileSync(
-  join(FIXTURE_DIR, "infinite-gen-3.md"),
+  join(FIXTURE_DIR, "format-contract-a.md"),
   "集成测试用的正文占位。这段文本必须超过一百个字符，因为测试里有一条断言检查正文长度 —— 真实的提示词动辄几千字，如果 fixture 写得太短，「正文根本没读到」这种 bug 会溜过去而测试照样绿。所以这里故意写得啰嗦一点，把长度凑够。下面再重复一遍确保够长：集成测试用的正文占位，这段文本必须超过一百个字符。（三代）\n",
   "utf8",
 );
 writeFileSync(
-  join(FIXTURE_DIR, "infinite-gen-4.md"),
+  join(FIXTURE_DIR, "format-contract.md"),
   "集成测试用的正文占位。这段文本必须超过一百个字符，因为测试里有一条断言检查正文长度 —— 真实的提示词动辄几千字，如果 fixture 写得太短，「正文根本没读到」这种 bug 会溜过去而测试照样绿。所以这里故意写得啰嗦一点，把长度凑够。下面再重复一遍确保够长：集成测试用的正文占位，这段文本必须超过一百个字符。（四代）\n",
   "utf8",
 );
 writeFileSync(
-  join(FIXTURE_DIR, "infinite-gen-4.1-flash.md"),
+  join(FIXTURE_DIR, "format-contract-b.md"),
   "集成测试用的正文占位。这段文本必须超过一百个字符，因为测试里有一条断言检查正文长度 —— 真实的提示词动辄几千字，如果 fixture 写得太短，「正文根本没读到」这种 bug 会溜过去而测试照样绿。所以这里故意写得啰嗦一点，把长度凑够。下面再重复一遍确保够长：集成测试用的正文占位，这段文本必须超过一百个字符。（四代 Flash）\n",
   "utf8",
 );
@@ -56,30 +56,30 @@ writeFileSync(
       prompts: [
         { id: "none", name: "不注入", mode: "none", category: "other" },
         {
-          id: "infinite-gen-3",
-          name: "无限三代",
+          id: "format-contract-a",
+          name: "格式契约甲",
           mode: "append",
           category: "output",
           order: 9500,
           // ⚠️ `file` 字段是必须的 —— 少了它条目在库里但正文读不到，
           //    注入会静默失败（第一次写 fixture 就漏了这个，测试直接红）。
-          file: "infinite-gen-3.md",
+          file: "format-contract-a.md",
         },
         {
-          id: "infinite-gen-4",
-          name: "无限四代",
+          id: "format-contract",
+          name: "格式契约",
           mode: "append",
           category: "output",
           order: 9500,
-          file: "infinite-gen-4.md",
+          file: "format-contract.md",
         },
         {
-          id: "infinite-gen-4.1-flash",
-          name: "无限四代 · Flash",
+          id: "format-contract-b",
+          name: "格式契约 · 乙",
           mode: "append",
           category: "output",
           order: 9500,
-          file: "infinite-gen-4.1-flash.md",
+          file: "format-contract-b.md",
         },
       ],
     },
@@ -296,16 +296,16 @@ ok(
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-4"] },
+    body: { sessionId: S, promptIds: ["format-contract"] },
   });
   eq(r.status, 200, "POST assign 200");
   eq(r.json.ok, true, "返回 ok");
-  eq(r.json.promptIds, ["infinite-gen-4"], "返回 promptIds 数组");
+  eq(r.json.promptIds, ["format-contract"], "返回 promptIds 数组");
   eq(r.json.source, "explicit", "来源是显式");
   eq(r.json.outcome, "attached", "结论 attached");
   eq(r.json.sessionCheck, "verified", "会话校验为 verified（agent 存活）");
   eq(live.sections.length, 1, "agent 上注册了 1 个 section");
-  eq(live.sections[0].name, "prompt-manager:infinite-gen-4", "section 名正确");
+  eq(live.sections[0].name, "prompt-manager:format-contract", "section 名正确");
   ok(live.sections[0].text.length > 100, "正文来自 prompts/*.md");
 }
 
@@ -313,7 +313,7 @@ ok(
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-4", "infinite-gen-3"] },
+    body: { sessionId: S, promptIds: ["format-contract", "format-contract-a"] },
   });
   eq(r.status, 200, "多条分配 200");
   eq(r.json.promptIds.length, 2, "两条都生效");
@@ -325,7 +325,7 @@ ok(
   const f = join(DSH_HOME, "dsh-prompt-manager-state.json");
   ok(existsSync(f), "状态文件已写入 DSH_HOME");
   const parsed = JSON.parse(readFileSync(f, "utf8"));
-  eq(parsed.assignments[S], ["infinite-gen-4", "infinite-gen-3"], "文件里的分配是数组");
+  eq(parsed.assignments[S], ["format-contract", "format-contract-a"], "文件里的分配是数组");
   eq(parsed.version, 2, "文件里有版本号");
   ok(Array.isArray(parsed.defaults), "文件里有 defaults 字段");
   ok(typeof parsed.updatedAt === "string", "带 updatedAt");
@@ -335,10 +335,10 @@ ok(
 {
   await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-3"] },
+    body: { sessionId: S, promptIds: ["format-contract-a"] },
   });
   eq(live.sections.length, 1, "换一组后只剩 1 个 section");
-  eq(live.sections[0].name, "prompt-manager:infinite-gen-3", "已换成新的");
+  eq(live.sections[0].name, "prompt-manager:format-contract-a", "已换成新的");
 }
 
 // ── 7. 未知 id：整组被拒，且不改状态 ───────────────────────────────────────
@@ -358,7 +358,7 @@ ok(
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-4", "infinite-gen-3"] },
+    body: { sessionId: S, promptIds: ["format-contract", "format-contract-a"] },
   });
   eq(r.status, 200, "两条 append → 200");
   eq(r.json.promptIds.length, 2, "两条都挂上");
@@ -370,7 +370,7 @@ ok(
 
   const r2 = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-4", "infinite-gen-4"] },
+    body: { sessionId: S, promptIds: ["format-contract", "format-contract"] },
   });
   eq(r2.status, 200, "同一条重复被去重 → 合法");
   eq(r2.json.promptIds.length, 1, "去重后只有 1 条");
@@ -388,11 +388,11 @@ ok(
 // ── 8b. POST assign：null = 清除指定，回落默认 ──────────────────────────────
 {
   // 先设一个默认
-  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["infinite-gen-4"] } });
+  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract"] } });
   const r = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptIds: null } });
   eq(r.status, 200, "null 200");
   eq(r.json.source, "default", "来源回到 default");
-  eq(r.json.promptIds, ["infinite-gen-4"], "生效的是默认那条");
+  eq(r.json.promptIds, ["format-contract"], "生效的是默认那条");
   eq(live.sections.length, 1, "默认已被挂上");
   // 收尾：清掉默认，免得影响后面的断言
   await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
@@ -433,10 +433,10 @@ ok(
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptId: "infinite-gen-4" },
+    body: { sessionId: S, promptId: "format-contract" },
   });
   eq(r.status, 200, "旧的 promptId 字符串仍可用");
-  eq(r.json.promptIds, ["infinite-gen-4"], "被当成单条");
+  eq(r.json.promptIds, ["format-contract"], "被当成单条");
   const r2 = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptId: "none" } });
   eq(r2.json.promptIds, [], "旧的 none 被当成空数组");
 }
@@ -446,7 +446,7 @@ ok(
   eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [], "初始默认为空");
   const set = await call(ctx, DEFAULTS_PATH, {
     method: "POST",
-    body: { promptIds: ["infinite-gen-3", "infinite-gen-4"] },
+    body: { promptIds: ["format-contract-a", "format-contract"] },
   });
   eq(set.status, 200, "设置默认 200");
   eq(set.json.defaults.length, 2, "默认两条");
@@ -480,11 +480,11 @@ ok(
   eq(r.status, 200, "GET edit → 200");
   ok(Array.isArray(r.json.prompts), "返回条目数组");
   ok(r.json.prompts.length >= 3, "至少 3 条");
-  const one = r.json.prompts.find((p) => p.id === "infinite-gen-4");
-  ok(!!one, "能找到 infinite-gen-4");
+  const one = r.json.prompts.find((p) => p.id === "format-contract");
+  ok(!!one, "能找到 format-contract");
   ok(one.text.length > 100, "**带正文**（这是编辑器需要的）");
   eq(one.source, "file", "注明来源是文件");
-  eq(one.file, "infinite-gen-4.md", "回报文件名");
+  eq(one.file, "format-contract.md", "回报文件名");
   ok(one.tokens > 0, "带 token 估算");
   ok(typeof r.json.catalogPath === "string", "回报目录路径");
   ok(typeof r.json.promptsDir === "string", "回报正文目录路径");
@@ -533,10 +533,10 @@ ok(
 {
   await call(ctx, DEFAULTS_PATH, {
     method: "POST",
-    body: { promptIds: ["infinite-gen-3"] },
+    body: { promptIds: ["format-contract-a"] },
   });
   const r = await call(ctx, EDIT_PATH);
-  eq(r.json.defaults, ["infinite-gen-3"], "改了默认后，编辑器的 GET 读得到");
+  eq(r.json.defaults, ["format-contract-a"], "改了默认后，编辑器的 GET 读得到");
   await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
   eq((await call(ctx, EDIT_PATH)).json.defaults, [], "清空后也同步");
 }
@@ -559,8 +559,8 @@ ok(
 
   await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [GONE] } });
   eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [GONE], "默认设成它");
-  await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptIds: ["infinite-gen-3", GONE] } });
-  eq((await call(ctx, STATE_PATH)).json.assignments[S], ["infinite-gen-3", GONE], "会话也显式挂上它");
+  await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptIds: ["format-contract-a", GONE] } });
+  eq((await call(ctx, STATE_PATH)).json.assignments[S], ["format-contract-a", GONE], "会话也显式挂上它");
 
   // 删掉它
   const del = await call(ctx, EDIT_PATH, { method: "POST", body: { action: "delete", id: GONE } });
@@ -571,9 +571,9 @@ ok(
 
   // 关键断言：幽灵 id 不该留下
   eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [], "**默认已清空**（否则新会话会挂空）");
-  eq((await call(ctx, STATE_PATH)).json.assignments[S], ["infinite-gen-3"], "**显式分配保留了还成立的部分**");
+  eq((await call(ctx, STATE_PATH)).json.assignments[S], ["format-contract-a"], "**显式分配保留了还成立的部分**");
   eq(live.sections.length, 1, "会话只留下还成立的那一条 section");
-  eq(live.sections[0].name, "prompt-manager:infinite-gen-3", "留下的是正确的那条");
+  eq(live.sections[0].name, "prompt-manager:format-contract-a", "留下的是正确的那条");
 }
 
 // ── 10c. 编辑器路由：新增 / 更新 / 删除 ────────────────────────────────────
@@ -649,7 +649,7 @@ const TMP_ID = "zz-test-only";
   apply(ctx2);
   const r = await call(ctx2, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: "session-任意-0000", promptId: "infinite-gen-4" },
+    body: { sessionId: "session-任意-0000", promptId: "format-contract" },
   });
   eq(r.status, 200, "无活动 agent 时不拒绝（无从比较）");
   eq(r.json.sessionCheck, "unverifiable", "标记为 unverifiable");
@@ -662,14 +662,14 @@ const TMP_ID = "zz-test-only";
   // 先分配，让预览有内容
   await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-4"] },
+    body: { sessionId: S, promptIds: ["format-contract"] },
   });
   const r = await call(ctx, PREVIEW_PATH, { search: "session=" + encodeURIComponent(S) });
   eq(r.status, 200, "GET preview 200");
   eq(r.json.outcome, "ok", "预览成功");
-  eq(r.json.promptIds, ["infinite-gen-4"], "回报生效的 id 列表");
+  eq(r.json.promptIds, ["format-contract"], "回报生效的 id 列表");
   eq(r.json.prompts[0].mode, "append", "回报每条的 id/name/mode/order");
-  eq(r.json.prompts[0].id, "infinite-gen-4", "回报 id");
+  eq(r.json.prompts[0].id, "format-contract", "回报 id");
   ok(r.json.sectionCount >= 1, "至少 1 个 section");
   ok(r.json.totalTokens > 0, "有 token 合计");
   ok(r.json.logged !== undefined, "带会话日志那块");
@@ -751,12 +751,12 @@ const TMP_ID = "zz-test-only";
 {
   await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["infinite-gen-4.1-flash"] },
+    body: { sessionId: S, promptIds: ["format-contract-b"] },
   });
   const ctx3 = makeCtx([live.agent]);
   apply(ctx3);
   const r = await call(ctx3, STATE_PATH);
-  eq(r.json.assignments[S], ["infinite-gen-4.1-flash"], "新实例读回上次的分配（数组）");
+  eq(r.json.assignments[S], ["format-contract-b"], "新实例读回上次的分配（数组）");
   eq(r.json.version, 2, "读回版本 2");
 }
 
@@ -930,7 +930,7 @@ const TMP_ID = "zz-test-only";
   eq(res.json.counts.total, 4, "总数是 4（2 全局 + 2 scoped），不是 2");
 
   // **本插件自己注入的段落不许出现在这里** —— 列表列的是 dsh 原生段落。
-  // 真机上它冒出过 `prompt-manager:infinite-gen-3`（4290 字），
+  // 真机上它冒出过 `prompt-manager:format-contract-a`（4300 字），
   // 用户第一反应是「这是什么东西」。
   ok(
     !names.some((n) => n.startsWith("prompt-manager:")),
@@ -1043,7 +1043,7 @@ const TMP_ID = "zz-test-only";
   apply(ctx8);
 
   // ① 先给全局层配点东西：一条提示词 + 一条改写
-  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["infinite-gen-4"] } });
+  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract"] } });
   await call(ctx8, SECTIONS_PATH, {
     method: "POST",
     body: { name: "harness:identity", action: "replace", text: "写代码时的身份", scope: "global" },
@@ -1056,7 +1056,7 @@ const TMP_ID = "zz-test-only";
   });
   eq(saved.status, 200, "存预设 → 200");
   eq(saved.json.id, "写代码", "id 就是名字（中文保留）");
-  eq(saved.json.preset.prompts, ["infinite-gen-4"], "快照里带上提示词");
+  eq(saved.json.preset.prompts, ["format-contract"], "快照里带上提示词");
   ok(saved.json.preset.sections["harness:identity"] !== undefined, "快照里带上段落改写");
 
   // ③ 改成别的状态
@@ -1076,7 +1076,7 @@ const TMP_ID = "zz-test-only";
   });
   eq(applied.status, 200, "应用预设 → 200");
   const after = await call(ctx8, PRESETS_PATH, { method: "GET" });
-  eq(after.json.layers.global.prompts, ["infinite-gen-4"], "**应用后提示词回来了**");
+  eq(after.json.layers.global.prompts, ["format-contract"], "**应用后提示词回来了**");
   ok(
     after.json.layers.global.sections["harness:identity"] !== undefined,
     "**段落改写也回来了**",
@@ -1084,19 +1084,19 @@ const TMP_ID = "zz-test-only";
   eq(after.json.matched.global?.id, "写代码", "**应用完能认出「现在在写代码这个预设上」**");
 
   // ⑤ 应用是「覆盖」：预设里没有的东西要被清掉
-  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["infinite-gen-3"] } });
+  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract-a"] } });
   await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "apply", id: "写代码" } });
   const over = await call(ctx8, PRESETS_PATH, { method: "GET" });
   eq(
     over.json.layers.global.prompts,
-    ["infinite-gen-4"],
-    "**应用是覆盖不是合并** —— 后加的 infinite-gen-3 被清掉了",
+    ["format-contract"],
+    "**应用是覆盖不是合并** —— 后加的 format-contract-a 被清掉了",
   );
 
   // ⑥ 会话层预设
   await call(ctx8, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: "session-P", promptIds: ["infinite-gen-3"] },
+    body: { sessionId: "session-P", promptIds: ["format-contract-a"] },
   });
   const sessSaved = await call(ctx8, PRESETS_PATH, {
     method: "POST",
@@ -1119,8 +1119,8 @@ const TMP_ID = "zz-test-only";
     body: { action: "apply", id: "写作" },
   });
   const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
-  eq(disk.assignments["session-P"], ["infinite-gen-3"], "会话层被还原");
-  eq(disk.defaults, ["infinite-gen-4"], "**全局层没被动**（应用会话层预设不影响全局）");
+  eq(disk.assignments["session-P"], ["format-contract-a"], "会话层被还原");
+  eq(disk.defaults, ["format-contract"], "**全局层没被动**（应用会话层预设不影响全局）");
 
   // ⑧ 参数校验
   const noName = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "save", scope: "global" } });

@@ -135,7 +135,7 @@ const byKey = new Map(SECTION_SLOTS.map((s) => [s.key, s]));
     "tool:subagent_fork",
     "mcp-resource-servers",
     "ui:deliverable-file-references",
-    "prompt-manager:infinite-gen-3",
+    "prompt-manager:format-contract-a",
     "harness:source",
     "app:web-surface",
     "deployment:persona-suffix",
