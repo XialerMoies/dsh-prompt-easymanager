@@ -1208,16 +1208,32 @@ window.__ModuleLoader__.load({
           );
         }
 
-        /** 提示词组合 + 快速预设 整块。 */
+        /**
+         * 提示词配置：**选哪些提示词生效 + 快速预设**，合成一块。
+         *
+         * ⚠️ 原来这是**两段独立内容**（「提示词组合」和「快速预设」各一个标题行），
+         *    但它们本来就是一件事：
+         *      · 前者是「当前这套配置选了什么」；
+         *      · 后者是「把这套配置整体存下来 / 换一套」。
+         *    分开摆的后果是同一层意思被切成两段，中间还夹一个标题行，
+         *    看着像两个不相干的功能。
+         *
+         * 现在一个标题、一块内容：
+         *    标题（含作用范围）
+         *    选哪些 ── 勾选清单
+         *    存/换 ── 预设胶囊 + 「存为预设」输入
+         *    覆盖提示
+         *
+         * ⚠️ 「改的是哪一层」必须留在**看得见**的地方 —— 全局默认和「只改这个
+         *    会话」改错了地方很要紧，藏进 title 用户就不会去看了；但也不该占
+         *    一整行灰字，放进标题就够。
+         */
         function renderCombo() {
           var head = react.createElement(
             "div",
-            { style: Object.assign({}, CARD_HEADING, { marginTop: "4px" }) },
+            { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
             [
               react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合"),
-              // ⚠️ 「改的是哪一层」必须留在**看得见**的地方。
-              //    全局默认和「只改这个会话」改错了地方很要紧；藏进 title 里
-              //    用户就不会去看了。但也别占一整行灰字 —— 放进标题就够。
               react.createElement(
                 "span",
                 { key: "scope", style: HEADING_COUNT },
@@ -1225,16 +1241,17 @@ window.__ModuleLoader__.load({
                   ? (sectionSessionId ? "只改这个会话" : "还没挑会话")
                   : "全局默认 · 所有会话",
               ),
+              // 预设的匹配状态也挂在这一行的末尾 —— 它描述的是「当前这套配置」
               react.createElement(
                 "span",
                 { key: "c", style: HEADING_COUNT },
                 presetsData && presetsData.matched
                   ? (presetsData.matched[sectionScope === "session" ? "session" : "global"]
-                      ? "当前：预设「" +
+                      ? "· 预设「" +
                         presetsData.matched[sectionScope === "session" ? "session" : "global"].name +
                         "」"
-                      : "相对预设已改动")
-                  : "读取中…",
+                      : "· 相对预设已改动")
+                  : "",
               ),
               react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
               react.createElement(
@@ -1263,26 +1280,19 @@ window.__ModuleLoader__.load({
 
           var children = [head];
 
-          // 「还没挑会话」不放常驻警告条 —— 标题上已经写了（见上面的 scope 标签），
-          // 真去勾选时 setActivePrompts 也会 flash 一句「先选一个会话」。
+          // ── 选哪些生效 ──────────────────────────────────────────────────
+          // （「还没挑会话」不放常驻警告条 —— 标题上已经写了，真去勾选时
+          //   setActivePrompts 也会 flash 一句「先选一个会话」。）
           children.push(react.createElement("div", { key: "pick" }, renderPicker()));
 
-          // ── 快速预设 ────────────────────────────────────────────────────
-          children.push(
-            react.createElement(
-              "div",
-              { key: "ph", style: Object.assign({}, CARD_HEADING, { marginTop: "12px" }) },
-              [react.createElement("span", { key: "n", style: HEADING_TITLE }, "快速预设")],
-            ),
-          );
-
+          // ── 存 / 换一套（快速预设）──────────────────────────────────────
           var list = presetsData.presets || [];
           if (list.length === 0) {
             children.push(
               react.createElement(
                 "div",
                 { key: "pe", style: HINT_TEXT },
-                "还没有预设。调好一套配置（哪些提示词生效 + 哪些段落改写），然后存下来。",
+                "还没有预设。下面调好一套（哪些提示词生效 + 哪些段落改写），再存下来。",
               ),
             );
           } else {
@@ -1309,11 +1319,7 @@ window.__ModuleLoader__.load({
                           disabled: presetsBusy,
                           title: p.summary + (p.note ? " · " + p.note : ""),
                           onClick: function () {
-                            doPreset(
-                              { action: "apply", id: p.id },
-                              p.scope,
-                              sectionSessionId,
-                            );
+                            doPreset({ action: "apply", id: p.id }, p.scope, sectionSessionId);
                           },
                         },
                         p.name + (p.id === matchedId ? " ✓" : ""),
@@ -1341,10 +1347,10 @@ window.__ModuleLoader__.load({
             children.push(react.createElement("div", { key: "pl", style: COMBO_CHIPS }, chips));
           }
 
-          // 存为预设
+          // 存为预设 —— 紧跟在预设胶囊下面，它们是一件事
           children.push(
             react.createElement("div", { key: "ps", style: ACTIONS }, [
-              react.createElement("span", { key: "l", style: HINT_TEXT }, "把当前状态存为预设："),
+              react.createElement("span", { key: "l", style: HINT_TEXT }, "把当前这套存为预设："),
               react.createElement("input", {
                 key: "i",
                 type: "text",

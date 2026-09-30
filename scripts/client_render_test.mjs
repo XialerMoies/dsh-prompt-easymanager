@@ -2099,7 +2099,8 @@ function makeSectionsData(over = {}) {
   ];
 
   shims.setStates([...base, presetData, false, "", null]);
-  let text = flattenText(renderEditor({})).join(" ");
+  const comboEl = renderEditor({});
+  let text = flattenText(comboEl).join(" ");
   ok(text.includes("提示词组合"), "有「提示词组合」区块");
   ok(text.includes("格式契约"), "选词清单里有格式契约");
   ok(text.includes("编码规范"), "选词清单里有编码规范");
@@ -2108,13 +2109,29 @@ function makeSectionsData(over = {}) {
   ok(!text.includes("拖动"), "**文案里没有「拖动」**（拖动已删；顺序由 order 决定）");
   ok(text.includes("order "), "每条显示 order（那才是决定插入位置的字段）");
   ok(text.includes("已选"), "有「已选 N 条」的汇总");
-  ok(text.includes("快速预设"), "有「快速预设」");
   ok(text.includes("写代码"), "列出了预设「写代码」");
   ok(text.includes("写作"), "列出了预设「写作」");
   ok(text.includes("✓"), "**当前匹配的预设打了勾**（否则用户不知道自己在哪）");
-  ok(text.includes("当前：预设「写代码」"), "标题上写明了当前在哪个预设");
+  // ⚠️ **融合**：提示词组合和快速预设合成了一块，不再各有一个标题行。
+  //    它们本来就是一件事 —— 前者是「这套配置选了什么」，后者是
+  //    「把这套配置整体存下来 / 换一套」。分开摆等于把同一层意思切成两段，
+  //    中间还夹一个标题行（用户提的就是这个）。
+  ok(!text.includes("快速预设"), "**没有独立的「快速预设」标题了**（已并进提示词组合）");
+  ok(text.includes("预设「写代码」"), "标题行上报出当前匹配的预设");
   ok(text.includes("覆盖"), "**说明了应用预设是覆盖不是合并**");
-  ok(text.includes("把当前状态存为预设"), "有存为预设的入口");
+  ok(text.includes("把当前这套存为预设"), "有存为预设的入口（措辞跟着融合改了）");
+  // 两大块在同一个容器里 —— 这才叫「融合」
+  {
+    const holders = [];
+    (function walk(n) {
+      if (!n || typeof n !== "object") return;
+      const kids = n.children || [];
+      const t = kids.map((k) => flattenText(k).join("")).join("");
+      if (t.includes("提示词组合") && t.includes("把当前这套存为预设")) holders.push(n);
+      for (const k of kids) walk(k);
+    })(comboEl);
+    ok(holders.length >= 1, "**选词清单和预设在同一块里**（不是两个独立区块）");
+  }
   // ⚠️ 这一条**不能**挪进 title：它是「我现在改的是哪一层」，
   //    全局默认 / 只改这个会话的区别很要紧，藏起来用户会改错地方。
   //    但也不该占一整行灰字 —— 放进标题里就行。
