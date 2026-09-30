@@ -96,8 +96,7 @@
 
     // ── chunk 的加载器（模块级，只求值一次）────────────────────────────────
     //
-    // loader 是 useChunk 的缓存键，每次渲染都新建的话缓存永远 miss ——
-    // 组件会一直抛 Promise，表现是「那一栏一直是空的」且不报错。
+    // loader 是缓存的键，每次渲染都新建的话缓存永远 miss —— 组件会一直加载不完。
     //
     // require.async 收的是相对说明符（"./client.xxx.js"），**不是**注册键
     // "dsh-prompt-manager/client.xxx.js" —— 那个是 importChunk 自己拼的。
@@ -106,37 +105,80 @@
     var loadEditor = function () { return req.async("./client.editor.js"); };
 
     var req = null; // factory 的材料化参数，见下面 factory 开头
+    var react = null; // 同上 —— useChunk 在模块级，读不到 factory 里的局部变量
 
-    // chunk 缓存：loader → { p, m, e, done }
+    // 已加载好的 chunk：loader → 模块本体（失败了就删掉，下次重试）
     var chunkCache = new Map();
 
     /**
-     * 取一个 chunk（Suspense 风格：没到就抛 Promise，到了就返回模块）。
+     * 取一个 chunk，没到就先用 effect 去拉。
      *
-     * 键是 loader 本身，所以命中与否只取决于「拉过没有」，跟渲染次数、时序无关。
-     * ⚠️ 别改成「把状态挂在 useState 初值上再改它」——每次渲染都是新对象，恒不命中。
+     * ⚠️ **不许用「抛 Promise 挂起」（Suspense）那条路。**
+     *    槽位是 dsh-client-ui-renderer 渲染的，它只包了 componentDidCatch（错误边界），
+     *    **没有 Suspense**。在槽位入口抛 Promise 会一路冒到根，报
+     *      Minified React error #426（A component suspended while responding to
+     *      synchronous input），结果是会话头和设置页两个占用**一起崩**。
+     *    官方那个 dsh-client-ui-sidebar-documentpreview 是**在自己组件内部**包
+     *    `<Suspense>` 才敢用 lazy 的 —— 槽位这一层没有。
+     *
+     * 这里改成 effect 异步拉 + 到位后 setState，全程不挂起。代价是首帧空白，
+     * 对「点开设置页」这种交互无所谓。
      */
     function useChunk(loader) {
-      var box = chunkCache.get(loader);
-      if (box === undefined) {
-        box = { p: null, m: null, e: null, done: false };
-        chunkCache.set(loader, box);
-        box.p = loader().then(
-          function (m) {
-            box.m = m;
-            box.done = true;
-            return m;
-          },
-          function (e) {
-            box.e = e;
-            box.done = true;
-            throw e;
-          },
-        );
-      }
-      if (!box.done) throw box.p; // 等这个 Promise 落地后重试
-      if (box.e) throw box.e;
-      return box.m;
+      var st = react.useState(function () {
+        return chunkCache.get(loader) || null;
+      });
+      var mod = st[0];
+      var setMod = st[1];
+
+      react.useEffect(
+        function () {
+          if (mod) return undefined;
+          var alive = true;
+          loader().then(
+            function (m) {
+              // 缓存键是 loader，所以「加载中」也要写进去，避免并发拉两遍
+              chunkCache.set(loader, m);
+              if (alive) setMod(m);
+            },
+            function (err) {
+              // 失败不缓存，下次进这个页面会重试。
+              // ⚠️ 必须留一行日志 —— 静默的话表现就是「那一栏一直是空的」，
+              //    而控制台什么都不说（这个坑踩过一次）。
+              chunkCache.delete(loader);
+              console.error("[prompt-manager] chunk 加载失败：", err);
+            },
+          );
+          return function () {
+            alive = false;
+          };
+        },
+        [loader, mod],
+      );
+
+      return mod;
+    }
+
+    /**
+     * 组合加载器：面板 + 预览必须**一起**备好。
+     *
+     * ⚠️ 不能各拉各的。面板里点「预览」会直接渲染 PreviewPanel（面板常驻、
+     *    预览是弹层，同一个 React 树）—— 只拉面板的话，点预览那一刻就是
+     *    `PreviewPanel is not defined`，React 随即卸载整棵子树。
+     *
+     * 单独包一层是为了让它成为**稳定的引用**：useChunk 拿它当缓存键，
+     * 内联写箭头函数的话每次渲染都是新键，缓存永远不命中。
+     */
+    function loadPromptUi() {
+      return loadPreview().then(function (previewMod) {
+        return loadPicker().then(function (pickerMod) {
+          chunkCache.set(loadPreview, previewMod); // 面板以后要单独取预览，顺手缓存
+          return {
+            PreviewPanel: previewMod.PreviewPanel,
+            PromptPicker: pickerMod.PromptPicker,
+          };
+        });
+      });
     }
 
     window.__ModuleLoader__.load({
@@ -146,10 +188,10 @@
         var exports = module.exports;
         Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
-        // factory 只被材料化一次，在这里把 require 交给模块级的加载器。
+        // factory 只被材料化一次，在这里把 require / react 交给模块级的辅助函数。
+        // ⚠️ useChunk 定义在模块级，看不到 factory 里的局部变量 —— 必须记出来。
         req = require;
-
-        var react = require("react");
+        react = require("react");
         var reactDom = require("react-dom");
 
         var inject = ["slots"];
@@ -851,33 +893,26 @@
         };
 
         /**
-         * 会话头部那一份：多选面板 + 预览一起备好。
+         * 会话头部的入口。
          *
-         * ⚠️ 必须**一起**拉。面板里点「预览」会直接渲染 PreviewPanel（面板常驻、
-         *    预览是弹层，同一个 React 树）—— 只拉面板的话，点预览那一刻就是
-         *    `PreviewPanel is not defined`，React 随即卸载整棵子树。
-         *    预览在这里解出来随 props 交给面板，面板自己不做异步。
+         * `loadPromptUi` 定义在模块级（useChunk 拿它当缓存键，必须是稳定引用）。
+         * 还没加载好就渲染 null —— 不挂起，见 useChunk 上面那段说明。
          */
-        function loadPromptUi() {
-          return loadPreview().then(function (previewMod) {
-            return loadPicker().then(function (pickerMod) {
-              return {
-                PreviewPanel: previewMod.PreviewPanel,
-                PromptPicker: pickerMod.PromptPicker,
-              };
-            });
-          });
-        }
-
-        /** 会话头部的入口 —— 同步渲染，按钮本身不依赖任何 chunk。 */
         function HeaderSlot(props) {
           var ui = useChunk(loadPromptUi);
-          return react.createElement(ui.PromptPicker, Object.assign({}, props, { PreviewPanel: ui.PreviewPanel }));
+          if (!ui) return null;
+          return react.createElement(
+            ui.PromptPicker,
+            Object.assign({}, props, { PreviewPanel: ui.PreviewPanel }),
+          );
         }
 
         /** 设置页那一栏。 */
         function EditorSlot() {
           var m = useChunk(loadEditor);
+          if (!m) return null;
+          // ⚠️ `installStyles` 在 **create() 的返回值**里，不在模块上 ——
+          //    chunk 的 module.exports 只有 `{ create }`。
           if (!m.box) m.box = m.create(CHUNK_API);
           m.box.installStyles();
           return react.createElement(m.box.PromptEditor, null);
@@ -920,6 +955,6 @@
       },
     });
   } catch (err) {
-    console.warn("[AI Client Sandbox] dsh-prompt-manager runtime error:", err);
+    console.error("[AI Client Sandbox] dsh-prompt-manager runtime error:", err);
   }
 })();

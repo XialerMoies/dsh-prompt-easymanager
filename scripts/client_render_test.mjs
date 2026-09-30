@@ -41,6 +41,13 @@ function makeShims() {
   // 这种写法在测试里一路绿灯，到真机上才炸成 `import failed: [object Promise]`。
   // 见下面 useState 里的注释。
   let inRender = false;
+  // 渲染期收集到的副作用（见 useEffect）
+  let effects = [];
+  // 跑过 effect 的组件实例 → 它们的 effect 清单。
+  // 键是组件函数本身：测试里一个组件就是一个实例。
+  const effectStore = new Map();
+  // setState 排队的值：hook 序号 → 新值。下一轮渲染读它。
+  const pendingState = new Map();
 
   const react = {
     createElement(type, props, ...children) {
@@ -71,19 +78,40 @@ function makeShims() {
       }
       const i = stateIndex++;
       // ⚠️ 要跟真 React 一样支持函数式初值（useState(fn) 会调用 fn）。
-      //    宿主用 useState(loadPicker) 存「这个组件拉的是哪个 chunk」，
-      //    不调用的话拿到的是函数本身，组件里 m.box 就是 undefined。
       const fresh = typeof initial === "function" ? initial() : initial;
-      if (persistentOn && i < persistent.length) return [persistent[i], () => {}];
-      const v = i < stateOverrides.length ? stateOverrides[i] : fresh;
+
+      // 上一次渲染里 setState 过的值，这一轮优先
+      let v;
+      if (pendingState.has(i)) {
+        v = pendingState.get(i);
+        pendingState.delete(i);
+      } else if (persistentOn && i < persistent.length) {
+        v = persistent[i];
+      } else {
+        v = i < stateOverrides.length ? stateOverrides[i] : fresh;
+      }
       if (persistentOn) persistent[i] = v;
-      return [v, () => {}];
+
+      // ⚠️ setter 必须是**真的** —— 以前这里是 `() => {}`。
+      //    宿主的 chunk 加载是「effect 里异步拉 → setState(模块) → 重渲染读到模块」，
+      //    setter 空实现的话重渲染永远读到 null，组件永远是空。
+      const set = (next) => {
+        pendingState.set(i, typeof next === "function" ? next(persistent[i]) : next);
+      };
+      return [v, set];
     },
     useCallback(fn) {
       return fn;
     },
-    useEffect() {
-      /* 不执行副作用：只测渲染路径 */
+    /**
+     * 副作用要**真的收集起来**，由 renderAsync 在渲染后跑一遍。
+     *
+     * ⚠️ 以前这里是空实现。宿主的 chunk 加载改成「effect 里异步拉 + setState」
+     *    之后，空实现就意味着**加载永远不会发生** —— 组件首帧渲染 null 就再没有下文，
+     *    测试只会看到「什么都没渲染」，测不出这一步到底通不通。
+     */
+    useEffect(fn) {
+      if (inRender) effects.push(fn);
     },
     useRef(v) {
       return { current: v };
@@ -124,6 +152,7 @@ function makeShims() {
      */
     render(Component, props, tries = 3) {
       persistent = [];
+      pendingState.clear(); // ⚠️ 见 renderAsync 里的说明 —— 跨组件会串号
       persistentOn = true;
       inRender = true;
       let last;
@@ -148,28 +177,60 @@ function makeShims() {
      * 微任务才落地，同步循环里 retry 一万次也还是 pending。
      * 预热（把槽位包装组件跑通、把 api 交出来）只能用它。
      */
-    async renderAsync(Component, props, tries = 5) {
+    async renderAsync(Component, props, tries = 12) {
+      // ⚠️ 每次渲染入口都要把「排队等生效的 setState」清掉。
+      //
+      //    这个 Map 是按 **hook 序号** 存的，而序号对每个组件都从 0 开始 ——
+      //    上一个组件跑完留下的排队值会被下一个组件读到（真机上踩到的样子：
+      //    渲染 EditorSlot 时 `useState(0)` 拿到了 PickerSlot 的 chunk 模块，
+      //    报 `m.box.installStyles is not a function`）。
+      //    真 React 里 state 是挂在实例上的，不会串。
       persistent = [];
+      pendingState.clear();
       persistentOn = true;
-      inRender = true;
+      if (effectStore.get(Component) === undefined) effectStore.set(Component, []);
+
       let last;
+      const pendingCleanups = [];
       for (let i = 0; i < tries; i++) {
+        effects = [];
         stateIndex = 0;
+        inRender = true;
         try {
           last = Component(props);
-          break;
         } catch (e) {
+          inRender = false;
+          persistentOn = false;
           if (e && typeof e.then === "function") {
-            await e;
+            await e; // 兼容旧的「抛 Promise」写法
             continue;
           }
-          persistentOn = false;
-          inRender = false;
           throw e;
         }
+        inRender = false;
+
+        // 渲染完跑 effect（真 React 也是渲染后跑）。
+        //
+        // ⚠️ effect 的返回值是**清理函数**，不是结果 —— 不能拿它当 Promise 等。
+        //    加载是 effect 内部发起的，所以只能「跑完 effect → 让异步落地 → 再渲染」。
+        const list = effectStore.get(Component);
+        for (const fn of effects) if (!list.includes(fn)) list.push(fn);
+        for (const fn of list) {
+          const cleanup = fn();
+          if (typeof cleanup === "function") pendingCleanups.push(cleanup);
+        }
+
+        // ⚠️ 别只让出一个微任务。chunk 加载是
+        //    `loadPreview().then(loadPicker).then(…)` 好几层，微任务数不固定 ——
+        //    让不够就会「第一轮渲染出 null 就以为完事了」，warmup 拿不到组件。
+        //    这里每次都多让几个，配合下面的多轮循环。
+        for (let k = 0; k < 10; k++) await Promise.resolve();
+
+        if (last !== null) break; // 渲染出东西了
       }
+
+      for (const fn of pendingCleanups) fn();
       persistentOn = false;
-      inRender = false;
       return last;
     },
   };
@@ -286,10 +347,13 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.plugins.tab").Comp
 // 抓法是先让宿主按真实路径渲染一次 —— HeaderSlot / EditorSlot 会调
 // useChunk → require.async → chunk.create(api)，那一份 api 就被记下来了。
 {
+  // 让两个槽位各按**真实路径**渲染一次：useChunk → require.async → create(api)，
+  // 那一份 api 就被 sandbox 记下来了（后面拿它造组件，而不是自己复刻一份）。
+  // 渲染结果在这不重要，只要求「跑通」。
   try {
     await shims.renderAsync(PickerSlot, { sessionId: "warmup" });
   } catch {
-    /* 渲染结果不重要，这里只要它把 api 交出来 */
+    /* 结果不重要 */
   }
   // 设置页那一栏是按需拉的（会话头部不预热它），显式走一遍
   try {
