@@ -2112,7 +2112,14 @@ window.__ModuleLoader__.load({
 
 
         // 分组标题（对齐原生 .catalogHeading：h3 + 计数）
-        var header = react.createElement("div", { style: CARD_HEADING }, [
+        //
+        // ⚠️ 间距跟「系统提示词」那个标题行**取同一组值**（下面 22 / 10）。
+        //    两个区块在同一个页面里上下挨着，标题跟卡片的距离不一样会显得
+        //    一个是「标题+内容」、另一个是「一条独立的说明条」。
+        var header = react.createElement(
+          "div",
+          { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
+          [
           react.createElement("h3", { key: "t", style: Object.assign({}, HEADING_TITLE, { margin: 0 }) }, "个人提示词"),
           react.createElement("span", { key: "c", style: HEADING_COUNT }, prompts.length + " 条"),
           react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
@@ -2135,7 +2142,8 @@ window.__ModuleLoader__.load({
             { key: "r", type: "button", className: "pm-btn", style: DETAIL_BTN, disabled: busy, onClick: load },
             "刷新",
           ),
-        ]);
+          ],
+        );
 
         var body = [];
         if (err) {
@@ -2155,16 +2163,8 @@ window.__ModuleLoader__.load({
           body.push(react.createElement("div", { key: "master" }, renderMasterSwitch()));
           // 提示词组合 + 快速预设 —— 管「哪些生效」，在具体条目之前
           body.push(react.createElement("div", { key: "combo" }, renderCombo()));
-          // "新建"表单放在网格之外（它需要整行宽度）
-          if (edit && edit.isNew) {
-            body.push(
-              react.createElement(
-                "div",
-                { key: "new", style: Object.assign({}, CARD, { marginBottom: "10px" }) },
-                react.createElement("div", { style: CARD_DETAILS }, renderForm()),
-              ),
-            );
-          }
+          // 个人提示词：标题行 + 分类卡片，最后作为一个块推入（见下面那段说明）
+          var cards = [];
           // 按分类分组显示。组内顺序：内置五类的固定次序 → 自定义分类按名字排。
           // 空分类不显示标题（只有一条也不显示，免得满屏小标题）。
           var seen = {};
@@ -2194,30 +2194,96 @@ window.__ModuleLoader__.load({
           }
 
           if (prompts.length === 0) {
-            body.push(
+            // "新建"表单放在卡片列之外（它需要整行宽度）
+            if (edit && edit.isNew) {
+              cards.push(
+                react.createElement(
+                  "div",
+                  { key: "new", style: Object.assign({}, CARD, { marginBottom: "10px" }) },
+                  react.createElement("div", { style: CARD_DETAILS }, renderForm()),
+                ),
+              );
+            }
+            cards.push(
               react.createElement(
                 "div",
                 { key: "empty", style: STATUS_LINE },
                 "提示词库是空的，点「新建」加一条。",
               ),
             );
+          } else {
+            // "新建"表单放在卡片列最前（它需要整行宽度）
+            if (edit && edit.isNew) {
+              cards.push(
+                react.createElement(
+                  "div",
+                  { key: "new", style: Object.assign({}, CARD, { marginBottom: "10px" }) },
+                  react.createElement("div", { style: CARD_DETAILS }, renderForm()),
+                ),
+              );
+            }
+            // 按分类分组显示。组内顺序：内置五类的固定次序 → 自定义分类按名字排。
+            // 空分类不显示（只有一条也不显示，免得满屏小标题）。
+            var seen = {};
+            var groups = [];
+            for (var gi = 0; gi < builtinCategories.length; gi++) {
+              groups.push({ id: builtinCategories[gi].id, items: [] });
+              seen[builtinCategories[gi].id] = true;
+            }
+            var customs = [];
+            for (var pi = 0; pi < prompts.length; pi++) {
+              var c = (prompts[pi] && prompts[pi].category) || "other";
+              if (!seen[c]) {
+                seen[c] = true;
+                customs.push(c);
+              }
+            }
+            customs.sort();
+            for (var ci = 0; ci < customs.length; ci++) groups.push({ id: customs[ci], items: [] });
+            for (var qi = 0; qi < prompts.length; qi++) {
+              var qc = (prompts[qi] && prompts[qi].category) || "other";
+              for (var gj = 0; gj < groups.length; gj++) {
+                if (groups[gj].id === qc) {
+                  groups[gj].items.push(prompts[qi]);
+                  break;
+                }
+              }
+            }
+            for (var gk = 0; gk < groups.length; gk++) {
+              var g = groups[gk];
+              if (g.items.length === 0) continue;
+              // ⚠️ 第二个参数是「这是不是自定义分类」，**不是** `seen[g.id]`。
+              //
+              //    `seen` 是「这个 id 有没有被处理过」的记账表，内置分类在初始化时
+              //    就全被标成 true —— 直接把它传进去的后果是**每个分类都被打上
+              //    「自定义分类」徽章**（用户看到「领域」标着自定义，就是这个 bug）。
+              //    判据要用「在不在内置表里」反推。
+              cards.push(
+                renderGroupCard(
+                  g,
+                  !builtinCategories.some(function (b) { return b.id === g.id; }),
+                ),
+              );
+            }
           }
-          for (var gk = 0; gk < groups.length; gk++) {
-            var g = groups[gk];
-            if (g.items.length === 0) continue;
-            // ⚠️ 第二个参数是「这是不是自定义分类」，**不是** `seen[g.id]`。
-            //
-            //    `seen` 是「这个 id 有没有被处理过」的记账表，内置分类在初始化时
-            //    就全被标成 true —— 直接把它传进去的后果是**每个分类都被打上
-            //    「自定义分类」徽章**（用户看到「领域」标着自定义，就是这个 bug）。
-            //    判据要用「在不在内置表里」反推。
-            body.push(
-              renderGroupCard(
-                g,
-                !builtinCategories.some(function (b) { return b.id === g.id; }),
-              ),
-            );
-          }
+
+          // ⚠️ 标题行和卡片必须**在同一个 body 项里**。
+          //
+          //    `SECTION` 是 `display:flex; gap:14px` 的列 —— body 里每一项之间
+          //    都隔 14px。原来把 header 和卡片拆成两个 body 项，等于**标题行
+          //    和卡片之间硬隔了 14px，还各自和上下邻居等距**，看着就像标题是
+          //    独立的一条、跟卡片没关系。
+          //    系统提示词那块（renderSections）从来就是一个块，标题和卡片挨着
+          //    （间距 10px）—— 个人提示词现在对齐它。
+          // ⚠️ 标题行和卡片必须**在同一个 body 项里**。
+          //
+          //    `SECTION` 是 `display:flex; gap:14px` 的列 —— body 里每一项之间
+          //    都隔 14px。原来把 header 和卡片拆成两个 body 项，等于**标题行
+          //    和卡片之间硬隔了 14px，还各自和上下邻居等距**，看着就像标题是
+          //    独立的一条、跟卡片没关系。
+          //    系统提示词那块（renderSections）从来就是一个块，标题和卡片挨着
+          //    （间距 10px）—— 个人提示词现在对齐它。
+          body.push(react.createElement("div", { key: "personal" }, [header].concat(cards)));
         }
 
         body.push(
@@ -2237,7 +2303,9 @@ window.__ModuleLoader__.load({
           ),
         );
 
-        return react.createElement("div", { style: SECTION }, [header].concat(body));
+        // ⚠️ `header` 已经并进 personal 块了（见上面那段说明），这里**只拼 body**。
+        //    原来写成 `[header].concat(body)` —— 那样个人提示词的标题会出现两次。
+        return react.createElement("div", { style: SECTION }, body);
       }
 
       // ── 注入一小段样式表 ──────────────────────────────────────────────────
