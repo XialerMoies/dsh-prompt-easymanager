@@ -2167,12 +2167,19 @@ function makeSectionsData(over = {}) {
   //    最终判据是**具体**的：以只属于选词卡片的标记为锚，沿路径往上找最近的
   //    卡片祖先，再确认勾选网格在那个卡片的**卡片体**里。
   {
-    // 锚：卡片头里的「已选 N 条」/「一条都没选」那句摘要
+    // 锚：「已选 N 条」/「一条都没选」那句摘要（在卡片体里）。
+    // ⚠️ 它现在是体里的 div（原来是卡片头里的 span）—— 结构动过一次，
+    //    锚别钉死标签名，钉内容。
     let anchor = null;
     (function walk(n) {
       if (!n || typeof n !== "object" || anchor) return;
       const t = flattenText(n).join("");
-      if (n.type === "span" && (t.startsWith("已选 ") || t.startsWith("一条都没选"))) anchor = n;
+      if (
+        (t.startsWith("已选 ") || t.startsWith("一条都没选")) &&
+        (n.children || []).every((k) => typeof k !== "object" || !k.children || k.children.length === 0)
+      ) {
+        anchor = n;
+      }
       for (const k of n.children || []) walk(k);
     })(comboEl);
     ok(!!anchor, "找到选词卡片的摘要锚");
@@ -2198,6 +2205,60 @@ function makeSectionsData(over = {}) {
     }
     ok(!!card, "**选词内容装在卡片里**（有边框和圆角）");
     if (card) {
+      // ⚠️⚠️ 更要紧的一条：**下拉框和保存按钮必须跟卡片头在同一张卡片里**。
+      //
+      //    踩过：外面单独一行「写代码 ✎ [下拉] [保存]」，下面再套一张卡片 ——
+      //    三层结构，而且用户要的「卡片顶部」没做到。他的原话是
+      //    「下拉框和保存不都说是卡片顶部了吗」。
+      //
+      //    判据：从 select / 保存按钮**往上找最近的卡片祖先**，
+      //    它必须同时是**那个卡片头的父级** —— 也就是两者同属一张卡。
+      {
+        const cardOwner = (node) => {
+          const path = [];
+          let hit = null;
+          (function walk(n) {
+            if (!n || typeof n !== "object" || hit) return;
+            path.push(n);
+            if (n === node) {
+              // ⚠️ 从**父级**开始找，别把节点自己算进去 ——
+              //    按钮自带 `border: 1px` + `borderRadius`，会被误判成卡片。
+              //    踩过：`cardOwner(保存按钮)` 返回了按钮自己，于是「下拉和保存
+              //    同属一张卡」永远不成立。
+              for (let i = path.length - 2; i >= 0; i--) {
+                const st = (path[i].props && path[i].props.style) || {};
+                if (typeof st.border === "string" && st.borderRadius) {
+                  // 交互元素永远不是「卡片容器」
+                  if (path[i].type === "button" || path[i].type === "input") continue;
+                  if (path[i].type === "select" || path[i].type === "option") continue;
+                  hit = path[i];
+                  break;
+                }
+              }
+            }
+            for (const k of n.children || []) walk(k);
+            path.pop();
+          })(comboEl);
+          return hit;
+        };
+        const sel = findEl(comboEl, (n) => n.type === "select");
+        const saveBtn = findEl(
+          comboEl,
+          (n) => n.type === "button" && flattenText(n).join("") === "保存",
+        );
+        ok(!!sel && !!saveBtn, "找到下拉框和保存按钮");
+        if (sel && saveBtn) {
+          const selCard = cardOwner(sel);
+          const saveCard = cardOwner(saveBtn);
+          const headCard = cardOwner(anchor);
+          ok(!!selCard, "**下拉框在卡片里**（不是卡片外面的一行）");
+          ok(!!saveCard, "**保存按钮在卡片里**");
+          ok(
+            selCard === saveCard && selCard === headCard,
+            "**下拉/保存/摘要同属一张卡片**（头和数据是一个整体，不是拆开的）",
+          );
+        }
+      }
       let inBody = false;
       (function walk(n, insideBody) {
         if (!n || typeof n !== "object") return;

@@ -990,8 +990,14 @@ window.__ModuleLoader__.load({
          * 这一段管的是「选哪些」，上面那堆卡片管的是「每条长什么样」——
          * 两件事，所以两块都留，但这一块不该铺得比卡片还大。
          */
-        function renderPicker() {
-          // 当前层的生效 id 列表（这一块自己算，不从 renderCombo 里借变量）
+        /**
+         * 卡片体的内容：勾选网格（已选的排前面）。
+         *
+         * ⚠️ **只吐内容，不自带卡片** —— 卡片是 renderCombo 那层的。
+         *    这里返回 CARD 的话，「预设名 / 下拉 / 保存」就只能摆在卡片外面，
+         *    变成三层（踩过：用户问「下拉框和保存不都说是卡片顶部了吗」）。
+         */
+        function renderPickerBody() {
           var layer =
             sectionScope === "session"
               ? presetsData.layers && presetsData.layers.session
@@ -1019,22 +1025,12 @@ window.__ModuleLoader__.load({
             if (!picked[usable[ri].id]) ordered.push(usable[ri]);
           }
 
-          // 空库：整张卡片给一句说明，别留个没有内容的空壳
           if (usable.length === 0) {
             return react.createElement(
               "div",
-              { style: CARD },
-              react.createElement(
-                "div",
-                { style: Object.assign({}, CARD_DETAILS, { borderTop: "0" }) },
-                react.createElement("div", { style: STATUS_LINE }, "库里还没有可选的提示词 —— 在下面「新建」加一条。"),
-              ),
+              { style: STATUS_LINE },
+              "库里还没有可选的提示词 —— 在下面「新建」加一条。",
             );
-          }
-
-          var totalTokens = 0;
-          for (var ki = 0; ki < activeIds.length; ki++) {
-            if (byId[activeIds[ki]]) totalTokens += byId[activeIds[ki]].tokens || 0;
           }
 
           var rows = [];
@@ -1099,57 +1095,19 @@ window.__ModuleLoader__.load({
             })(ordered[oi]);
           }
 
-          var summary =
-            activeIds.length === 0
-              ? "一条都没选 —— 这个" +
-                (sectionScope === "global" ? "默认" : "会话") +
-                "不会注入任何提示词"
-              : "已选 " + activeIds.length + " 条 · 共 " + fmtTokens(totalTokens);
-
-          return react.createElement("div", { style: CARD }, [
-            // 头部跟个人提示词/系统提示词的卡片同一套（CARD_HEAD + CARD_MAIN_ROW +
-            // 显式 row —— CARD_HEAD 默认是 column，不显式改回 row 会竖成三行居中）
-            react.createElement(
-              "div",
-              {
-                key: "head",
-                style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
-                  flexDirection: "row",
-                  minHeight: "0",
-                  padding: "10px 14px",
-                }),
+          return react.createElement(
+            "div",
+            {
+              key: "grid",
+              style: {
+                display: "grid",
+                // 两列：库大了不至于拉成一条长龙；列宽自适应，窄屏自动收成一列
+                gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+                gap: "8px 18px",
               },
-              [
-                react.createElement(
-                  "span",
-                  { key: "s", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto", fontSize: "13px" }) },
-                  summary,
-                ),
-                react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-                react.createElement(
-                  "span",
-                  { key: "h", style: HEADING_COUNT, title: "插入位置由各自的 order 决定" },
-                  "按 order 插入",
-                ),
-              ],
-            ),
-            react.createElement(
-              "div",
-              { key: "body", style: CARD_DETAILS },
-              react.createElement(
-                "div",
-                {
-                  style: {
-                    display: "grid",
-                    // 两列：库大了不至于拉成一条长龙；列宽自适应，窄屏自动收成一列
-                    gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-                    gap: "8px 18px",
-                  },
-                },
-                rows,
-              ),
-            ),
-          ]);
+            },
+            rows,
+          );
         }
 
         /**
@@ -1330,23 +1288,50 @@ window.__ModuleLoader__.load({
          *   · 以前把「选哪些」和「预设」拆成两张卡片、外加一排胶囊，
          *     同一件事在三处出现，用户问「你为什么要做到那么麻烦」。
          */
+        /**
+         * 提示词组合 —— **一整张卡片**：标题就是「你现在在哪套配置上」。
+         *
+         *     写代码 ✎  全局默认 · 所有会话   已选 2 条  [写代码 ▾] [保存] [↻]
+         *     ─────────────────────────────────────────────────────────────
+         *     ☐ 格式契约  order 9500  1200 tokens
+         *     ☐ 编码规范  order 950    300 tokens
+         *
+         * ⚠️ 头和体在**同一张卡片**里。这里踩了两次，都记下：
+         *    1) 外面单独一行标题、下面再套一张卡片 → 三层结构；
+         *    2) 下拉和保存留在卡片**外面** → 用户要的「卡片顶部」没做到
+         *       （他的原话：「下拉框和保存不都说是卡片顶部了吗」）。
+         */
         function renderCombo() {
           var scopeKey = sectionScope === "session" ? "session" : "global";
           var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
           var list = (presetsData && presetsData.presets) || [];
-          // 当前在哪套上：匹配到就是它；没匹配到 = 这套是手改的，还没名字
           var currentId = matched ? matched.id : "";
           var currentName = matched ? matched.name : "未保存的配置";
           var bus = presetsBusy || !presetsData;
 
-          // ── 标题：预设名 + 改名铅笔（或改名输入框）────────────────────
+          // 摘要：头里要显示「已选 N 条」，所以这里先算一遍
+          var activeCount = 0;
+          var totalTokens = 0;
+          if (presetsData) {
+            var lyr =
+              sectionScope === "session"
+                ? presetsData.layers && presetsData.layers.session
+                : presetsData.layers && presetsData.layers.global;
+            var ids = (lyr && Array.isArray(lyr.prompts) ? lyr.prompts : []).slice();
+            activeCount = ids.length;
+            for (var ti = 0; ti < prompts.length; ti++) {
+              if (prompts[ti] && ids.indexOf(prompts[ti].id) >= 0) totalTokens += prompts[ti].tokens || 0;
+            }
+          }
+
+          // 标题：预设名 + 改名铅笔；改名时就地变输入框
           var titleNode;
           if (renaming) {
             titleNode = react.createElement("input", {
               key: "rn",
               type: "text",
               className: "pm-input",
-              style: Object.assign({}, SELECT_SM, { maxWidth: "220px" }),
+              style: Object.assign({}, SELECT_SM, { maxWidth: "200px" }),
               value: renameDraft,
               autoFocus: true,
               disabled: presetsBusy,
@@ -1362,12 +1347,23 @@ window.__ModuleLoader__.load({
               },
             });
           } else {
-            titleNode = react.createElement("span", { key: "t", style: HEADING_TITLE }, currentName);
+            titleNode = react.createElement(
+              "span",
+              { key: "t", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto" }) },
+              currentName,
+            );
           }
 
           var head = react.createElement(
             "div",
-            { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
+            {
+              style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
+                flexDirection: "row",
+                minHeight: "0",
+                padding: "10px 14px",
+                gap: "8px",
+              }),
+            },
             [
               titleNode,
               // 改名铅笔：只有「当前这套是一条真预设」时才有意义
@@ -1401,6 +1397,15 @@ window.__ModuleLoader__.load({
                   : "全局默认 · 所有会话",
               ),
               react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+              presetsData
+                ? react.createElement(
+                    "span",
+                    { key: "sum", style: HEADING_COUNT },
+                    activeCount === 0
+                      ? "一条都没选"
+                      : "已选 " + activeCount + " 条 · 共 " + fmtTokens(totalTokens),
+                  )
+                : null,
               // 预设下拉：换一套
               react.createElement(
                 "select",
@@ -1417,7 +1422,7 @@ window.__ModuleLoader__.load({
                   },
                 },
                 [
-                  // 手改过（没匹配上任何预设）时给一个占位项，否则 select 会跳到第一条
+                  // 手改过（没匹配上任何预设）时给个占位项，否则 select 会跳到第一条
                   currentId
                     ? null
                     : react.createElement("option", { key: "__none", value: "" }, "未保存的配置"),
@@ -1429,7 +1434,7 @@ window.__ModuleLoader__.load({
                   }),
                 ],
               ),
-              // 保存：把当前这套存成新预设 / 覆盖当前那条
+              // 保存：当前这套有名字就覆盖它自己，没名字就存新的
               react.createElement(
                 "button",
                 {
@@ -1465,29 +1470,20 @@ window.__ModuleLoader__.load({
             ],
           );
 
-          if (!presetsData) {
-            return react.createElement("div", null, [
-              head,
-              react.createElement("div", { key: "l", style: STATUS_LINE }, "读取中…"),
-            ]);
-          }
+          var bodyNode = react.createElement(
+            "div",
+            { key: "body", style: CARD_DETAILS },
+            presetsData
+              ? renderPickerBody()
+              : react.createElement("div", { style: STATUS_LINE }, "读取中…"),
+          );
 
-          // ── 卡片体：勾选网格 ──────────────────────────────────────────
-          //
-          // ⚠️ 只有**一个**子元素：卡片体本身就是那张卡。头单独一行在外面 ——
-          //    因为卡片头要放标题+下拉+保存（一行控件），而卡片体里是勾选网格。
-          //    包成同一个 CARD 的话那头就得塞进卡片里，跟勾选挤一起。
-          return react.createElement("div", null, [
-            head,
-            react.createElement("div", { key: "card", style: CARD }, renderPicker()),
-            list.length > 0
-              ? react.createElement(
-                  "div",
-                  { key: "pn", style: HINT_TEXT },
-                  "勾选即在改这套配置，改完按「保存」落盘；下拉可换另一套。",
-                )
-              : null,
-          ]);
+          // ⚠️ 只有一层：外层就是那张卡片，头和体是它的两个子元素。
+          return react.createElement(
+            "div",
+            { style: Object.assign({}, CARD, { marginTop: "22px" }) },
+            [head, bodyNode],
+          );
         }
 
         /** 换一套：应用预设（把它的内容写回当前层）。 */
