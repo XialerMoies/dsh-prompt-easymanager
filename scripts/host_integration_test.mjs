@@ -709,7 +709,7 @@ const TMP_ID = "zz-test-only";
   const out = t.execute();
   eq(out.plugin, "dsh-prompt-manager", "工具回报 plugin id");
   eq(out.name, "提示词管理", "工具回报中文名");
-  eq(out.pluginVersion, "0.10.1", "工具回报版本");
+  eq(out.pluginVersion, "0.10.2", "工具回报版本");
   eq(out.stateVersion, 2, "工具回报状态版本 2");
   ok(Array.isArray(out.defaults), "工具回报全局默认");
   ok(Array.isArray(out.prompts) && out.prompts.length >= 4, "工具回报提示词清单");
