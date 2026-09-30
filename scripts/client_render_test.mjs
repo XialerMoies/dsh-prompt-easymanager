@@ -36,17 +36,39 @@ function makeShims() {
   // 组件就一直抛 —— 测试会误报成「组件没渲染」。
   let persistent = [];
   let persistentOn = false;
+  // 是否正处在「组件渲染」里。真 React 在渲染之外调 useState 会直接抛
+  // `Invalid hook call` —— 影子层以前是照单全收的，于是「在 factory 里调 hooks」
+  // 这种写法在测试里一路绿灯，到真机上才炸成 `import failed: [object Promise]`。
+  // 见下面 useState 里的注释。
+  let inRender = false;
 
   const react = {
     createElement(type, props, ...children) {
       // ⚠️ 必须真的调用函数组件 —— 否则子组件（如 PreviewPanel）永远不会被
       //    执行，测试会"通过"却什么都没测到。（影子层第一版就犯了这个错。）
       if (typeof type === "function") {
-        return type({ ...(props || {}), children });
+        const wasInRender = inRender;
+        inRender = true;
+        try {
+          return type({ ...(props || {}), children });
+        } finally {
+          inRender = wasInRender;
+        }
       }
       return { __el: true, type, props: props || {}, children: children.flat(Infinity) };
     },
+    /**
+     * ⚠️ 渲染之外调用必须**抛**，跟真 React 一样。
+     *
+     * 这个检查是补上的：宿主曾经在 factory 里调 `useChunk(loadHelpers)` ——
+     * 那既违反了 hooks 规则，又让 factory 抛出一个 pending Promise，
+     * `module.exports` 永远返回不了。影子层当时不检查，所以测试全绿、
+     * 真机上直接 `import failed: [object Promise]`。
+     */
     useState(initial) {
+      if (!inRender) {
+        throw new Error("Invalid hook call: useState 只能在组件渲染里调用（宿主是不是在 factory 里用了？）");
+      }
       const i = stateIndex++;
       // ⚠️ 要跟真 React 一样支持函数式初值（useState(fn) 会调用 fn）。
       //    宿主用 useState(loadPicker) 存「这个组件拉的是哪个 chunk」，
@@ -103,6 +125,7 @@ function makeShims() {
     render(Component, props, tries = 3) {
       persistent = [];
       persistentOn = true;
+      inRender = true;
       let last;
       for (let i = 0; i < tries; i++) {
         stateIndex = 0;
@@ -112,10 +135,12 @@ function makeShims() {
         } catch (e) {
           if (e && typeof e.then === "function") continue; // 等 chunk，重试
           persistentOn = false;
+          inRender = false;
           throw e;
         }
       }
       persistentOn = false;
+      inRender = false;
       return last;
     },
     /**
@@ -126,6 +151,7 @@ function makeShims() {
     async renderAsync(Component, props, tries = 5) {
       persistent = [];
       persistentOn = true;
+      inRender = true;
       let last;
       for (let i = 0; i < tries; i++) {
         stateIndex = 0;
@@ -138,10 +164,12 @@ function makeShims() {
             continue;
           }
           persistentOn = false;
+          inRender = false;
           throw e;
         }
       }
       persistentOn = false;
+      inRender = false;
       return last;
     },
   };
@@ -237,17 +265,14 @@ const regs = [];
   ok(typeof tab.opts.order === "number", "tab 带 order");
 }
 
-// ── 3. chunk 真的被拉起来了 ────────────────────────────────────────────────
-// 这一节盯的是拆包本身：注册键写错的话，宿主在运行时只会得到
-// 「loaded without registering」，而组件会一直是 undefined。
+// ── 3. factory 必须**同步**交出 exports ────────────────────────────────────
+// 这一条是补的：宿主曾经在 factory 里 `useChunk(loadHelpers)` 等一个 chunk，
+// factory 于是抛出一个 pending Promise，`module.exports` 永远返回不了 ——
+// 真机上报的是 `dsh-prompt-manager: import failed: [object Promise]`。
+// 影子层当时既不管 hooks 规则、也不查返回值，所以测试全绿。
 {
-  const want = [
-    // helpers 在模块体里就拉（label 第一帧就要用）
-    "dsh-prompt-manager/client.helpers.js",
-  ];
-  for (const key of want) {
-    ok(sandbox.loadedChunks.includes(key), "拉起了 " + key);
-  }
+  ok(typeof mod.then !== "function", "factory 同步返回了 exports（不是 Promise）");
+  ok(typeof mod.apply === "function", "导出里有 apply");
 }
 
 const headerReg = regs.find((r) => r.opts.id === "prompt-picker");
@@ -1666,7 +1691,7 @@ function makeSectionsData(over = {}) {
     "ui:deliverable-file-references",
     "app:web-surface",
   ]);
-  // 段落中文名表：拆包后在 client.helpers.js 里（const，2 空格缩进）。
+  // 段落中文名表：模块级（`const`，4 空格缩进）。
   const labelBlock = src.match(/(?:var|const) SECTION_LABELS = \{([\s\S]*?)\n\s*\};/);
   // ── 主题变量：不许用不存在的名字 ──────────────────────────────────────
   //

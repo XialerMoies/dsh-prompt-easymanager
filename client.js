@@ -5,8 +5,7 @@
 //   2. 渲染会话头部那一个按钮本身
 //   3. 用具名 chunk 把大块 UI 按需拉起来
 //
-// 组件在哪儿：
-//   client.helpers.js   原生段落中文名 + fmtTokens（纯函数，无 React）
+// 组件在哪儿（全部由宿主用 require.async 按需拉）：
 //   client.picker.js    多选面板 + 会话头部入口
 //   client.preview.js   最终系统提示词预览
 //   client.editor.js    设置页「提示词管理」整栏（最大的一块）
@@ -46,7 +45,89 @@
 
 (() => {
   try {
-    // ── chunk 的加载器 ──────────────────────────────────────────────────────
+    // ── 共用常量与小工具（模块级，纯函数）──────────────────────────────────
+    //
+    // ⚠️ 这些**只能放在模块级同步定义**，不能做成 chunk 按需拉。
+    //    一是 factory 是**同步**的：它必须直接 `return module.exports`，
+    //    在里面等 Promise（也就是 throw 一个 pending Promise）就等于抛异常，
+    //    宿主拿到的是「没有导出」，报 `import failed: [object Promise]`。
+    //    二是 `fmtTokens(p.tokens)` 是当函数调的，拿不到就是 undefined is not a function。
+    //
+    //    这里曾经是一个独立的 client.helpers.js —— 别改回去。
+    const ROUTE_STATE = "/api/prompt-manager/state";
+    const ROUTE_ASSIGN = "/api/prompt-manager/assign";
+    const ROUTE_PREVIEW = "/api/prompt-manager/preview";
+    const ROUTE_RELOAD = "/api/prompt-manager/reload";
+    const ROUTE_DEFAULTS = "/api/prompt-manager/defaults";
+    const ROUTE_EDIT = "/api/prompt-manager/edit";
+    const ROUTE_SECTIONS = "/api/prompt-manager/sections";
+    const ROUTE_PRESETS = "/api/prompt-manager/presets";
+    /** 原生段落中文名 —— 查不到就走 sectionLabel 的兜底。见文件头说明。 */
+    const SECTION_LABELS = {
+      "harness:identity": "harness 身份",
+      "harness:source": "Harness 安装位置",
+      "deployment:persona-prefix": "部署人设 · 前",
+      "deployment:persona-suffix": "部署人设 · 后",
+      "plan:policy": "计划策略",
+      "team:policy": "团队策略",
+      // PTC = Programmatic Tool Calling。官方 preset 的原文：
+      //   "PTC means Programmatic Tool Calling. In this built-in preset, the agent
+      //    uses run_code to write a TypeScript program that calls tools..."
+      // 这一段只在 PTC 模式下有正文，其余模式返回空串。
+      "tools:ptc-only": "编程式工具调用 · 约束",
+      "tools:sdk": "编程式工具调用 · SDK",
+      "context:file-reference": "文件引用",
+      "mcp-resource-servers": "MCP 资源服务器",
+      "ui:deliverable-file-references": "交付物文件引用",
+      "app:web-surface": "网页界面",
+    };
+    /** `tool:xxx` 里 xxx 的中文。查不到就用原文。 */
+    const TOOL_LABELS = {
+      bash: "bash",
+      read: "读文件",
+      write: "写文件",
+      edit: "改文件",
+      glob: "找文件",
+      grep: "搜内容",
+      pwsh: "命令行",
+      web_search: "联网搜索",
+      web_fetch: "抓网页",
+      jobs: "后台任务",
+      goal: "目标",
+      workflow: "工作流",
+      // 实测存在的名字（2026-09 按真机列表核对）：我一开始漏了 `subagent_fork`，
+      // 于是它一路走兜底显示成「subagent · fork」。
+      subagent: "子代理",
+      subagent_fork: "子代理 · 派生",
+      report: "汇报",
+      "computer-use": "电脑操作",
+    };
+    /** 段落的中文显示名。永远只用于显示。 */
+    function sectionLabel(name) {
+      if (typeof name !== "string" || name === "") return "";
+      if (SECTION_LABELS[name]) return SECTION_LABELS[name];
+      if (name.startsWith("tool:")) {
+        const key = name.slice(5);
+        // 「工具用法 · 读文件」比「工具 · 读文件 用法」顺 —— 后缀吊在最后读着断句很怪。
+        return "工具用法 · " + (TOOL_LABELS[key] || key);
+      }
+      if (name.startsWith("mcp:")) return "MCP · " + name.slice(4);
+      // ⚠️ 插件**自己注入**的段落也会出现在这个列表里（比如 prompt-manager:infinite-gen-3）。
+      //    这是修「列表只有全局层」那个 bug 之后的必然结果 —— 带 scope 读就看得见自己。
+      //    标成「本插件注入」是**故意的**：它跟原生段落不是一回事，用户要能一眼分出来。
+      if (name.startsWith("prompt-manager:")) return "本插件注入 · " + name.slice(16);
+      // 兜底：把分隔符换成人话，别原样甩一串英文键名
+      return name.replace(/[:_-]+/g, " · ");
+    }
+
+    // v0.2.2 起没有 replace 模式了（见 prompt-library.mjs 顶部说明）
+    const MODE_LABEL = { none: "不注入", append: "追加" };
+
+    function fmtTokens(n) {
+      return String(n || 0) + " tokens";
+    }
+
+    // ── chunk 的加载器（模块级，只求值一次）────────────────────────────────
     //
     // ⚠️ 必须放在 factory **外面**（模块级，每个文件只求值一次）。
     //    useChunk 拿 loader 当缓存键；loader 每次渲染都新建的话，
@@ -60,7 +141,6 @@
     //    一开始这里写成了完整注册键，被 `if (!spec.startsWith("./"))` 当成
     //    「别的包」去 import，找不到 —— chunk 永远拉不起来。
     //    （scripts/client_render_test.mjs 复刻了同一条规则，抓住了它。）
-    var loadHelpers = function () { return req.async("./client.helpers.js"); };
     var loadPicker = function () { return req.async("./client.picker.js"); };
     var loadPreview = function () { return req.async("./client.preview.js"); };
     var loadEditor = function () { return req.async("./client.editor.js"); };
@@ -317,10 +397,11 @@
           transition: "transform .15s ease",
         };
 
-        var helpersBox = useChunk(loadHelpers);
-
         // 交给 chunk 的那一份：宿主独有的东西（注册期就存在、chunk 等不到）
         // 全部显式列在这里，chunk 那边 create(api) 解构回去。
+        //
+        // ⚠️ 这里**不许**出现任何 await / throw Promise —— 这一段在 factory 里，
+        //    factory 必须同步 `return module.exports`。
         var CHUNK_API = {
           style: {
             ROW: ROW,
@@ -350,10 +431,19 @@
             PILL_OFF: PILL_OFF,
             PILL_KNOB: PILL_KNOB,
           },
-          label: helpersBox.sectionLabel,
-          mode: helpersBox.MODE_LABEL,
-          tokens: helpersBox.fmtTokens,
-          route: helpersBox,
+          label: sectionLabel,
+          mode: MODE_LABEL,
+          tokens: fmtTokens,
+          route: {
+            ROUTE_STATE: ROUTE_STATE,
+            ROUTE_ASSIGN: ROUTE_ASSIGN,
+            ROUTE_PREVIEW: ROUTE_PREVIEW,
+            ROUTE_RELOAD: ROUTE_RELOAD,
+            ROUTE_DEFAULTS: ROUTE_DEFAULTS,
+            ROUTE_EDIT: ROUTE_EDIT,
+            ROUTE_SECTIONS: ROUTE_SECTIONS,
+            ROUTE_PRESETS: ROUTE_PRESETS,
+          },
         };
 
         /**
@@ -420,12 +510,12 @@
         exports.inject = inject;
         exports.apply = apply;
         exports.ROUTES = {
-          ROUTE_STATE: helpersBox.ROUTE_STATE,
-          ROUTE_ASSIGN: helpersBox.ROUTE_ASSIGN,
-          ROUTE_PREVIEW: helpersBox.ROUTE_PREVIEW,
-          ROUTE_RELOAD: helpersBox.ROUTE_RELOAD,
-          ROUTE_DEFAULTS: helpersBox.ROUTE_DEFAULTS,
-          ROUTE_EDIT: helpersBox.ROUTE_EDIT,
+          ROUTE_STATE: ROUTE_STATE,
+          ROUTE_ASSIGN: ROUTE_ASSIGN,
+          ROUTE_PREVIEW: ROUTE_PREVIEW,
+          ROUTE_RELOAD: ROUTE_RELOAD,
+          ROUTE_DEFAULTS: ROUTE_DEFAULTS,
+          ROUTE_EDIT: ROUTE_EDIT,
         };
         return module.exports;
       },

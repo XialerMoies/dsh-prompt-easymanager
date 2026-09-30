@@ -5,20 +5,76 @@
 
 ---
 
+## v0.11.1：修「import failed: [object Promise]」
+
+拆包之后真机上启动就挂：
+
+```
+Failed to load plugins
+dsh-prompt-manager: import failed: [object Promise]
+```
+
+**原因：在 `factory` 里等了 chunk。**
+
+DSH 的 client bundle 是**同步 CJS 工厂**：
+
+```js
+window.__ModuleLoader__.load({
+  id: "dsh-prompt-manager",
+  factory: (require) => {
+    var module = { exports: {} };
+    // …
+    return module.exports;   // ← 必须直接返回
+  },
+});
+```
+
+我为了「label 这类东西第一帧就要用」，在 factory 里写了
+`var helpersBox = useChunk(loadHelpers)`。而 `require.async` 在浏览器里返回的是
+**真 Promise** —— 在 factory 里等它 = factory 抛出一个 pending Promise，
+`module.exports` 永远返回不了，宿主拿到的是「没有导出」，报 `[object Promise]`。
+
+**两处都错，都得改：**
+
+1. **factory 必须同步。** 现在 `client.helpers.js` 那 66 行（段落中文名表 +
+   `sectionLabel` + `fmtTokens` + 路由常量）搬回宿主的模块级。
+   `fmtTokens(p.tokens)` 是当函数调的，做成延迟 getter 也没用 —— 拿不到就是
+   `undefined is not a function`。不为省 66 行留一个「factory 不许异步」的隐性约束。
+
+2. **factory 里不许调 hooks。** `useChunk` 内部是 `react.useState`，
+   在 factory 里调它就是 `Invalid hook call`。
+
+### 测试为什么没拦住：影子层比真 React 宽松
+
+两处都补上了，都是**通用**检查，不是给这一个 bug 打补丁：
+
+| 补的检查 | 在哪 | 拦什么 |
+|---|---|---|
+| factory 返回值必须是对象、不能是 thenable | `scripts/lib/client-loader.mjs` 的 `load()` | 「在 factory 里等 chunk」这一类 |
+| 渲染之外调 `useState` 直接抛 | `client_render_test.mjs` 的影子层 | 「在 factory 里调 hooks」这一类 |
+
+影子层以前对 `useState` 是照单全收的，所以 `useChunk(loadHelpers)` 在测试里
+一路绿灯。现在它跟真 React 一样会抛。
+
+**教训**：影子层每宽松一处，就有一类真机故障在测试里隐形。宽松必须是**故意**的、
+写下来的，不能是「顺手就没检查」。
+
+---
+
 ## v0.11.0：客户端拆包
 
 `client.js` 原来是 **3817 行**的单文件，其中 `PromptEditor` 一个函数就占 **1878 行**（49%）。
-现在拆成宿主 + 4 个包内 chunk：
+现在拆成宿主 + 3 个包内 chunk：
 
 | 文件 | 行数 | 装什么 |
 |---|---:|---|
-| `client.js` | 434 | 注册、会话头部那一个按钮、样式常量、按需加载 |
-| `client.helpers.js` | 112 | 原生段落中文名 + `fmtTokens`（纯函数，无 React） |
+| `client.js` | 507 | 注册、会话头部那一个按钮、样式常量、纯函数、按需加载 |
 | `client.picker.js` | 1133 | 多选面板 + 会话头部入口 |
 | `client.preview.js` | 363 | 最终系统提示词预览 |
 | `client.editor.js` | 2239 | 设置页那一栏（原来挤在宿主里的那一大块） |
 
-（中途还有一个 `client.overlay.js`，后来删了 —— 见下面「顺手修掉的两个真 bug」第 3 条。）
+（中途还有过一个 `client.overlay.js` 和一个 `client.helpers.js`，都删了 ——
+前者是死代码，后者是上面那个 `[object Promise]` 的根因。）
 
 ### 用的是什么机制
 
@@ -80,10 +136,10 @@ chunk 永远拉不起来。
 复刻的话宿主漏传一个样式常量，测试照样全绿。
 
 宿主的静态扫描（样式常量是否都有定义、有没有编出来的段落键、主题变量写法）现在扫
-**全部 5 个文件**：只扫 `client.js` 的话，那些东西大多搬进了 chunk，断言会
+**全部 4 个客户端文件**：只扫 `client.js` 的话，那些东西大多搬进了 chunk，断言会
 「全绿但什么都没扫到」，比没有还糟。
 
-`client_render_test.mjs` 从 229 条断言涨到 **282 条**；全仓 **1085 条，全过**。
+`client_render_test.mjs` 从 229 条断言涨到 **283 条**；全仓 **1086 条，全过**。
 
 ---
 

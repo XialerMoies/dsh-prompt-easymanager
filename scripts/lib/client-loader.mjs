@@ -144,7 +144,22 @@ export function createClientSandbox(shims, opts = {}) {
       // eslint-disable-next-line no-new-func
       new Function("window", "document", "console", src)(sandboxWindow, documentShim, console);
       if (!registration) throw new Error(`${file} 没有调用 window.__ModuleLoader__.load()`);
-      return { mod: registration.factory(requireFn), id: registration.id };
+      const mod = registration.factory(requireFn);
+      // ⚠️ factory 是**同步**的：它必须直接交出 exports。
+      //    在里面「等 chunk」（也就是 throw 一个 pending Promise）的话，
+      //    真机上 DSH 拿到的是「没有导出」，宿主界面报
+      //      dsh-prompt-manager: import failed: [object Promise]
+      //    这一条以前没查，结果这个 bug 一路发到了真机。
+      if (mod !== null && typeof mod === "object" && typeof mod.then === "function") {
+        throw new Error(
+          `${file} 的 factory 返回了 Promise —— factory 必须同步 return module.exports。` +
+            "（在 factory 里等 chunk / 调 useState 都会走到这一步）",
+        );
+      }
+      if (mod === undefined || mod === null || typeof mod !== "object") {
+        throw new Error(`${file} 的 factory 没有返回 exports（拿到 ${String(mod)}）`);
+      }
+      return { mod, id: registration.id };
     },
   };
 }
@@ -164,7 +179,6 @@ export function createChunk(mod, api) {
 export function clientSource() {
   const files = [
     "client.js",
-    "client.helpers.js",
     "client.picker.js",
     "client.preview.js",
     "client.editor.js",
