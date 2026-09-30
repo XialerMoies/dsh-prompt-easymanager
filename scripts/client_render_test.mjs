@@ -1254,12 +1254,15 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     ok(false, "草稿态渲染不抛异常 —— 抛了 " + e.message);
   }
 
-  // 默认清空 → 明确说"不注入"
+  // 默认清空 → 标题上就是「不注入」，状态行**不再重复**（没别的可说就整行不渲染）
   shims.setStates([{ ...listData, defaults: [] }, false, null, null, null, null, [], false]);
   try {
     const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("不注入"), "默认空时显示不注入");
-    ok(text.includes("新会话不注入"), "底部一行说明不注入");
+    ok(
+      !text.includes("新会话不注入"),
+      "**状态行不再把「不注入」再说一遍**（标题上已经有了）",
+    );
   } catch (e) {
     ok(false, "空默认渲染不抛异常 —— 抛了 " + e.message);
   }

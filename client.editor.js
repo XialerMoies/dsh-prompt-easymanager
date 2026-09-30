@@ -2013,10 +2013,12 @@ window.__ModuleLoader__.load({
           }
 
           var boxes = [];
+          var chosenTokens = 0;
           for (var i = 0; i < prompts.length; i++) {
             (function (p) {
               if (!p || !p.id || p.mode === "none") return; // 不注入的条目不参与默认
               var on = draft.indexOf(p.id) >= 0;
+              if (on) chosenTokens += p.tokens || 0;
               boxes.push(
                 react.createElement(
                   "label",
@@ -2039,47 +2041,50 @@ window.__ModuleLoader__.load({
             })(prompts[i]);
           }
 
+          // ⚠️ 库里一条可选的都没有时，**整张卡片不显示**。
+          //
+          //    这种情况下这张卡片只剩下「不注入」这个结论，而它跟「库里是空的」
+          //    是同一件事 —— 摆一张只有结论、没有任何可操作项的卡片纯属噪音。
+          //    用户提过两次「这个看着很碍眼」，根因就在这儿。
+          if (boxes.length === 0) return null;
+
+          // 干净时的状态行：已选几条说几条的 token，没选就不说（标题上已经有「不注入」）
+          var restLine = dirty
+            ? "改成 " + (draft.length === 0 ? "不注入" : "挂 " + draft.length + " 条") + "，还没保存"
+            : saved.length === 0
+              ? ""
+              : "新会话挂 " + saved.length + " 条 · 共 " + fmtTokens(chosenTokens);
+
           return react.createElement("div", { style: Object.assign({}, CARD, { marginBottom: "10px" }) }, [
             react.createElement(
               "div",
               { key: "head", style: CARD_HEAD },
               react.createElement("div", { style: CARD_MAIN_ROW }, [
                 react.createElement("span", { key: "t", style: CARD_TITLE }, "新会话默认"),
-                // ⚠️ 这张卡片原来有六行，后三行是同一句「现在不注入」说了三遍
-                //    （标题上的「当前：不注入」+ 空态提示 + 底部状态行）。
-                //    现在：标题只带一个数，说明收进「?」，底部**只留一行**。
                 react.createElement(
                   "span",
                   { key: "c", style: HEADING_COUNT },
                   saved.length === 0 ? "不注入" : saved.length + " 条",
                 ),
+                // 说明收进「?」—— 这段是「怎么回事」，不是「现在什么状态」，
+                // 不需要每一眼都读一遍。
                 renderHelpIcon(
                   "新开的会话自动挂这几条。已经单独指定过的会话不受影响；" +
-                    "想让它改跟默认，在会话头部点「跟随默认」。" +
-                    "\n\n" +
-                    "「不注入」这种占位条目不参与默认。",
+                    "想让它改跟默认，在会话头部点「跟随默认」。",
                 ),
               ]),
             ),
-            boxes.length
-              ? react.createElement(
-                  "div",
-                  { key: "boxes", style: Object.assign({}, CARD_DETAILS, { display: "flex", flexWrap: "wrap", gap: "6px 18px" }) },
-                  boxes,
-                )
-              : null,
+            react.createElement(
+              "div",
+              {
+                key: "boxes",
+                style: Object.assign({}, CARD_DETAILS, { display: "flex", flexWrap: "wrap", gap: "6px 18px" }),
+              },
+              boxes,
+            ),
             react.createElement("div", { key: "act", style: CARD_ACTIONS }, [
-              react.createElement(
-                "span",
-                { key: "st", style: STATUS_LINE },
-                // 标题说**已保存**（实际生效的），这一行说**草稿**（你刚勾的）。
-                // 两句都在，而且不会互相矛盾 —— 有改动时这里直接说「改成什么样」。
-                dirty
-                  ? "改成 " + (draft.length === 0 ? "不注入" : "挂 " + draft.length + " 条") + "，还没保存"
-                  : saved.length === 0
-                    ? "新会话不注入"
-                    : "新会话挂 " + saved.length + " 条",
-              ),
+              // 没有可说的就整行不渲染 —— 空 span 还会撑出 half 行高
+              restLine ? react.createElement("span", { key: "st", style: STATUS_LINE }, restLine) : null,
               react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
               // 改过才给按钮 —— 平时它们全是禁用状态，白占视线
               dirty

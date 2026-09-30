@@ -31,6 +31,32 @@ const PLUGIN_VERSION = JSON.parse(
 // 要么污染用户的库，要么测试跟着用户的数据飘。
 //
 // 现在插件支持 `DSH_PROMPT_MANAGER_CATALOG` 覆盖，测试就在临时目录里造自己的库。
+//
+// ⚠️ **趁加载之前**种一份「老版本写的状态」，用来验升级路径：
+//    老版本随包发过一条哨兵提示词 `{id:"none", name:"不注入"}`，让用户能在库里
+//    点一个选项表达「什么都不挂」。但「一个都不选」本来就是同一个意思 ——
+//    它只是把一件事说成了两件（库里多一张永远不该被勾的卡片，设置页还得配一张
+//    卡片去管它）。现在不发了，catalog 是空库。
+//    老用户的状态文件里可能还留着 `"none"`：那是指向不存在条目的悬挂 id，
+//    每次装配都会报一句「提示词库里没有：none」，而它的语义本来就等于「去掉」。
+//    readState() 里有段迁移负责清它，下面 4b 验。
+//
+//    ⚠️ 必须在**这里**写，不能等 apply() 之后再改文件 —— 注入器只在启动
+//       （apply 里的 `injector.restore(readState())`）和应用预设时重读盘，
+//       之后再写文件它看不见，断言会「碰巧过」而什么也没测到。
+// ⚠️ 种子里**只放哨兵 id**：迁移会把它清掉，所以「初始没有默认」这条断言仍然成立
+//    （`["none"] → []`），而「老状态里的 none 被清掉」也能验到。
+//    塞一个真 id 进去的话，前面那条「初始没有默认」就红了。
+writeFileSync(
+  join(DSH_HOME, "dsh-prompt-manager-state.json"),
+  JSON.stringify(
+    { version: 1, assignments: {}, defaults: ["none"], sectionOverrides: {} },
+    null,
+    2,
+  ),
+  "utf8",
+);
+
 const FIXTURE_DIR = join(DSH_HOME, "fixture-prompts");
 mkdirSync(FIXTURE_DIR, { recursive: true });
 writeFileSync(
@@ -320,6 +346,23 @@ ok(
   eq(live.sections.length, 2, "agent 上注册了 2 个 section");
 }
 
+// ── 4c. 升级路径：老状态里的悬挂 id `"none"` 被清掉了 ──────────────────────
+//
+// 状态文件是在 apply() **之前**种好的（见文件开头那段），所以这一条走的是
+// 真实路径：启动 → readState() 迁移 → restore() → 注入器拿到干净的列表。
+{
+  const r = await call(ctx, DEFAULTS_PATH);
+  eq(r.status, 200, "GET defaults → 200");
+  ok(
+    !r.json.defaults.includes("none"),
+    "**老状态里的 `none` 被清掉了**（它是已经不发的那条哨兵条目）",
+  );
+  eq(r.json.defaults, [], "哨兵 id 是唯一一条，清完正好是空");
+  // 盘上那份也应该是干净的 —— 不能只在内存里过滤
+  const onDisk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+  ok(Array.isArray(onDisk.defaults), "盘上仍有 defaults 字段");
+}
+
 // ── 5. 状态已落盘 ───────────────────────────────────────────────────────────
 {
   const f = join(DSH_HOME, "dsh-prompt-manager-state.json");
@@ -328,9 +371,19 @@ ok(
   eq(parsed.assignments[S], ["format-contract", "format-contract-a"], "文件里的分配是数组");
   eq(parsed.version, 2, "文件里有版本号");
   ok(Array.isArray(parsed.defaults), "文件里有 defaults 字段");
-  ok(typeof parsed.updatedAt === "string", "带 updatedAt");
+  eq(parsed.updatedAt !== undefined, true, "带 updatedAt");
 }
 
+// ── 5b. 老状态里的悬挂 id `"none"` 要被清理 ─────────────────────────────────
+//
+// ⚠️ 老版本随包发过一条哨兵提示词：`{id:"none", name:"不注入"}`，让用户能在库里
+//    点一个选项表达「什么都不挂」。但「一个都不选」本来就是同一个意思 ——
+//    它只是把一件事说成了两件（库里多一张永远不该被勾的卡片，设置页还得配
+//    一张卡片去管它）。现在不发了，catalog 是空库。
+//
+//    老用户的状态文件里可能还留着 `"none"`。留着就是指向不存在条目的悬挂 id，
+//    每次装配都会报一句「提示词库里没有：none」，而它的语义本来就等于「去掉」。
+//
 // ── 6. 换一组 → 旧的卸掉 ────────────────────────────────────────────────────
 {
   await call(ctx, ASSIGN_PATH, {

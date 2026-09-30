@@ -1,12 +1,4 @@
 {
   "version": 1,
-  "prompts": [
-    {
-      "id": "none",
-      "name": "不注入",
-      "description": "保持 dsh 原始系统提示词不变。会话的默认状态。",
-      "category": "other",
-      "mode": "none"
-    }
-  ]
+  "prompts": []
 }

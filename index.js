@@ -69,6 +69,18 @@ const CATALOG_PATH =
   process.env.DSH_PROMPT_MANAGER_CATALOG || join(HERE, "prompts", "catalog.json");
 const PROMPTS_DIR = dirname(CATALOG_PATH);
 
+/**
+ * 老版本内置的那条哨兵提示词的 id。
+ *
+ * 它叫「不注入」，作用是让用户能在库里点一个选项来表达「什么都不挂」——
+ * 但**「一个都不选」本来就是同一个意思**，所以它只是把一件事说成了两件：
+ * 库里多一张永远不该被勾的卡片，设置页还得配一张卡片去管它。
+ *
+ * v0.2.9 起不随包发了（`prompts/catalog.json` 现在是空库）。
+ * 这个常量只用来**清理老状态里的悬挂 id** —— 见 readState 里的迁移。
+ */
+const NONE_SENTINEL = "none";
+
 /** apply() 时赋值，供工具与路由读取 */
 let activeInjector = null;
 let activeLibrary = null;
@@ -252,7 +264,13 @@ function readState() {
     };
     const map = parsed?.assignments;
     if (map && typeof map === "object" && !Array.isArray(map)) out.assignments = map;
-    if (Array.isArray(parsed?.defaults)) out.defaults = parsed.defaults.filter((x) => typeof x === "string");
+    if (Array.isArray(parsed?.defaults)) {
+      // ⚠️ 迁移：`"none"` 是**老版本**里那条哨兵条目（内置的「不注入」提示词）。
+      //    现在库里没有它了，留着会变成指向不存在条目的悬挂 id ——
+      //    每次装配都要报一句「提示词库里没有：none」，而它的语义本来就是
+      //    「什么都不注入」，等价于从列表里去掉。
+      out.defaults = parsed.defaults.filter((x) => typeof x === "string" && x !== NONE_SENTINEL);
+    }
     if (parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object") {
       out.sectionOverrides = normalizeOverrides(parsed.sectionOverrides);
     }
