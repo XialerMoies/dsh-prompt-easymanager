@@ -351,6 +351,389 @@
           transition: "transform .15s ease",
         };
 
+        // ── 面板 / 卡片 / 表单：给 chunk 用的样式 ─────────────────────────
+        //
+        // ⚠️ 拆包时这 62 个常量被漏在了半路 —— chunk 里只有 `var X = api.style.X`
+        //    取值行，宿主却没给 X，于是编辑器那一栏整片空白（渲染期全是 undefined）。
+        //    补的时候是从切分前的单文件（62eeb75:client.js）逐字搬回来的。
+        //    定义只留这一份，chunk 那边靠 api.style 取。
+      var ADVISE = {
+        border: "1px solid rgba(245,158,11,.7)",
+        background: "rgba(245,158,11,.08)",
+        borderRadius: "6px",
+        padding: "8px 10px",
+        marginBottom: "10px",
+      };
+      var CARD = {
+        border: ".5px solid var(--dsw-alias-settings-card-stroke, rgba(128,128,128,.3))",
+        borderRadius: "var(--dsw-radius-xl, 10px)",
+        background: "var(--dsw-alias-settings-card-fill, rgba(128,128,128,.06))",
+        minWidth: "0",
+        overflow: "hidden",
+      };
+      var CARDS_GRID = {
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: "10px",
+        alignItems: "start",
+        listStyle: "none",
+        margin: "0",
+        padding: "0",
+      };
+      var CARD_ACTIONS = {
+        display: "flex",
+        gap: "6px",
+        alignItems: "center",
+        flexShrink: 0,
+        marginTop: "10px",
+        flexWrap: "wrap",
+      };
+      var CARD_BAD = Object.assign({}, CARD, {
+        borderColor: "var(--dsw-alias-state-error-primary, rgba(239,68,68,.7))",
+      });
+      var CARD_DESC = {
+        fontSize: "12.5px",
+        lineHeight: "18px",
+        color: "var(--dsw-alias-label-secondary, inherit)",
+        display: "-webkit-box",
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+      };
+      var CARD_DETAILS = {
+        borderTop: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+        background: "var(--dsw-alias-bg-module-platform, rgba(128,128,128,.08))",
+        padding: "10px 14px 12px",
+      };
+      var CARD_HEAD = {
+        width: "100%",
+        minHeight: "52px",
+        padding: "12px 14px",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: "2px",
+        background: "transparent",
+        border: "0",
+        color: "inherit",
+        font: "inherit",
+        textAlign: "left",
+        cursor: "pointer",
+      };
+      var CARD_HEADING = { display: "flex", alignItems: "baseline", gap: "7px", padding: "0 2px" };
+      var CARD_ID = {
+        display: "block",
+        width: "100%",
+        fontFamily: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
+        fontSize: "12px",
+        lineHeight: "18px",
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        opacity: 0.9,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      };
+      var CARD_MAIN_ROW = {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: "12px",
+        minWidth: "0",
+      };
+      var CARD_TITLE = {
+        flex: "1 1 auto",
+        minWidth: "0",
+        fontSize: "14px",
+        fontWeight: 600,
+        lineHeight: "20px",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      };
+      var CHEVRON = {
+        flex: "none",
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        transition: "transform .14s ease-in-out",
+        fontSize: "12px",
+        lineHeight: "16px",
+      };
+      var CHEVRON_OPEN = Object.assign({}, CHEVRON, { transform: "rotate(90deg)" });
+      var COMBO_BOARD = {
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: "10px",
+        alignItems: "start",
+      };
+      var COMBO_CHIPS = { display: "flex", flexWrap: "wrap", gap: "6px", margin: "0 0 10px" };
+      var COMBO_ROW = {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "4px 6px",
+        borderRadius: "4px",
+        cursor: "grab",
+        fontSize: "12px",
+      };
+      var COMBO_ROW_HL = { background: "var(--dsw-alias-bg-layer-2, rgba(128,128,128,.12))" };
+      var COMBO_SIDE = {
+        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
+        borderRadius: "6px",
+        padding: "8px 10px",
+        minHeight: "90px",
+        background: "var(--dsw-alias-bg-layer-1, transparent)",
+      };
+      var COMBO_SIDE_HL = { borderColor: "var(--dsw-alias-state-business-primary, #3b82f6)" };
+      var DD = {
+        margin: "0",
+        minWidth: "0",
+        overflowWrap: "anywhere",
+        color: "var(--dsw-alias-label-secondary, inherit)",
+        fontSize: "12px",
+        lineHeight: "17px",
+      };
+      var DETAILS_GRID = {
+        display: "grid",
+        gridTemplateColumns: "58px minmax(0,1fr)",
+        gap: "6px 10px",
+        margin: "0 0 10px",
+      };
+      var DETAIL_BTN = {
+        font: "inherit",
+        fontSize: "12px",
+        lineHeight: "18px",
+        padding: "3px 10px",
+        borderRadius: "var(--dsw-radius-sm, 4px)",
+        border: ".5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.45))",
+        background: "transparent",
+        color: "var(--dsw-alias-label-primary, inherit)",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      };
+      var DETAIL_BTN_BUSY = Object.assign({}, DETAIL_BTN, { opacity: 0.5, cursor: "default" });
+      var DETAIL_BTN_DANGER = Object.assign({}, DETAIL_BTN, {
+        color: "var(--dsw-alias-state-error-primary, #ef4444)",
+        borderColor: "var(--dsw-alias-state-error-primary, rgba(239,68,68,.6))",
+      });
+      var DOT = {
+        width: "6px",
+        height: "6px",
+        borderRadius: "50%",
+        flex: "none",
+        background: "rgba(128,128,128,.6)",
+      };
+      var DOT_DEFAULT = Object.assign({}, DOT, { background: "#3b82f6" });
+      var DOT_ERR = Object.assign({}, DOT, { background: "#ef4444" });
+      var DOT_OK = Object.assign({}, DOT, { background: "#10b981" });
+      var DOT_WAIT = Object.assign({}, DOT, { background: "#f59e0b" });
+      var DT = {
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        fontSize: "11px",
+        lineHeight: "17px",
+      };
+      var ERRBOX = {
+        border: "1px solid rgba(239,68,68,.7)",
+        background: "rgba(239,68,68,.1)",
+        borderRadius: "5px",
+        padding: "2px 6px",
+        fontSize: "11px",
+        lineHeight: "16px",
+        maxWidth: "260px",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        flex: "none",
+      };
+      var FORM = { display: "flex", flexDirection: "column", gap: "8px" };
+      var FORM_INPUT = {
+        font: "inherit",
+        fontSize: "12px",
+        lineHeight: "18px",
+        padding: "4px 8px",
+        borderRadius: "var(--dsw-radius-sm, 4px)",
+        border: ".5px solid var(--dsw-alias-border-l4, rgba(128,128,128,.45))",
+        background: "var(--dsw-alias-bg-layer-1, transparent)",
+        color: "var(--dsw-alias-label-primary, inherit)",
+        flex: "1 1 150px",
+        minWidth: "0",
+        outline: "none",
+      };
+      var FORM_INPUT_NUM = Object.assign({}, FORM_INPUT, { flex: "0 0 84px", minWidth: "84px" });
+      var FORM_LABEL = {
+        fontSize: "11px",
+        lineHeight: "17px",
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        minWidth: "38px",
+        flex: "none",
+      };
+      var FORM_LINE = { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" };
+      var FORM_TEXTAREA = {
+        fontFamily: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
+        fontSize: "12px",
+        lineHeight: "1.6",
+        padding: "8px 10px",
+        borderRadius: "var(--dsw-radius-sm, 4px)",
+        border: ".5px solid var(--dsw-alias-border-l4, rgba(128,128,128,.45))",
+        background: "var(--dsw-alias-bg-layer-1, transparent)",
+        color: "var(--dsw-alias-label-primary, inherit)",
+        width: "100%",
+        boxSizing: "border-box",
+        minHeight: "220px",
+        resize: "vertical",
+        outline: "none",
+      };
+      var HEADING = {
+        margin: "14px 0 6px",
+        paddingBottom: "4px",
+        borderBottom: "1px solid rgba(128,128,128,.28)",
+        fontWeight: "bold",
+        opacity: 0.9,
+      };
+      var HEADING_COUNT = {
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        fontVariantNumeric: "tabular-nums",
+        fontSize: "12px",
+        lineHeight: "18px",
+      };
+      var HEADING_TITLE = { fontSize: "13px", fontWeight: 600, lineHeight: "20px" };
+      var HINT = {
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        fontSize: "12.5px",
+        lineHeight: "18px",
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "baseline",
+        gap: "4px 8px",
+        margin: "0",
+      };
+      var MONO = {
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        fontSize: "11px",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        maxHeight: "180px",
+        overflow: "auto",
+        margin: "6px 0 0",
+        opacity: 0.9,
+      };
+      var MONO_TAIL = Object.assign({}, MONO, { maxHeight: "420px" });
+      var MSG_OK = {
+        fontSize: "11px",
+        lineHeight: "16px",
+        padding: "2px 6px",
+        borderRadius: "5px",
+        background: "rgba(16,185,129,.15)",
+        color: "inherit",
+        whiteSpace: "nowrap",
+        flex: "none",
+      };
+      var MUTED = { opacity: 0.65 };
+      var PICK = {
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "8px",
+        padding: "7px 9px",
+        borderRadius: "6px",
+        border: "1px solid rgba(128,128,128,.22)",
+        marginBottom: "6px",
+        cursor: "pointer",
+      };
+      var PICK_ON = Object.assign({}, PICK, {
+        borderColor: "rgba(16,185,129,.7)",
+        background: "rgba(16,185,129,.08)",
+      });
+      var PILL = {
+        flex: "none",
+        fontSize: "11px",
+        lineHeight: "16px",
+        padding: "1px 7px",
+        borderRadius: "var(--dsw-radius-sm, 4px)",
+        border: ".5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.4))",
+        color: "var(--dsw-alias-label-secondary, inherit)",
+        whiteSpace: "nowrap",
+      };
+      var PILL_APPEND = Object.assign({}, PILL, {
+        borderColor: "var(--dsw-alias-state-business-primary, rgba(59,130,246,.7))",
+        color: "var(--dsw-alias-state-business-primary, #3b82f6)",
+      });
+      var PILL_WARN = Object.assign({}, PILL, {
+        borderColor: "var(--dsw-alias-state-warn-primary, rgba(245,158,11,.8))",
+        color: "var(--dsw-alias-state-warn-label, #f59e0b)",
+      });
+      var RAW_NAME = {
+        flex: "0 1 auto",
+        minWidth: "0",
+        fontFamily: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
+        fontSize: "10.5px",
+        lineHeight: "16px",
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        opacity: 0.75,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      };
+      var SEC = {
+        border: "1px solid rgba(128,128,128,.22)",
+        borderRadius: "6px",
+        padding: "8px 10px",
+        marginBottom: "8px",
+      };
+      var SECTION = {
+        width: "100%",
+        maxWidth: "760px",
+        color: "var(--dsw-alias-label-primary, inherit)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "14px",
+      };
+      var SEC_OURS = Object.assign({}, SEC, { borderColor: "rgba(16,185,129,.7)" });
+      var SELECT_SM = {
+        flex: "0 0 auto",
+        width: "220px",
+        font: "inherit",
+        fontSize: "12px",
+        padding: "2px 6px",
+        borderRadius: "var(--dsw-radius-sm, 4px)",
+        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
+        background: "var(--dsw-alias-bg-layer-1, Canvas)",
+        color: "inherit",
+      };
+      var SLOT_HEAD = Object.assign({}, CARD_MAIN_ROW, {
+        flexDirection: "row",
+        minHeight: "0",
+        padding: "10px 14px",
+      });
+      var SLOT_WHY = {
+        padding: "0 14px 10px",
+        fontSize: "11.5px",
+        lineHeight: "17px",
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+      };
+      var STATUS_LINE = {
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        fontSize: "13px",
+        lineHeight: "20px",
+      };
+      var SUMSUM = {
+        border: "1px solid rgba(128,128,128,.3)",
+        borderRadius: "6px",
+        padding: "8px 10px",
+        marginBottom: "4px",
+        lineHeight: "1.7",
+      };
+      var WARN = {
+        border: "1px solid rgba(239,68,68,.7)",
+        background: "rgba(239,68,68,.08)",
+        borderRadius: "6px",
+        padding: "8px 10px",
+        marginBottom: "10px",
+      };
+      var MSG_ERR = Object.assign({}, MSG_OK, {
+        background: "rgba(239,68,68,.15)",
+        maxWidth: "320px",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      });
         /**
          * 交给 chunk 的那一份：宿主独有的东西显式列在这里，chunk 的 create(api)
          * 解构回去 —— 同一个东西在几个文件里各写一份，迟早改一处漏一处。
@@ -389,6 +772,68 @@
             PILL_ON: PILL_ON,
             PILL_OFF: PILL_OFF,
             PILL_KNOB: PILL_KNOB,
+            ADVISE: ADVISE,
+            CARD: CARD,
+            CARDS_GRID: CARDS_GRID,
+            CARD_ACTIONS: CARD_ACTIONS,
+            CARD_BAD: CARD_BAD,
+            CARD_DESC: CARD_DESC,
+            CARD_DETAILS: CARD_DETAILS,
+            CARD_HEAD: CARD_HEAD,
+            CARD_HEADING: CARD_HEADING,
+            CARD_ID: CARD_ID,
+            CARD_MAIN_ROW: CARD_MAIN_ROW,
+            CARD_TITLE: CARD_TITLE,
+            CHEVRON: CHEVRON,
+            CHEVRON_OPEN: CHEVRON_OPEN,
+            COMBO_BOARD: COMBO_BOARD,
+            COMBO_CHIPS: COMBO_CHIPS,
+            COMBO_ROW: COMBO_ROW,
+            COMBO_ROW_HL: COMBO_ROW_HL,
+            COMBO_SIDE: COMBO_SIDE,
+            COMBO_SIDE_HL: COMBO_SIDE_HL,
+            DD: DD,
+            DETAILS_GRID: DETAILS_GRID,
+            DETAIL_BTN: DETAIL_BTN,
+            DETAIL_BTN_BUSY: DETAIL_BTN_BUSY,
+            DETAIL_BTN_DANGER: DETAIL_BTN_DANGER,
+            DOT: DOT,
+            DOT_DEFAULT: DOT_DEFAULT,
+            DOT_ERR: DOT_ERR,
+            DOT_OK: DOT_OK,
+            DOT_WAIT: DOT_WAIT,
+            DT: DT,
+            ERRBOX: ERRBOX,
+            FORM: FORM,
+            FORM_INPUT: FORM_INPUT,
+            FORM_INPUT_NUM: FORM_INPUT_NUM,
+            FORM_LABEL: FORM_LABEL,
+            FORM_LINE: FORM_LINE,
+            FORM_TEXTAREA: FORM_TEXTAREA,
+            HEADING: HEADING,
+            HEADING_COUNT: HEADING_COUNT,
+            HEADING_TITLE: HEADING_TITLE,
+            HINT: HINT,
+            MONO: MONO,
+            MONO_TAIL: MONO_TAIL,
+            MSG_OK: MSG_OK,
+            MUTED: MUTED,
+            PICK: PICK,
+            PICK_ON: PICK_ON,
+            PILL: PILL,
+            PILL_APPEND: PILL_APPEND,
+            PILL_WARN: PILL_WARN,
+            RAW_NAME: RAW_NAME,
+            SEC: SEC,
+            SECTION: SECTION,
+            SEC_OURS: SEC_OURS,
+            SELECT_SM: SELECT_SM,
+            SLOT_HEAD: SLOT_HEAD,
+            SLOT_WHY: SLOT_WHY,
+            STATUS_LINE: STATUS_LINE,
+            SUMSUM: SUMSUM,
+            WARN: WARN,
+            MSG_ERR: MSG_ERR,
           },
           label: sectionLabel,
           mode: MODE_LABEL,

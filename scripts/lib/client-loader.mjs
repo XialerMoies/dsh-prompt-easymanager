@@ -170,6 +170,37 @@ export function createChunk(mod, api) {
 }
 
 /**
+ * 把宿主交出来的那一份 api 包成「读不到就炸」的。
+ *
+ * ⚠️ 为什么需要：拆包时宿主 CHUNK_API 漏给了 62 个样式常量，而 chunk 里那些
+ *    `var X = api.style.X` 读到的就是 undefined —— **不报错**。
+ *    渲染期 `style: undefined` 是合法的（等于没样式），React 不吭声，
+ *    测试全绿，真机上就是「编辑器那一栏整片空白」。
+ *
+ *    所以在测试里把它变成抛错：`api.style.DOT` 拿不到就抛，
+ *    报错信息直接点名是谁要的、宿主有没有。
+ *
+ * 注意只包一层 style 的 proxy —— `create(api)` 里还会读 api.mode / api.route 等，
+ * 那些用普通对象就够了（缺了会立刻 ReferenceError，本来就藏不住）。
+ */
+export function strictApi(api) {
+  const missing = [];
+  const style = new Proxy(api.style ?? {}, {
+    get(target, key) {
+      if (typeof key === "string" && !(key in target)) {
+        // 记下来再抛 —— 报错信息里能看到缺了几个、都缺什么
+        missing.push(key);
+        throw new Error(
+          `CHUNK_API.style 里没有 "${key}" —— chunk 会读到 undefined，渲染期不报错、界面直接空白`,
+        );
+      }
+      return target[key];
+    },
+  });
+  return { api: { ...api, style }, missing };
+}
+
+/**
  * 客户端那一半的**全部源码**拼起来。
  *
  * 静态扫描（样式常量有没有定义、有没有编出来的段落键、主题变量写法……）必须

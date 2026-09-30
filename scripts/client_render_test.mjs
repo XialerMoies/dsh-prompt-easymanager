@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { createSuite } from "./lib/test-harness.mjs";
-import { createClientSandbox, clientSource } from "./lib/client-loader.mjs";
+import { createClientSandbox, clientSource, strictApi } from "./lib/client-loader.mjs";
 
 // 拆包之后客户端有 6 个文件。静态扫描必须扫**全部**，不能只扫 client.js ——
 // 那些常量/函数大多搬进了 chunk，只扫宿主的话这类断言会「全绿但什么都没扫到」。
@@ -316,19 +316,27 @@ const API = sandbox.lastApi;
 ok(!!API, "抓到宿主交给 chunk 的那一份 api");
 ok(typeof modPicker.create === "function", "picker chunk 导出了 create");
 ok(typeof modEditor.create === "function", "editor chunk 导出了 create");
-const pickerBox = modPicker.create(API);
-const editorBox = modEditor.create(API);
+
+// ⚠️ 用 strictApi 包一层：`api.style.X` 读不到就直接抛。
+//
+// 拆包时宿主 CHUNK_API 漏给了 62 个样式常量，而 chunk 里读到的就是 undefined ——
+// `style: undefined` 是**合法的**（等于没样式），React 不吭声，测试全绿，
+// 真机上表现是「设置页那一栏整片空白」。包成抛错之后这类缺口藏不住了。
+const strict = strictApi(API);
+const pickerBox = modPicker.create(strict.api);
+const editorBox = modEditor.create(strict.api);
 const Picker = pickerBox.PromptPicker;
 const Editor = editorBox.PromptEditor;
 ok(typeof Picker === "function", "create(api) 造出了 PromptPicker");
 ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
+eq(strict.missing, [], "chunk 要的样式常量宿主一个没漏（漏一个界面就空白）");
 
 // 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
 // （点预览那一刻才炸是这条链最容易断的地方，见 client.js 里那段注释）。
 sandbox.preload("client.preview.js");
 const modPreview = sandbox.cache.get("dsh-prompt-manager/client.preview.js");
 ok(!!modPreview, "拿得到 preview chunk 模块");
-const previewBox = modPreview.create(API);
+const previewBox = modPreview.create(strict.api);
 ok(typeof previewBox.PreviewPanel === "function", "create(api) 造出了 PreviewPanel");
 
 // 浮层外壳：面板和预览各自带一份（没有独立 chunk —— 拆包时那个 chunk 是死代码，删了）。
