@@ -42,7 +42,7 @@ import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 
 const PLUGIN_ID = "dsh-prompt-manager";
 const PLUGIN_NAME = "提示词管理";
-const PLUGIN_VERSION = "0.10.2";
+const PLUGIN_VERSION = "0.11.0";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
 export const STATE_PATH = "/api/prompt-manager/state";

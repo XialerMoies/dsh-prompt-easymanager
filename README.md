@@ -5,6 +5,88 @@
 
 ---
 
+## v0.11.0：客户端拆包
+
+`client.js` 原来是 **3817 行**的单文件，其中 `PromptEditor` 一个函数就占 **1878 行**（49%）。
+现在拆成宿主 + 4 个包内 chunk：
+
+| 文件 | 行数 | 装什么 |
+|---|---:|---|
+| `client.js` | 434 | 注册、会话头部那一个按钮、样式常量、按需加载 |
+| `client.helpers.js` | 112 | 原生段落中文名 + `fmtTokens`（纯函数，无 React） |
+| `client.picker.js` | 1133 | 多选面板 + 会话头部入口 |
+| `client.preview.js` | 363 | 最终系统提示词预览 |
+| `client.editor.js` | 2239 | 设置页那一栏（原来挤在宿主里的那一大块） |
+
+（中途还有一个 `client.overlay.js`，后来删了 —— 见下面「顺手修掉的两个真 bug」第 3 条。）
+
+### 用的是什么机制
+
+DSH 的客户端模块系统支持**包内 chunk**：把文件命名成 `client.<名字>.js`、
+注册时带上 `chunk` 字段，宿主就能用 `require.async("./client.xxx.js")` 按需拉。
+官方 `dsh-client-ui-sidebar-documentpreview` 的 PDF / Excel 预览就是这么做的
+（那两个 chunk 各有 7MB）。
+
+**注册键必须写全**，这是踩过的坑：
+
+```
+register() 里：ownerId = id 去掉结尾的 /client  →  "dsh-prompt-manager"
+              key     = ownerId + "/" + chunk 字段
+importChunk 找的正是： "dsh-prompt-manager/client.picker.js"
+```
+
+而 `require.async` 收的是**相对说明符**（`"./client.picker.js"`），不是这个键 ——
+一开始把完整注册键传了进去，被 `if (!spec.startsWith("./"))` 当成「别的包」去 import，
+chunk 永远拉不起来。
+
+**`dsh.client.external` 帮不上忙**：那里列的名字必须是**别的包**的 boot row，
+写本包的文件名会被判成「本包要求自己」，构建期直接抛错。
+
+### 样式常量为什么留在宿主
+
+宿主自己还要渲染会话头部那一个按钮，**注册期**就得有；chunk 是异步到的，等不了。
+给 chunk 用的那几个纯函数通过 `CHUNK_API` 显式传过去 —— 同一个东西在几个文件里
+各写一份，迟早改一处漏一处。
+
+### 顺手修掉的三个真问题
+
+拆的过程中测试抓出来的。**都不是「拆坏了」，是原来就有毛病、只是没人看得见**：
+
+1. **多选面板里点「预览」会炸。** 面板和预览本来在同一个文件里，靠闭包互相看得见。
+   拆开之后面板那一份里 `PreviewPanel` 成了未定义 —— 而且**点了才炸**：
+   React 随即卸载整棵子树，看起来就是「点了预览之后控件全没了」。
+   现在宿主把面板和预览**一起**拉好，预览随 props 交给面板。
+
+2. **`useChunk` 的缓存键曾经是每次渲染都新建的函数。** 上面第 1 条的同一类问题：
+   缓存永远 miss，组件每次都重新等一个 Promise，表现是「那一栏一直是空的」而且不报错。
+   现在加载器放在模块级，引用恒定。
+
+3. **`client.overlay.js` 是死代码。** 拆的时候按「浮层只有 17 行，两边各留一份」
+   处理，结果宿主白拉了一个**没有任何人读它导出**的文件。
+   删掉了；那份 `Overlay` 的原文留在 `docs/overlay-component.md` 备查。
+
+   顺带发现一个更值钱的：`OVERLAY` / `PANEL` / `PANEL_HEAD` 那一族常量
+   其实是被**面板和预览两个 chunk 从 `api.style` 取的** —— 不是各自复制的。
+   所以它们必须留在宿主，删 `client.overlay.js` 的时候差点一起删掉。
+
+### 测试也跟着改了
+
+`scripts/lib/client-loader.mjs` 新增一个客户端沙箱：**复刻 DSH 真实的注册规则**
+（`ownerId + "/" + chunk`），把 chunk 当脚本读出来执行一遍。
+注册键写错的话它就直接报「bundle loaded without registering」——
+而不是简单地 `require` 一下文件让测试变成「自己考自己」。
+
+宿主那份 api 也是**抓来的**（`sandbox.lastApi`），不是测试照着复刻的 ——
+复刻的话宿主漏传一个样式常量，测试照样全绿。
+
+宿主的静态扫描（样式常量是否都有定义、有没有编出来的段落键、主题变量写法）现在扫
+**全部 5 个文件**：只扫 `client.js` 的话，那些东西大多搬进了 chunk，断言会
+「全绿但什么都没扫到」，比没有还糟。
+
+`client_render_test.mjs` 从 229 条断言涨到 **282 条**；全仓 **1085 条，全过**。
+
+---
+
 ## v0.3.7：两个分类的建议 order 跟 dsh 自己的段落撞了
 
 ### 问题

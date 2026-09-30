@@ -12,6 +12,11 @@
 
 import { readFileSync } from "node:fs";
 import { createSuite } from "./lib/test-harness.mjs";
+import { createClientSandbox, clientSource } from "./lib/client-loader.mjs";
+
+// 拆包之后客户端有 6 个文件。静态扫描必须扫**全部**，不能只扫 client.js ——
+// 那些常量/函数大多搬进了 chunk，只扫宿主的话这类断言会「全绿但什么都没扫到」。
+const CLIENT_SRC = clientSource();
 
 const { ok, eq, done } = createSuite("客户端渲染测试");
 import { join, dirname } from "node:path";
@@ -25,6 +30,12 @@ const CLIENT = join(HERE, "..", "client.js");
 function makeShims() {
   let stateIndex = 0;
   let stateOverrides = [];
+  // 跨渲染持久的那一份：真 React 的 useState 是「同一个组件、同一个 hook 序号
+  // → 同一个格」。组件里 useChunk 把 chunk 的 Promise 存在这个格里，重试时
+  // 读到的必须是**同一个对象**；每次渲染都新建的话，Promise 永远停在 pending，
+  // 组件就一直抛 —— 测试会误报成「组件没渲染」。
+  let persistent = [];
+  let persistentOn = false;
 
   const react = {
     createElement(type, props, ...children) {
@@ -37,7 +48,13 @@ function makeShims() {
     },
     useState(initial) {
       const i = stateIndex++;
-      const v = i < stateOverrides.length ? stateOverrides[i] : initial;
+      // ⚠️ 要跟真 React 一样支持函数式初值（useState(fn) 会调用 fn）。
+      //    宿主用 useState(loadPicker) 存「这个组件拉的是哪个 chunk」，
+      //    不调用的话拿到的是函数本身，组件里 m.box 就是 undefined。
+      const fresh = typeof initial === "function" ? initial() : initial;
+      if (persistentOn && i < persistent.length) return [persistent[i], () => {}];
+      const v = i < stateOverrides.length ? stateOverrides[i] : fresh;
+      if (persistentOn) persistent[i] = v;
       return [v, () => {}];
     },
     useCallback(fn) {
@@ -71,34 +88,70 @@ function makeShims() {
       stateOverrides = values;
       stateIndex = 0;
     },
+    /**
+     * 按真 React 的语义渲染一个组件：同一个组件实例的 state 跨渲染保留，
+     * 抛出的 Promise 会被重试。
+     *
+     * 为什么需要它：组件里的 useChunk 第一次会抛 Promise（chunk 还没到），
+     * 真 React 会重试同一个实例 —— 重试时读到的是**同一个** 快照对象。
+     * 每次调用都新建 state 的话，这个格永远是空的，组件永远抛。
+     *
+     * @param {Function} Component
+     * @param {object} props
+     * @param {number} [tries] 最多重试几次（对应 Suspense 等 Promise 落地）
+     */
+    render(Component, props, tries = 3) {
+      persistent = [];
+      persistentOn = true;
+      let last;
+      for (let i = 0; i < tries; i++) {
+        stateIndex = 0;
+        try {
+          last = Component(props);
+          break;
+        } catch (e) {
+          if (e && typeof e.then === "function") continue; // 等 chunk，重试
+          persistentOn = false;
+          throw e;
+        }
+      }
+      persistentOn = false;
+      return last;
+    },
+    /**
+     * 同 render，但每次重试之间真的 await 一下 —— chunk 的 Promise 需要一个
+     * 微任务才落地，同步循环里 retry 一万次也还是 pending。
+     * 预热（把槽位包装组件跑通、把 api 交出来）只能用它。
+     */
+    async renderAsync(Component, props, tries = 5) {
+      persistent = [];
+      persistentOn = true;
+      let last;
+      for (let i = 0; i < tries; i++) {
+        stateIndex = 0;
+        try {
+          last = Component(props);
+          break;
+        } catch (e) {
+          if (e && typeof e.then === "function") {
+            await e;
+            continue;
+          }
+          persistentOn = false;
+          throw e;
+        }
+      }
+      persistentOn = false;
+      return last;
+    },
   };
 }
 
-/** 加载 client.js，取出工厂函数 */
+/** 加载 client.js + 它的包内 chunk，取出宿主导出 */
 function loadFactory(shims) {
-  let captured = null;
-  const sandboxWindow = {
-    __ModuleLoader__: {
-      load(opts) {
-        captured = opts;
-      },
-    },
-  };
-  globalThis.window = sandboxWindow;
-  globalThis.document = { body: { __isBody: true } };
-
-  const src = readFileSync(CLIENT, "utf8");
-  // 直接执行：脚本体是 IIFE，只依赖 window.__ModuleLoader__
-  // eslint-disable-next-line no-new-func
-  new Function("window", "document", "console", src)(sandboxWindow, globalThis.document, console);
-
-  if (!captured) throw new Error("client.js 没有调用 window.__ModuleLoader__.load()");
-  const requireFn = (id) => {
-    if (id === "react") return shims.react;
-    if (id === "react-dom") return shims.reactDom;
-    throw new Error("未知依赖: " + id);
-  };
-  return { mod: captured.factory(requireFn), id: captured.id };
+  const sandbox = createClientSandbox(shims);
+  const { mod, id } = sandbox.load("client.js");
+  return { mod, id, sandbox };
 }
 
 /** 递归统计渲染出的元素数量（顺便触发所有 createElement 参数求值） */
@@ -144,7 +197,7 @@ function collectOptionTexts(node, out = []) {
 }
 
 const shims = makeShims();
-const { mod, id } = loadFactory(shims);
+const { mod, id, sandbox } = loadFactory(shims);
 
 // ── 1. 模块契约 ─────────────────────────────────────────────────────────────
 {
@@ -154,7 +207,7 @@ const { mod, id } = loadFactory(shims);
   ok(typeof mod.apply === "function", "导出 apply");
 }
 
-// ── 2. 槽位注册（现在有两处：会话头部 + 设置页 tab）─────────────────────────
+// ── 2. 槽位注册（现在有三处：会话头部 + 设置页 tab + 预热）───────────────────
 const regs = [];
 {
   const ctx = {
@@ -168,11 +221,11 @@ const regs = [];
     },
   };
   mod.apply(ctx);
-  ok(regs.length === 2, "注册了 2 处槽位占用（实际 " + regs.length + "）");
+  ok(regs.length === 2, "注册了 2 处槽位占用（会话头部入口 + 设置页 tab）");
 
-  const header = regs.find((r) => r.opts.name === "conversation.session.header.actions");
+  const header = regs.find((r) => r.opts.id === "prompt-picker");
   ok(!!header, "注册了会话头部动作位");
-  ok(header.opts.id === "prompt-picker", "头部占用 id 正确");
+  ok(header.opts.name === "conversation.session.header.actions", "头部占用槽位正确");
   ok(typeof header.Component === "function", "头部注册的是组件");
 
   const tab = regs.find((r) => r.opts.name === "settings.plugins.tab");
@@ -184,13 +237,98 @@ const regs = [];
   ok(typeof tab.opts.order === "number", "tab 带 order");
 }
 
-const Picker = regs.find((r) => r.opts.name === "conversation.session.header.actions").Component;
-const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Component;
+// ── 3. chunk 真的被拉起来了 ────────────────────────────────────────────────
+// 这一节盯的是拆包本身：注册键写错的话，宿主在运行时只会得到
+// 「loaded without registering」，而组件会一直是 undefined。
+{
+  const want = [
+    // helpers 在模块体里就拉（label 第一帧就要用）
+    "dsh-prompt-manager/client.helpers.js",
+  ];
+  for (const key of want) {
+    ok(sandbox.loadedChunks.includes(key), "拉起了 " + key);
+  }
+}
 
-// ── 3. 没有 sessionId 时不渲染 ──────────────────────────────────────────────
+const headerReg = regs.find((r) => r.opts.id === "prompt-picker");
+const PickerSlot = headerReg.Component;
+const EditorSlot = regs.find((r) => r.opts.name === "settings.plugins.tab").Component;
+
+// 把槽位包装组件解析成真组件。
+//
+// 宿主给 chunk 的那一份 api 是**抓来的**（sandbox.lastApi），不是这里照着复刻的：
+// 复刻就等于自己考自己，宿主漏传一个样式常量，测试照样全绿。
+// 抓法是先让宿主按真实路径渲染一次 —— HeaderSlot / EditorSlot 会调
+// useChunk → require.async → chunk.create(api)，那一份 api 就被记下来了。
+{
+  try {
+    await shims.renderAsync(PickerSlot, { sessionId: "warmup" });
+  } catch {
+    /* 渲染结果不重要，这里只要它把 api 交出来 */
+  }
+  // 设置页那一栏是按需拉的（会话头部不预热它），显式走一遍
+  try {
+    await shims.renderAsync(EditorSlot, {});
+  } catch {
+    /* 同上 */
+  }
+}
+ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
+ok(
+  sandbox.loadedChunks.includes("dsh-prompt-manager/client.picker.js"),
+  "会话头部入口按需拉起了 picker chunk",
+);
+ok(
+  sandbox.loadedChunks.includes("dsh-prompt-manager/client.preview.js"),
+  "预览 chunk 跟面板**一起**拉起（点预览那一刻才炸是这条链最容易断的地方）",
+);
+const modPicker = sandbox.cache.get("dsh-prompt-manager/client.picker.js");
+const modEditor = sandbox.cache.get("dsh-prompt-manager/client.editor.js");
+ok(!!modPicker, "拿得到 picker chunk 模块");
+ok(!!modEditor, "拿得到 editor chunk 模块");
+
+const API = sandbox.lastApi;
+ok(!!API, "抓到宿主交给 chunk 的那一份 api");
+ok(typeof modPicker.create === "function", "picker chunk 导出了 create");
+ok(typeof modEditor.create === "function", "editor chunk 导出了 create");
+const pickerBox = modPicker.create(API);
+const editorBox = modEditor.create(API);
+const Picker = pickerBox.PromptPicker;
+const Editor = editorBox.PromptEditor;
+ok(typeof Picker === "function", "create(api) 造出了 PromptPicker");
+ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
+
+// 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
+// （点预览那一刻才炸是这条链最容易断的地方，见 client.js 里那段注释）。
+sandbox.preload("client.preview.js");
+const modPreview = sandbox.cache.get("dsh-prompt-manager/client.preview.js");
+ok(!!modPreview, "拿得到 preview chunk 模块");
+const previewBox = modPreview.create(API);
+ok(typeof previewBox.PreviewPanel === "function", "create(api) 造出了 PreviewPanel");
+
+// 浮层外壳：面板和预览各自带一份（没有独立 chunk —— 拆包时那个 chunk 是死代码，删了）。
+// 这里只确认两边都真的定义了自己的 Overlay，别哪天又变成「引用了别人文件里的名字」。
+{
+  const each = [
+    ["client.picker.js", "多选面板"],
+    ["client.preview.js", "预览"],
+  ];
+  for (const [file, what] of each) {
+    const one = readFileSync(join(HERE, "..", file), "utf8");
+    ok(/function Overlay\(props\)/.test(one), what + "自带 Overlay 定义");
+  }
+}
+
+/** 渲染 Picker —— 走影子层「按真 React 语义」那条路（同一实例、可重试）。 */
+const renderPicker = (props) =>
+  shims.render(Picker, Object.assign({ PreviewPanel: previewBox.PreviewPanel }, props));
+/** 渲染 Editor。 */
+const renderEditor = (props = {}) => shims.render(Editor, props);
+
+// ── 4. 没有 sessionId 时不渲染 ──────────────────────────────────────────────
 {
   shims.setStates([]);
-  const el = Picker({ sessionId: undefined });
+  const el = renderPicker({ sessionId: undefined });
   ok(el === null, "无 sessionId 时返回 null（不渲染无效控件）");
 }
 
@@ -208,7 +346,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([data, false, null, null, null, null]);
   let el;
   try {
-    el = Picker({ sessionId: "session-live-0001" });
+    el = renderPicker({ sessionId: "session-live-0001" });
     ok(true, "常态渲染不抛异常");
   } catch (e) {
     ok(false, "常态渲染不抛异常 —— 实际抛了: " + e.message);
@@ -267,7 +405,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([data, false, null, previewData, null, null]);
   let el;
   try {
-    el = Picker({ sessionId: "session-live-0001" });
+    el = renderPicker({ sessionId: "session-live-0001" });
     ok(true, "预览打开时渲染不抛异常（线上崩溃场景）");
   } catch (e) {
     ok(false, "预览打开时渲染不抛异常 —— 实际抛了: " + e.stack.split("\n")[0]);
@@ -316,7 +454,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([data, false, null, previewData, null, null]);
   let el;
   try {
-    el = Picker({ sessionId: "s1" });
+    el = renderPicker({ sessionId: "s1" });
     ok(true, "日志读不到时渲染不抛异常");
   } catch (e) {
     ok(false, "日志读不到时渲染不抛异常 —— 抛了 " + e.message);
@@ -357,7 +495,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   const data = { assignments: {}, prompts: [], diag: { routeRegistered: true, sessions: [] } };
   shims.setStates([data, false, null, previewData, null, null]);
   try {
-    const el = Picker({ sessionId: "s1" });
+    const el = renderPicker({ sessionId: "s1" });
     const text = flattenText(el).join(" ");
     ok(text.includes("120 条事件"), "报出事件总数");
     ok(text.includes("user/message×60"), "列出真实的事件类型与条数");
@@ -384,7 +522,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   for (const [label, previewData] of cases) {
     shims.setStates([data, false, null, previewData, null, null]);
     try {
-      Picker({ sessionId: "s1" });
+      renderPicker({ sessionId: "s1" });
       ok(true, "渲染不炸: " + label);
     } catch (e) {
       ok(false, "渲染不炸: " + label + " —— 抛了 " + e.message);
@@ -397,7 +535,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   const data = { assignments: {}, prompts: [], diag: { routeRegistered: false, routeError: "路由没注册", sessions: [] } };
   shims.setStates([data, false, "GET HTTP 401", null, null, null]);
   try {
-    const el = Picker({ sessionId: "s1" });
+    const el = renderPicker({ sessionId: "s1" });
     ok(true, "通信失败时渲染不抛异常");
     const text = flattenText(el).join(" ");
     ok(text.includes("401"), "错误信息出现在界面上（不是静默的）");
@@ -411,7 +549,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   const data = { assignments: {}, prompts: [], diag: { routeRegistered: true, sessions: [] } };
   shims.setStates([data, false, null, null, null, "已重载 5 条提示词"]);
   try {
-    const el = Picker({ sessionId: "s1" });
+    const el = renderPicker({ sessionId: "s1" });
     ok(flattenText(el).join(" ").includes("已重载 5 条"), "操作提示条被渲染出来");
   } catch (e) {
     ok(false, "提示条渲染不抛异常 —— 抛了 " + e.message);
@@ -436,7 +574,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([data, false, null, null, true, null, ["a"], null]);
   let el;
   try {
-    el = Picker({ sessionId: "s1" });
+    el = renderPicker({ sessionId: "s1" });
     ok(true, "多选面板渲染不抛异常");
   } catch (e) {
     ok(false, "多选面板渲染不抛异常 —— 抛了 " + e.message);
@@ -470,7 +608,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   // 全选上 —— 任意多条 append 都是合法的，不该出现任何警告
   shims.setStates([data, false, null, null, true, null, ["a", "b", "c"], null]);
   try {
-    const el = Picker({ sessionId: "s1" });
+    const el = renderPicker({ sessionId: "s1" });
     const text = flattenText(el).join(" ");
     ok(!text.includes("组合不合法"), "全选也不再提示组合问题");
     ok(!text.includes("静默丢弃"), "不再有「会被丢弃」的警告");
@@ -483,7 +621,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   // 模式标签里不该再有「替换」
   shims.setStates([data, false, null, null, true, null, ["a"], null]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(!text.includes("替换"), "模式选项里不再出现「替换」");
   } catch (e) {
     ok(false, "单个 append 渲染不抛异常 —— 抛了 " + e.message);
@@ -514,7 +652,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([data, false, null, null, true, null, [], null]);
   let el;
   try {
-    el = Picker({ sessionId: "s1" });
+    el = renderPicker({ sessionId: "s1" });
     ok(true, "分组渲染不抛异常");
   } catch (e) {
     ok(false, "分组渲染不抛异常 —— 抛了 " + e.message);
@@ -543,7 +681,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   // 整组选满 → 按钮变成「清空本类」
   shims.setStates([data, false, null, null, true, null, ["i1", "i2"], null]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(text.includes("清空本类"), "身份组选满后按钮变「清空本类」");
     ok(text.includes("全选本类"), "其他组仍是「全选本类」");
   } catch (e) {
@@ -556,7 +694,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false, null, null, true, null, [], null,
   ]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(text.includes("唯一"), "单组时条目照常显示");
     ok(!text.includes("全选本类"), "单组时不显示整类按钮");
   } catch (e) {
@@ -569,7 +707,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false, null, null, true, null, [], null,
   ]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(text.includes("安全审查"), "没有内置分类表时，用条目自带分类名");
     ok(text.includes("人设甲"), "条目照常显示");
   } catch (e) {
@@ -591,14 +729,14 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   };
   // s2 显式有两条
   shims.setStates([data, false, null, null, false, null]);
-  let el = Picker({ sessionId: "s2" });
+  let el = renderPicker({ sessionId: "s2" });
   let text = flattenText(el).join(" ");
   ok(text.includes("甲 +1"), "显式多条时按钮显示「首条 +N」");
   ok(!text.includes("·默认"), "显式指定时不加「默认」标记");
 
   // s3 没有显式记录 → 用默认
   shims.setStates([data, false, null, null, false, null]);
-  el = Picker({ sessionId: "s3" });
+  el = renderPicker({ sessionId: "s3" });
   text = flattenText(el).join(" ");
   ok(text.includes("替换"), "未指定时按钮显示默认那条的名字");
   ok(text.includes("·默认"), "来源可见：标出「来自全局默认」");
@@ -613,7 +751,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     diag: { routeRegistered: true, sessions: [] },
   };
   shims.setStates([data, false, null, null, false, null]);
-  const text = flattenText(Picker({ sessionId: "s4" })).join(" ");
+  const text = flattenText(renderPicker({ sessionId: "s4" })).join(" ");
   ok(text.includes("不注入"), "显式空数组时显示「不注入」（即使默认里有东西）");
 }
 
@@ -636,7 +774,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
 
   // ① 什么都没动 → 默认
   shims.setStates([base, false, null, null, false, null]);
-  const t0 = flattenText(Picker({ sessionId: "s9" })).join(" ");
+  const t0 = flattenText(renderPicker({ sessionId: "s9" })).join(" ");
   ok(!t0.includes("改原生"), "什么都没动时不提改写");
 
   // ② 只改了原生段落，没加自设提示词
@@ -650,7 +788,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false,
     null,
   ]);
-  const t1 = flattenText(Picker({ sessionId: "s9" })).join(" ");
+  const t1 = flattenText(renderPicker({ sessionId: "s9" })).join(" ");
   ok(
     !t1.includes("不注入"),
     "**改了原生段落时，绝不能说「不注入」**（以前就是这么骗人的）",
@@ -672,7 +810,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false,
     null,
   ]);
-  const t2 = flattenText(Picker({ sessionId: "s9" })).join(" ");
+  const t2 = flattenText(renderPicker({ sessionId: "s9" })).join(" ");
   ok(t2.includes("甲"), "**提示词名字仍然显示**（不能被改写信息挤掉）");
   ok(t2.includes("改原生 2 段"), "改写数量也对");
 }
@@ -703,7 +841,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([listData, false, null, null, null]);
   let el;
   try {
-    el = Editor({});
+    el = renderEditor({});
     ok(true, "编辑器渲染不抛异常");
   } catch (e) {
     ok(false, "编辑器渲染不抛异常 —— 抛了 " + e.message);
@@ -757,7 +895,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([listData, false, null, null, null, "infinite-gen-4"]);
   let el;
   try {
-    el = Editor({});
+    el = renderEditor({});
     ok(true, "展开态渲染不抛异常");
   } catch (e) {
     ok(false, "展开态渲染不抛异常 —— 抛了 " + e.message);
@@ -777,7 +915,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   // 展开「不注入」那条：正文一栏要说清是"无"
   shims.setStates([listData, false, null, null, null, "plain"]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("无（不注入模式）"), "none 模式的正文栏说明为无");
   } catch (e) {
     ok(false, "展开 none 条目不抛异常 —— 抛了 " + e.message);
@@ -803,7 +941,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   ]);
   let el;
   try {
-    el = Editor({});
+    el = renderEditor({});
     const text = flattenText(el).join(" ");
     const values = collectValues(el);
     ok(values.includes("甲的正文"), "表单里带出现有正文（在 textarea 的 value 里）");
@@ -835,7 +973,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     null,
   ]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("不需要正文"), "none 模式说明会删文件");
     ok(!text.includes("旧正文"), "none 模式不显示正文编辑框");
   } catch (e) {
@@ -851,7 +989,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     null,
   ]);
   try {
-    const el2 = Editor({});
+    const el2 = renderEditor({});
     const text2 = flattenText(el2).join(" ");
     ok(text2.includes("id 非法"), "非法 id 当场提示");
     ok(
@@ -876,7 +1014,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   for (const [label, states] of cases) {
     shims.setStates(states);
     try {
-      Editor({});
+      renderEditor({});
       ok(true, "编辑器边界不炸: " + label);
     } catch (e) {
       ok(false, "编辑器边界不炸: " + label + " —— 抛了 " + e.message);
@@ -902,7 +1040,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([listData, false, null, null, null, null, ["gen4"], false]);
   let el;
   try {
-    el = Editor({});
+    el = renderEditor({});
     ok(true, "默认卡片渲染不抛异常");
   } catch (e) {
     ok(false, "默认卡片渲染不抛异常 —— 抛了 " + e.message);
@@ -932,7 +1070,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   // 草稿与已保存不同 → 提示有未保存改动
   shims.setStates([listData, false, null, null, null, null, ["gen4", "gen3"], false]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("有未保存的改动"), "勾选变化后提示未保存");
     ok(text.includes("新会话将挂 2 条"), "按草稿算条数");
   } catch (e) {
@@ -942,7 +1080,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   // 默认清空 → 明确说"不注入"
   shims.setStates([{ ...listData, defaults: [] }, false, null, null, null, null, [], false]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("当前：不注入"), "默认空时显示不注入");
     ok(text.includes("新会话将不注入任何提示词"), "底部说明不注入");
   } catch (e) {
@@ -955,7 +1093,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false, null, null, null, null, [], false,
   ]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("库里还没有可用的提示词"), "只有 none 条目的说明");
   } catch (e) {
     ok(false, "空库渲染不抛异常 —— 抛了 " + e.message);
@@ -968,7 +1106,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   ]) {
     shims.setStates(states);
     try {
-      Editor({});
+      renderEditor({});
       ok(true, "默认卡片边界不炸: " + label);
     } catch (e) {
       ok(false, "默认卡片边界不炸: " + label + " —— 抛了 " + e.message);
@@ -1004,7 +1142,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   shims.setStates([listData, false, null, null, null, null, [], false]);
   let el;
   try {
-    el = Editor({});
+    el = renderEditor({});
     ok(true, "带分类渲染不抛异常");
   } catch (e) {
     ok(false, "带分类渲染不抛异常 —— 抛了 " + e.message);
@@ -1038,7 +1176,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false,
   ]);
   try {
-    const el2 = Editor({});
+    const el2 = renderEditor({});
     const text2 = flattenText(el2).join(" ");
     const selects = [];
     const texts = [];
@@ -1077,7 +1215,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false,
   ]);
   try {
-    const el3 = Editor({});
+    const el3 = renderEditor({});
     const selects = [];
     const texts = [];
     (function walk(n) {
@@ -1106,7 +1244,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false,
   ]);
   try {
-    const el4 = Editor({});
+    const el4 = renderEditor({});
     const selects = [];
     const texts = [];
     (function walk(n) {
@@ -1129,7 +1267,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     null, null, [], false,
   ]);
   try {
-    const el3 = Editor({});
+    const el3 = renderEditor({});
     const text3 = flattenText(el3).join(" ");
     const vals = collectValues(el3);
     ok(vals.includes("identity"), "新建表单里分类是 identity");
@@ -1144,7 +1282,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false, null, null, null, null, [], false,
   ]);
   try {
-    const text4 = flattenText(Editor({})).join(" ");
+    const text4 = flattenText(renderEditor({})).join(" ");
     ok(text4.includes("身份"), "没有内置分类表时，用条目自带的分类名当标题");
     ok(text4.includes("自定义分类"), "并标为自定义");
   } catch (e) {
@@ -1174,7 +1312,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
   };
   shims.setStates([{ assignments: {}, prompts: [], diag: { routeRegistered: true, sessions: [] } }, false, null, base, null, null]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(text.includes("系统提示词 23 段"), "汇总里写明「系统提示词」而不是含糊的 sections");
     ok(text.includes("工具 schema 33 个"), "工具 schema 单独报");
     ok(text.includes("运行时上下文 0 段"), "运行时上下文单独报");
@@ -1192,7 +1330,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     null, null,
   ]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(text.includes("运行时上下文 2 段"), "有上下文时报出段数");
     ok(text.includes("比总数少一块"), "并解释正文为什么比总数少");
   } catch (e) {
@@ -1232,7 +1370,7 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
     false, null, data, null, null,
   ]);
   try {
-    const text = flattenText(Picker({ sessionId: "s1" })).join(" ");
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
     ok(text.includes("第 66 轮"), "报出记录所在的轮次");
     ok(text.includes("只在提示词「发生变化时」才写"), "**解释轮次看着旧是正常的**");
     ok(text.includes("当前生效的就是这一份"), "并说明它仍然是当前生效的那份");
@@ -1248,9 +1386,11 @@ const Editor = regs.find((r) => r.opts.name === "settings.plugins.tab").Componen
 // 之前 ADVISE 就是被引用却漏了定义 —— 虽然 style:undefined 不致命，
 // 但说明这类漏定义没有被任何机制挡住。现在静态扫一遍。
 {
-  const src = readFileSync(CLIENT, "utf8");
+  const src = CLIENT_SRC;
   const defined = new Set();
-  for (const m of src.matchAll(/^ {8}var ([A-Z][A-Z0-9_]*) =/gm)) defined.add(m[1]);
+  // 缩进跟着文件走：宿主 factory 里是 8 空格，chunk 的 create() 里是 6 空格。
+  // 钉死 8 会让拆包之后这条断言「扫不到任何定义」，然后报一堆假缺失。
+  for (const m of src.matchAll(/^ {4,10}var ([A-Z][A-Z0-9_]*) =/gm)) defined.add(m[1]);
   const used = new Set();
   for (const m of src.matchAll(/style: ([A-Z][A-Z0-9_]*)\b/g)) used.add(m[1]);
   const missing = [...used].filter((u) => !defined.has(u));
@@ -1348,7 +1488,7 @@ function makeSectionsData(over = {}) {
   shims.setStates([...EDITOR_BASE, data, false, null, {}]);
   let el;
   try {
-    el = Editor({});
+    el = renderEditor({});
     ok(true, "带 sections 数据渲染不抛异常");
   } catch (e) {
     ok(false, "带 sections 数据渲染不抛异常 —— 抛了 " + e.message);
@@ -1425,7 +1565,7 @@ function makeSectionsData(over = {}) {
   });
   shims.setStates([...EDITOR_BASE, data, false, null, {}]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("已关掉"), "关掉的段落有「已关掉」徽章");
     ok(text.includes("tool:旧名字"), "列出了失效的段落");
     ok(text.includes("已失效"), "失效的段落有「已失效」徽章");
@@ -1450,7 +1590,7 @@ function makeSectionsData(over = {}) {
   });
   shims.setStates([...EDITOR_BASE, data, false, null, {}]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("还没有存活的会话"), "如实说明为什么读不到");
     ok(text.includes("系统提示词"), "区块标题仍在（不是整块消失）");
   } catch (e) {
@@ -1460,7 +1600,7 @@ function makeSectionsData(over = {}) {
   // sections 还是 null（首次加载中）
   shims.setStates([...EDITOR_BASE, null, false, null, {}]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("系统提示词") && text.includes("读取中"), "加载中也有标题和占位");
   } catch (e) {
     ok(false, "sections 为 null 时渲染不抛异常 —— 抛了 " + e.message);
@@ -1473,7 +1613,7 @@ function makeSectionsData(over = {}) {
 // 结果标题和徽章紧贴卡片边框。渲染测试看不出来（节点都在、文案也对），
 // 只有肉眼看截图才发现 —— 所以这里钉一条静态断言。
 {
-  const src = readFileSync(CLIENT, "utf8");
+  const src = CLIENT_SRC;
 
   ok(
     /style:\s*Object\.assign\(\{\},\s*CARD_HEAD,/.test(src),
@@ -1526,7 +1666,8 @@ function makeSectionsData(over = {}) {
     "ui:deliverable-file-references",
     "app:web-surface",
   ]);
-  const labelBlock = src.match(/const SECTION_LABELS = \{([\s\S]*?)\n    \};/);
+  // 段落中文名表：拆包后在 client.helpers.js 里（const，2 空格缩进）。
+  const labelBlock = src.match(/(?:var|const) SECTION_LABELS = \{([\s\S]*?)\n\s*\};/);
   // ── 主题变量：不许用不存在的名字 ──────────────────────────────────────
   //
   // 真机上踩过：浮窗背景写的是 `var(--dsh-surface, #1e1e1e)` ——
@@ -1553,17 +1694,19 @@ function makeSectionsData(over = {}) {
     for (const m of codeOnly.matchAll(/--dsh-[\w-]+/g)) used.add(m[0]);
     eq([...used], [], "**不许用 `--dsh-*` 这种不存在的变量**（正确命名空间是 `--dsw-alias-*`）");
 
-    // 浮窗/面板的背景必须走主题变量，不能写死颜色
-    const panel = src.match(/var PANEL = \{[\s\S]*?\n        \};/);
-    ok(panel !== null, "能定位到 PANEL 样式");
-    if (panel) {
+    // 浮窗/面板的背景必须走主题变量，不能写死颜色。
+    // PANEL 那一族现在住在宿主（面板和预览两个 chunk 各自从 api.style 取），
+    // 所以扫描必然能从拼起来的源码里找到它 —— 找不到就说明它被搬丢了。
+    const panels = [...src.matchAll(/var PANEL = \{[\s\S]*?\n {4,10}\};/g)].map((m) => m[0]);
+    ok(panels.length > 0, "能定位到 PANEL 样式");
+    for (const [i, one] of panels.entries()) {
       ok(
-        /background:\s*"var\(--dsw-alias-/.test(panel[0]),
-        "**浮窗背景用主题变量**（写死颜色会导致明暗主题下有一边是错的）",
+        /background:\s*"var\(--dsw-alias-/.test(one),
+        `**浮窗背景用主题变量**（第 ${i + 1} 份；写死颜色会导致明暗主题下有一边是错的）`,
       );
       ok(
-        !/background:\s*"#[0-9a-fA-F]{3,6}"/.test(panel[0]),
-        "浮窗背景没有写死的十六进制颜色",
+        !/background:\s*"#[0-9a-fA-F]{3,6}"/.test(one),
+        `浮窗背景没有写死的十六进制颜色（第 ${i + 1} 份）`,
       );
     }
   }
@@ -1602,7 +1745,7 @@ function makeSectionsData(over = {}) {
   });
   shims.setStates([...EDITOR_BASE, data, false, null, {}]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("没有被注册的位置"), "有「没有被注册的位置」分区标题");
     ok(text.includes("团队策略"), "有确定段名的槽位显示中文名");
     ok(text.includes("team:policy"), "也显示段名（排查用）");
@@ -1618,7 +1761,7 @@ function makeSectionsData(over = {}) {
   // 没有空槽位时不该出现这个分区
   shims.setStates([...EDITOR_BASE, makeSectionsData({ emptySlots: [] }), false, null, {}]);
   try {
-    const text = flattenText(Editor({})).join(" ");
+    const text = flattenText(renderEditor({})).join(" ");
     ok(!text.includes("没有被注册的位置"), "**没有空槽位时不显示这个分区**（不占地方）");
   } catch (e) {
     ok(false, "emptySlots 为空时渲染不抛异常 —— 抛了 " + e.message);
@@ -1632,7 +1775,7 @@ function makeSectionsData(over = {}) {
 {
   const data = makeSectionsData();
   shims.setStates([...EDITOR_BASE, data, false, null, {}, "global", ""]);
-  const text = flattenText(Editor({})).join(" ");
+  const text = flattenText(renderEditor({})).join(" ");
   ok(!text.includes("只改某个会话"), "**设置页里没有作用范围开关了**");
   ok(text.includes("全局默认"), "设置页说明了自己改的是全局默认");
   ok(text.includes("会话头"), "**并指出会话级的东西去哪找**（否则用户找不到）");
@@ -1668,7 +1811,7 @@ function makeSectionsData(over = {}) {
   ];
 
   shims.setStates([...base, presetData, false, "", null]);
-  let text = flattenText(Editor({})).join(" ");
+  let text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("提示词组合"), "有「提示词组合」区块");
   ok(text.includes("生效"), "有「生效」栏");
   ok(text.includes("可用"), "有「可用」栏");
@@ -1694,7 +1837,7 @@ function makeSectionsData(over = {}) {
     Object.assign({}, presetData, { matched: { global: null, session: null } }),
     false, "", null,
   ]);
-  text = flattenText(Editor({})).join(" ");
+  text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("相对预设已改动"), "**手改过之后显示「已改动」**");
 
   // 没有任何预设
@@ -1703,7 +1846,7 @@ function makeSectionsData(over = {}) {
     { presets: [], layers: { global: { prompts: [], sections: {} }, session: null }, matched: { global: null, session: null }, sessionId: null },
     false, "", null,
   ]);
-  text = flattenText(Editor({})).join(" ");
+  text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("还没有预设"), "零预设时给了引导");
 
   // 会话层：选了会话层但没选会话 → 提示
@@ -1712,13 +1855,13 @@ function makeSectionsData(over = {}) {
   baseSess[12] = "session";
   baseSess[13] = "";
   shims.setStates([...baseSess, presetData, false, "", null]);
-  text = flattenText(Editor({})).join(" ");
+  text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("还没挑会话"), "**选了会话层但没选会话时明确提示**");
 
   // presetsData 为 null（还没读完）不许炸
   shims.setStates([...base, null, false, "", null]);
   try {
-    text = flattenText(Editor({})).join(" ");
+    text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("提示词组合") && text.includes("读取中"), "加载中不炸，有标题和占位");
   } catch (e) {
     ok(false, "presetsData 为 null 时不许炸 —— 抛了 " + e.message);
@@ -1736,20 +1879,20 @@ function makeSectionsData(over = {}) {
     false, "", null,
   ];
   shims.setStates([...base, true]);
-  let text = flattenText(Editor({})).join(" ");
+  let text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("使用我的提示词配置"), "开启时显示「使用我的提示词配置」");
   ok(text.includes("关掉它就完全回到原生 dsh"), "说明了关掉会怎样");
   ok(text.includes("配置都留着"), "**说明了配置不会被清掉**（否则用户不敢关）");
 
   shims.setStates([...base, false]);
-  text = flattenText(Editor({})).join(" ");
+  text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("正在使用 dsh 原始提示词"), "关闭时显示「正在使用 dsh 原始提示词」");
   ok(text.includes("都还在") && text.includes("开回来"), "**说明了配置还在、能开回来**");
 
   // enabledDraft 为 null（还没读完）不该炸，也不该误显示成"关"
   shims.setStates([...base, null]);
   try {
-    text = flattenText(Editor({})).join(" ");
+    text = flattenText(renderEditor({})).join(" ");
     ok(text.includes("使用我的提示词配置"), "还没读完时按「开」显示（默认开），不误报成关");
   } catch (e) {
     ok(false, "enabledDraft 为 null 时不许炸 —— 抛了 " + e.message);
