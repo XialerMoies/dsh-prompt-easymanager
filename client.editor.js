@@ -1347,14 +1347,14 @@ window.__ModuleLoader__.load({
               }),
             },
             [
-              // ⚠️ **功能标题必须在**。
+              // ⚠️ 这里**只有「当前配置名」**，没有功能标题。
               //
-              //    上一版我把标题整个换成了预设名，结果「提示词组合」这几个字
-              //    没了 —— 用户问「卡片对应功能的标题去哪了」。
-              //    标题说明**这块是干什么的**，预设名说明**当前在哪套上**，
-              //    两者都要，一左一右。
-              react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合"),
-              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+              //    「提示词组合」是**区块标题**，在卡片外面、跟「个人提示词」
+              //    「系统提示词」同一套样式（见 renderCombo 末尾的 headLine）。
+              //    卡片头这一行的语义是「你现在在哪套配置上」——
+              //    塞个静态标题进来会把两件事混在一行。
+              //    （踩过两轮：先是把区块标题整个换成预设名 → 标题没了；
+              //      再把标题塞进卡片头 → 用户说「为什么功能标题在卡片顶部」。）
               titleNode,
               // 改名铅笔：只有「当前这套是一条真预设」时才有意义
               currentId && !renaming
@@ -1452,12 +1452,28 @@ window.__ModuleLoader__.load({
               : react.createElement("div", { style: STATUS_LINE }, "读取中…"),
           );
 
-          // ⚠️ 只有一层：外层就是那张卡片，头和体是它的两个子元素。
-          return react.createElement(
+          // ⚠️ 区块标题在**卡片外面**，跟「个人提示词」「系统提示词」同一套样式
+          //    （CARD_HEADING + 同一组间距）。
+          //
+          //    这里的两次返工值得记：先是把区块标题整个换成预设名（标题没了），
+          //    再把标题塞进卡片头（用户说「为什么功能标题在卡片顶部」）。
+          //    结论：**区块标题归区块，卡片头归卡片头** ——
+          //    标题说明「这块干什么」，卡片头说明「当前在哪套配置上」。
+          var headLine = react.createElement(
             "div",
-            { style: Object.assign({}, CARD, { marginTop: "22px" }) },
-            [head, bodyNode],
+            { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
+            [react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合")],
           );
+
+          // ⚠️ 卡片是独立一层，**不带 marginTop**（标题那行已经给了间距）。
+          return react.createElement("div", null, [
+            headLine,
+            react.createElement(
+              "div",
+              { key: "card", style: CARD },
+              [head, bodyNode],
+            ),
+          ]);
         }
 
         /** 换一套：应用预设（把它的内容写回当前层）。 */

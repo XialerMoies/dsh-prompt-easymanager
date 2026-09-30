@@ -2279,10 +2279,54 @@ function makeSectionsData(over = {}) {
     }
   }
 
-  // ⚠️ **功能标题必须在**。上一版我把标题整个换成了预设名，「提示词组合」
-  //    这几个字就没了 —— 用户问「卡片对应功能的标题去哪了」。
-  //    标题说明这块干什么，预设名说明当前在哪套上，两者都要、一左一右。
-  ok(text.includes("提示词组合"), "**卡片有功能标题「提示词组合」**（不能被预设名顶掉）");
+  // ⚠️ 区块标题的位置：**在卡片外面**，跟「个人提示词」「系统提示词」一样。
+  //
+  //    这里返工了两次，判据要跟着钉死：
+  //      1) 一开始把区块标题整个换成预设名 → 「提示词组合」消失了；
+  //      2) 再把标题塞进卡片头 → 用户问「为什么功能标题在卡片顶部」。
+  //    结论：区块标题归区块（卡片外），卡片头归卡片头（当前配置名）。
+  //    所以判据是**两者必须不在同一个卡片容器里**。
+  {
+    // ⚠️ 要收集**所有**标题出现处 —— 用 findEl 只拿第一个会漏：
+    //    第一版就是这么错的，标题同时出现在区块头和卡片头里时，
+    //    findEl 命中卡片外那个，判定通过、守卫是空的。
+    const titles = [];
+    (function walk(n) {
+      if (!n || typeof n !== "object") return;
+      if (n.type === "span" && flattenText(n).join("") === "提示词组合") titles.push(n);
+      for (const k of n.children || []) walk(k);
+    })(comboEl);
+    eq(titles.length, 1, `**「提示词组合」只出现一次**（实际 ${titles.length} 次 —— 2 次说明卡片头里又塞了一个）`);
+    const cardOf = (node) => {
+      const path = [];
+      let hit = null;
+      (function walk(n) {
+        if (!n || typeof n !== "object" || hit) return;
+        path.push(n);
+        if (n === node) {
+          for (let i = path.length - 2; i >= 0; i--) {
+            const st = (path[i].props && path[i].props.style) || {};
+            if (typeof st.border === "string" && st.borderRadius) {
+              if (["button", "input", "select", "option"].includes(path[i].type)) continue;
+              hit = path[i];
+              break;
+            }
+          }
+        }
+        for (const k of n.children || []) walk(k);
+        path.pop();
+      })(comboEl);
+      return hit;
+    };
+    if (titles.length > 0) {
+      eq(
+        cardOf(titles[0]),
+        null,
+        "**区块标题在卡片外面**（不在卡片头里 —— 那会跟「当前配置名」混成一行）",
+      );
+    }
+  }
+
 
   // 「不注入」这种占位条目不该出现在组合列表里
   ok(!/生效（\d）[\s\S]{0,300}不注入/.test(text), "**mode:none 的占位条目不参与组合**");
