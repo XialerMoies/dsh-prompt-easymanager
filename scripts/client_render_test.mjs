@@ -2079,7 +2079,7 @@ function makeSectionsData(over = {}) {
   // 所以插件能直接借，外观自动跟着主题令牌走。
   //
   // ⚠️ 那个哈希是内容派生的，dsh 升级可能变。所以这里断言的是：
-  //    结构对（role/aria-checked）+ 有类名 + **有内联兜底几何**。
+  //    结构对（role/aria-checked）+ 有类名 + **有形状兜底**。
   //    类名一旦失效，至少还是个圆角胶囊，不会退回方按钮。
   const sw = findEl(el, (n) => n.props && n.props.role === "switch");
   ok(!!sw, "**有 role=switch 的开关**（原生语义，键盘和读屏能用）");
@@ -2089,11 +2089,34 @@ function makeSectionsData(over = {}) {
       typeof sw.props.className === "string" && sw.props.className.startsWith("_switch_"),
       `用了 dsh 原生开关类名（实际 ${JSON.stringify(sw.props.className)}）`,
     );
-    eq(sw.props.style.borderRadius, "999px", "**内联兜底仍在**：类名失效也是个胶囊，不是方按钮");
+    eq(sw.props.style.borderRadius, "999px", "**形状兜底仍在**：类名失效也是个胶囊，不是方按钮");
     eq(sw.props.style.width, "36px", "兜底尺寸跟原生一致（36×20）");
+    // 开关本体的 background 用原生同一套令牌，跟着主题走
+    ok(
+      String(sw.props.style.background).includes("--dsw-alias-brand-primary"),
+      "开启态背景走主题令牌 brand-primary（不是写死的颜色）",
+    );
+
     const th = findEl(sw, (n) => n.props && typeof n.props.className === "string" && n.props.className.startsWith("_thumb_"));
     ok(!!th, "滑块用了原生 thumb 类名");
-    if (th) ok(!!th.props.style.transform, "thumb 内联兜底带 transform 位移");
+    if (th) {
+      // ⚠️⚠️ 这两条是**回归守卫**，踩过：
+      //    内联 background:"#fff" 把 thumb 的主题令牌顶掉了 ——
+      //    深色模式下滑块本该是深色（开启态 brand-primary 在深色下偏亮，
+      //    滑块要反过来），结果一直是白的。
+      //    内联样式永远赢 class，所以原生管了的属性内联一个都不能写。
+      eq(
+        th.props.style.background,
+        undefined,
+        "**滑块不许有内联背景**（写死颜色会顶掉深色模式的令牌，白块 bug）",
+      );
+      eq(
+        th.props.style.transform,
+        undefined,
+        "**滑块不许有内联 transform**（位移归原生 [aria-checked=true] 规则管）",
+      );
+      eq(th.props.style.borderRadius, "50%", "滑块仍有形状兜底");
+    }
   }
   ok(text.includes("关掉就完全回到原生 dsh"), "说明了关掉会怎样");
   ok(text.includes("配置都留着"), "**说明了配置不会被清掉**（否则用户不敢关）");

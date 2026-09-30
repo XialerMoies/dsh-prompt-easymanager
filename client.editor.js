@@ -1067,14 +1067,23 @@ window.__ModuleLoader__.load({
          *     background:var(--dsw-alias-border-l3) / [aria-checked=true]→var(--dsw-alias-brand-primary)
          *     thumb 用 transform:translate(16px)，transition .12s
          *     自带 :disabled（opacity .5）和 :focus-visible 焦点环
-         * 自己硬编码颜色和尺寸，换个主题就不对了。
          *
-         * ⚠️ 那个哈希是**内容派生**的，dsh 升级改了开关的 css 就会变。
-         *    所以内联兜底必须留着（看起来多余的 width/height 不是冗余）：
-         *    类名一旦失效，至少还是个圆角胶囊，不会再退回**方按钮**。
+         * ⚠️⚠️ **凡是原生 css 已经管了的属性，内联里一个都不能写。**
+         *    踩过两次：
+         *      1) 内联 `background:"#fff"` 把 thumb 的主题令牌顶掉了 ——
+         *         深色模式下滑块本该是**深色**（开启态的 brand-primary 在深色下偏亮，
+         *         滑块要反过来才看得清），结果一直是白的。
+         *      2) 内联 `transform` 覆盖了 `[aria-checked=true] .thumb{translate(16px)}`
+         *         —— 值恰好一样所以没露馅，但原生那条规则已经失效了。
+         *    内联样式**永远赢** class，所以只留「原生不管」的兜底几何。
+         *
+         * 那个哈希是**内容派生**的，dsh 升级改了开关的 css 就会变。所以兜底留下的
+         * 是「形状」而不是「配色」：类名一旦失效，至少还是个圆角胶囊、不会退回方按钮；
+         * 颜色交给原生 —— 宁可失效时朴素，也不要**在好的时候是错的**。
          */
         var NATIVE_SWITCH = "_switch_15ung_5";
         var NATIVE_THUMB = "_thumb_15ung_33";
+        // 只兜形状和布局：原生 css 失效时才起作用，生效时被 class 覆盖（值相同）
         var SWITCH_FALLBACK = {
           position: "relative",
           display: "inline-block",
@@ -1087,24 +1096,36 @@ window.__ModuleLoader__.load({
           borderRadius: "999px",
           cursor: "pointer",
         };
+        // ⚠️ 这里**没有** background、**没有** transform —— 见上面那段。
         var THUMB_FALLBACK = {
           display: "block",
           width: "16px",
           height: "16px",
           borderRadius: "50%",
-          background: "#fff",
         };
-        /** 类名在、样式也在时用原生外观；否则退回上面的兜底几何。 */
+        /**
+         * 开关本体：形状兜底 + 仅当原生类名失效时才需要的一点颜色。
+         *
+         * background 用**原生同一套令牌**，这样即使写到内联也还是跟着主题走；
+         * 原生类名生效时它和 class 里的值一致，不会打架。
+         */
         function switchStyle(on) {
           return Object.assign({}, SWITCH_FALLBACK, {
-            background: on ? "var(--dsw-alias-brand-primary, #3b82f6)" : "var(--dsw-alias-border-l3, rgba(128,128,128,.35))",
+            background: on
+              ? "var(--dsw-alias-brand-primary)"
+              : "var(--dsw-alias-border-l3)",
           });
         }
-        function thumbStyle(on) {
-          return Object.assign({}, THUMB_FALLBACK, {
-            transition: "transform .12s ease",
-            transform: on ? "translate(16px)" : "none",
-          });
+        /**
+         * 滑块：**只有形状兜底，没有颜色、没有 transform**。
+         *
+         * 背景交给原生的 `var(--dsw-alias-label-primary-foreground)` ——
+         * 那个令牌在浅色下是白、深色下是**深色**（开启态的 brand-primary 在深色下
+         * 偏亮，滑块得反过来）。写死白色就是深色模式下看起来不对的原因。
+         * 位移交给原生的 `[aria-checked=true] .thumb{transform:translate(16px)}`。
+         */
+        function thumbStyle() {
+          return THUMB_FALLBACK;
         }
 
         function renderMasterSwitch() {
@@ -1133,7 +1154,7 @@ window.__ModuleLoader__.load({
                     },
                     style: switchStyle(on),
                   },
-                  react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle(on) }),
+                  react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle() }),
                 ),
                 react.createElement(
                   "span",
