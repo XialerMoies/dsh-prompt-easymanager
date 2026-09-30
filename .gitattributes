@@ -1,0 +1,13 @@
+# 统一换行 —— 这插件要跨平台用，不能让 Windows 的 CRLF 混进去
+* text=auto eol=lf
+
+# 图片是二进制，别动
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+
+# 锁文件和快照也别做换行转换
+*.jsonl -text

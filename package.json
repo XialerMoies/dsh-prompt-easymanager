@@ -1,0 +1,44 @@
+{
+  "name": "dsh-prompt-manager",
+  "version": "0.10.1",
+  "description": "提示词管理 —— 为 DSH 的每个会话挂载若干条系统提示词（按分类组织、各自按 order 插入），支持全局默认、设置页编辑提示词库，以及最终系统提示词的实时预览。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./client.js": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "prompts",
+    "scripts",
+    "assets"
+  ],
+  "scripts": {
+    "harness:check": "node --check index.js && node --check client.js",
+    "test": "node scripts/presets_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs",
+    "test:client": "node scripts/client_render_test.mjs",
+    "test:store": "node scripts/prompt_store_test.mjs"
+  },
+  "dsh": {
+    "id": "dsh-prompt-manager",
+    "name": "提示词管理",
+    "version": "0.10.1",
+    "repo": "local/dsh-prompt-manager",
+    "permissions": "系统提示词注入（按会话）, 会话头部选择器, 只读系统提示词预览",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

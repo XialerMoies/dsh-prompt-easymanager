@@ -1,0 +1,30 @@
+# 本地备份 —— 你自己的提示词归档，不属于插件源码
+prompts-archive-*/
+prompts-archive-*
+
+# 旧版验证脚本与测试题集 —— 跟当前插件无关，且含注入/越狱测试用例，不进仓库
+legacy/
+
+# 本地运行时产生的
+*.log
+.dsh-prompt-manager-state.json
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 依赖与构建产物
+node_modules/
+dist/
+
+# 临时文件
+*.tmp
+*.bak
+.patch-probe.mjs
+_revert*.mjs
+_probe*.mjs
+_cleanup.mjs
+_final.mjs
