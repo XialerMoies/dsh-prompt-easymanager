@@ -30,7 +30,8 @@
     "test:client": "node scripts/client_render_test.mjs",
     "test:docs": "node scripts/docs_test.mjs",
     "test:store": "node scripts/prompt_store_test.mjs",
-    "bump:rev": "node scripts/bump-client-rev.mjs"
+    "bump:rev": "node scripts/bump-client-rev.mjs",
+    "pack:release": "node scripts/pack-release.mjs"
   },
   "dsh": {
     "id": "dsh-prompt-manager",

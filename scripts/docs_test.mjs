@@ -302,26 +302,53 @@ const readme = readFileSync(at("README.md"), "utf8");
   );
 }
 
-// ── 10. 出厂提示词库必须是空的 ──────────────────────────────────────────────
+// ── 10. 提示词库不能被当成插件源码提交 ────────────────────────────────────
 //
-// ⚠️ 这条是踩出来的。`prompts/catalog.json` 同时扮演两个角色：
-//    **出厂默认**（随包发布）+ **用户的运行时库**（在界面上建一条提示词，
-//    插件就往这里写）。所以在自己机器上随手建的测试条目，会**原样提交进仓库、
-//    再发布给所有装这个插件的人** —— 别人打开就看到一条不相干的「测试」。
+// ⚠️ 这条是踩了**两次**才定下来的机制。
 //
-//    真发生过：提交里混进了一条 `{id:"test", name:"测试", description:"测试用"}`。
+// `prompts/catalog.json` 一直同时扮演两个角色：
+//   · **出厂默认**（随包发布给所有人）
+//   · **用户的运行时库**（在界面上建一条提示词，插件就写进这里）
+// 于是每建一条测试提示词，`git add -A` 就把它提交、再随包发布 ——
+// 别人装完打开会看到一堆不相干的条目。踩过：id=test「测试用」、id=my-prompt-1。
 //
-// 不能靠 .gitignore 挡（package.json 的 files 里含 prompts，忽略了发布包会缺文件），
-// 所以用这条断言盯着：**catalog 必须空**。真想让插件出厂带一条示例提示词时，
-// 明确改这条断言 —— 别让它悄悄溜进去。
+// 光加「catalog 必须为空」的断言治不了根：那意味着每次建条目都得来删一遍。
+// 现在改成**整块移出仓库**（`prompts/.gitignore` 挡掉 *.json / *.md），
+// 发布由 `npm run pack:release` 临时清空后再打包，所以发布包恒为空库。
+//
+// 这条断言盯的就是那个机制：catalog **不在 git 跟踪里**。
 {
-  const raw = JSON.parse(readFileSync(at("prompts", "catalog.json"), "utf8"));
-  ok(Array.isArray(raw.prompts), "catalog.json 里有 prompts 数组");
-  eq(
-    raw.prompts,
-    [],
-    "**出厂提示词库是空的**（非空说明把你的运行时库提交进去了，会发布给所有人）",
+  const promptsDir = at("prompts");
+  const ignoreFile = at("prompts", ".gitignore");
+  ok(existsSync(ignoreFile), "prompts/.gitignore 在（挡住运行时库）");
+  const ig = readFileSync(ignoreFile, "utf8");
+  // ⚠️ 模式**不带 `prompts/` 前缀** —— 这个文件就在 prompts/ 里，git 当相对路径。
+  //    第一版写成 `prompts/*.json`，于是变成 `prompts/prompts/*.json`、
+  //    永远匹配不上，`git add -A` 又把库加回了暂存区。
+  ok(/^\s*\*\.json\s*$/m.test(ig), "**catalog.json 被忽略**（它是运行时库，不是源码）");
+  ok(/^\s*\*\.md\s*$/m.test(ig), "提示词正文被忽略");
+  ok(!/^\s*prompts\//m.test(ig), "**模式没带 prompts/ 前缀**（带了就永远匹配不上）");
+  ok(
+    ig.includes("pack:release"),
+    "注释里指出了发布路径（`npm run pack:release` 会临时清空再打包）",
   );
+
+  // 发布脚本必须存在，而且必须用 finally 还原（临时清空是危险操作）
+  const packScript = at("scripts", "pack-release.mjs");
+  ok(existsSync(packScript), "scripts/pack-release.mjs 在");
+  const ps = readFileSync(packScript, "utf8");
+  ok(/\bfinally\b/.test(ps), "**打包脚本用 finally 还原本地库**（中途失败也不能丢数据）");
+  ok(ps.includes("prompts: []"), "打包时把 catalog 写成空库");
+
+  // package.json 里要有那条命令
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+  ok(!!pkg.scripts["pack:release"], "package.json 里有 pack:release");
+  // 而 prompts 目录仍在 files 里 —— 否则发布包缺目录、插件首次写入会失败
+  ok(
+    Array.isArray(pkg.files) && pkg.files.includes("prompts"),
+    "**prompts 目录仍在 files 里**（发布包需要它存在）",
+  );
+  ok(existsSync(promptsDir), "prompts 目录本身还在");
 }
 
 done();

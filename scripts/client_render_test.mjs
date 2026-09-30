@@ -1113,8 +1113,9 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     }
     ok(!text.includes("4300 字符"), "折叠态不显示字符数（在详情里）");
     ok(!text.includes("format-contract.md"), "折叠态不显示正文文件名");
-    // 但「新会话默认」卡片是默认展开的 —— 它管所有新会话，优先级最高
-    ok(text.includes("新会话默认"), "默认卡片在");
+    // ⚠️ 「新会话默认」卡片已删 —— 这里原来断言它默认展开。
+    //    现在是反向断言：它不该出现（删干净了，不是藏起来）。
+    ok(!text.includes("新会话默认"), "**「新会话默认」卡片已删**（不再出现在页面任何位置）");
   }
 }
 
@@ -1271,104 +1272,40 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   }
 }
 
-// ── 5h3. 设置页编辑器：「新会话默认」卡片 ──────────────────────────────────
+// ── 5h3. 设置页：**没有**「新会话默认」卡片（已删） ─────────────────────────
+//
+// ⚠️ 这张卡片被用户点名删掉了：它占一张大卡片，而「默认」这一层在
+//    「提示词组合」那块本来就有入口（scope = 全局默认时 setActivePrompts
+//    打的就是 ROUTE_DEFAULTS）—— 两处提供同一个入口，还都是常驻的。
+//
+// 底层那层**没砍**（defaults 仍可用、全局开关仍管它、会话页的「跟随默认」
+// 仍读它），只是设置页不再有专门的卡片。所以这里是**反向断言**：不许长回来。
+//
 // useState 顺序：list / busy / err / edit / message / openId / defaultsDraft / defaultsBusy
 {
   const listData = {
     prompts: [
       { id: "gen4", name: "格式契约", description: "载荷", mode: "append", order: 100, source: "file", file: "gen4.md", tokens: 1200, chars: 4300, text: "x" },
       { id: "gen3", name: "格式契约甲", description: "", mode: "append", order: 100, source: "file", file: "gen3.md", tokens: 900, chars: 3000, text: "y" },
-      { id: "none", name: "不注入", description: "", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" },
     ],
     promptsDir: "X:\\test\\prompts",
     defaults: ["gen4"],
     libraryErrors: [],
   };
 
-  // 已保存 1 条，草稿与之一致 → 不是 dirty
   shims.setStates([listData, false, null, null, null, null, ["gen4"], false]);
-  let el;
-  try {
-    el = renderEditor({});
-    ok(true, "默认卡片渲染不抛异常");
-  } catch (e) {
-    ok(false, "默认卡片渲染不抛异常 —— 抛了 " + e.message);
-    el = null;
-  }
-  if (el) {
-    const text = flattenText(el).join(" ");
-    ok(text.includes("新会话默认"), "有「新会话默认」卡片");
-    // ⚠️ 这张卡片原来六行，后三行是同一句「现在不注入」说了三遍
-    //    （标题的「当前：不注入」+ 空态提示 + 底部状态行）。现在压成三行：
-    //    标题（只带一个数） / 勾选框 / 一行状态。
-    ok(text.includes("1 条"), "标题上显示当前默认条数");
-    ok(text.includes("新会话挂 1 条"), "底部一行说明当前状态");
-    ok(!text.includes("改过"), "没有未保存改动时不提示");
-    // 改过才给按钮 —— 平时它们全是禁用状态，白占视线
-    ok(!text.includes("保存"), "没改动时不显示保存按钮（原来常驻且禁用）");
-    ok(!text.includes("清空"), "**没有「清空」按钮了**（取消勾选再保存，同一件事）");
-    ok(text.includes("格式契约") && text.includes("格式契约甲"), "两条可选");
-    // ⚠️ 长说明没丢，只是收进了「?」的 title
-    const dTip = collectTitles(el).find((t) => t.includes("新开的会话自动挂这几条")) || "";
-    ok(dTip !== "", "**「新会话默认」的说明收进 title 了**（不是删了）");
-    ok(dTip.includes("跟随默认"), "title 里指出了「跟随默认」在哪");
-    ok(!text.includes("已经单独指定过的会话不受影响"), "屏幕上不再常驻那段长说明");
-    // 「不注入」模式的条目不参与默认
-    const boxes = [];
-    (function walk(n) {
-      if (!n || typeof n !== "object") return;
-      if (n.type === "input" && n.props && n.props.type === "checkbox") boxes.push(n);
-      for (const c of n.children || []) walk(c);
-    })(el);
-    eq(boxes.length, 2, "只有 2 个勾选框（不注入那条被排除）");
-    eq(boxes[0].props.checked, true, "gen4 已勾选");
-    eq(boxes[1].props.checked, false, "gen3 未勾选");
-  }
+  const el = renderEditor({});
+  const text = flattenText(el).join(" ");
+  ok(!text.includes("新会话默认"), "**没有「新会话默认」卡片了**（用户点名删掉）");
+  ok(!text.includes("新会话挂"), "连带那句状态行也没了");
+  const tip = collectTitles(el).find((t) => t.includes("新开的会话自动挂这几条")) || "";
+  eq(tip, "", "**连它的说明也没了**（不是只把卡片藏起来）");
+  ok(text.includes("格式契约"), "提示词条目照常显示");
+  ok(text.includes("提示词组合"), "**「提示词组合」还在**（默认现在只剩这一个入口）");
+}
 
-  // 草稿与已保存不同 → 提示有未保存改动，并出现 撤销 / 保存
-  shims.setStates([listData, false, null, null, null, null, ["gen4", "gen3"], false]);
-  try {
-    const el2 = renderEditor({});
-    const text = flattenText(el2).join(" ");
-    ok(text.includes("改成 挂 2 条，还没保存"), "勾选变化后说清「改成什么样、还没保存」");
-    // 标题说**已保存**（实际生效的），状态行说**草稿**（刚勾的）—— 两句都要在
-    ok(text.includes("1 条"), "标题仍显示已保存的 1 条（没被草稿顶掉）");
-    ok(text.includes("保存") && text.includes("撤销"), "**改过之后才出现 撤销 / 保存**");
-  } catch (e) {
-    ok(false, "草稿态渲染不抛异常 —— 抛了 " + e.message);
-  }
-
-  // 默认清空 → 标题上就是「不注入」，状态行**不再重复**（没别的可说就整行不渲染）
-  shims.setStates([{ ...listData, defaults: [] }, false, null, null, null, null, [], false]);
-  try {
-    const text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("不注入"), "默认空时显示不注入");
-    ok(
-      !text.includes("新会话不注入"),
-      "**状态行不再把「不注入」再说一遍**（标题上已经有了）",
-    );
-  } catch (e) {
-    ok(false, "空默认渲染不抛异常 —— 抛了 " + e.message);
-  }
-
-  // 库里没有可用的（只有 none 条目）→ 不铺空态灰字，标题上就是「不注入」
-  shims.setStates([
-    { prompts: [{ id: "none", name: "不注入", mode: "none", order: 100, source: "none", tokens: 0, chars: 0, text: "" }], promptsDir: "X:\\test", defaults: [], libraryErrors: [] },
-    false, null, null, null, null, [], false,
-  ]);
-  try {
-    const el3 = renderEditor({});
-    const text = flattenText(el3).join(" ");
-    ok(text.includes("不注入"), "只有 none 条目时标题显示不注入");
-    ok(
-      !text.includes("库里还没有可用的提示词"),
-      "**不再为此铺一行空态灰字**（「不注入」已经说明了同一件事）",
-    );
-  } catch (e) {
-    ok(false, "空库渲染不抛异常 —— 抛了 " + e.message);
-  }
-
-  // 边界：defaults 字段缺失 / 不是数组，都不能炸
+// ── 5h3b. 边界：defaults 字段缺失 / 不是数组，都不能炸 ──────────────────────
+{
   for (const [label, states] of [
     ["defaults 缺失", [{ prompts: [], promptsDir: "x", libraryErrors: [] }, false, null, null, null, null, undefined, false]],
     ["defaults 不是数组", [{ prompts: [], promptsDir: "x", defaults: "乱写", libraryErrors: [] }, false, null, null, null, null, "乱写", false]],
@@ -1376,9 +1313,9 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
     shims.setStates(states);
     try {
       renderEditor({});
-      ok(true, "默认卡片边界不炸: " + label);
+      ok(true, "defaults 边界不炸: " + label);
     } catch (e) {
-      ok(false, "默认卡片边界不炸: " + label + " —— 抛了 " + e.message);
+      ok(false, "defaults 边界不炸: " + label + " —— 抛了 " + e.message);
     }
   }
 }
@@ -2182,21 +2119,45 @@ function makeSectionsData(over = {}) {
 
   // ── 总开关要排在内容最前面 ────────────────────────────────────────────
   //
-  // 它管的是「注不注入」这件事本身，比任何一条配置都靠上；
-  // 摆在后面的话，用户会以为它只影响它下面那一块。
+  // ⚠️ 顺序（用户定的）：
+  //    全局注入开关 → 提示词组合 + 快速预设 → 个人提示词 → 系统提示词
+  //    从「管什么」到「管具体哪条」再到「dsh 自己的段落」，一层层收窄。
   {
-    const order = [];
+    // ⚠️ 判据：找到每个区块的「**最小包含元素**」，然后看它们在**同一个父节点**
+    //    里的下标谁前谁后。
+    //
+    //    前两版都错了，都记在这儿：
+    //      1) 「走到谁 push 谁」—— 根节点的文本同时含这几个词，四个区块都在根
+    //         这层被 push，顺序就是我 if 的书写顺序，跟真实 DOM 无关；
+    //      2) 「按深度排」—— 同样因为在根上就匹配到了，深度全是 0。
+    //    共同毛病：**拿祖先的信息当自己的位置**。
+    //    换成本判据就没有歧义了 —— 直接比同一个父节点下的下标。
+    const boxes = [];
     (function walk(n) {
       if (!n || typeof n !== "object") return;
-      const t = flattenText(n).join("");
-      if (t.includes("提示词全局注入")) order.push("master");
-      if (t.includes("新会话默认")) order.push("defaults");
-      if (t.includes("提示词组合")) order.push("combo");
-      if (t.includes("系统提示词")) order.push("sections");
-      for (const c of n.children || []) walk(c);
+      const kids = n.children || [];
+      const idx = {};
+      kids.forEach((k, i) => {
+        const t = flattenText(k).join("");
+        if (t.includes("提示词全局注入") && idx.master === undefined) idx.master = i;
+        if (t.includes("提示词组合") && idx.combo === undefined) idx.combo = i;
+        if (t.includes("系统提示词") && idx.sections === undefined) idx.sections = i;
+      });
+      // 同一父节点下同时定位到多个区块 → 这就是它们的共同容器
+      if (Object.keys(idx).length >= 2) boxes.push(idx);
+      for (const k of kids) walk(k);
     })(el);
-    const first = order[0];
-    ok(first === "master", `**总开关排在内容最前面**（实际第一个是 ${first}）`);
+
+    const order = [];
+    if (boxes.length > 0) {
+      for (const [k, i] of Object.entries(boxes[0])) order.push([k, i]);
+      order.sort((a, b) => a[1] - b[1]);
+    }
+    const seq = order.map((x) => x[0]);
+    ok(seq.length >= 3, `**三个区块都定位到了**（实际 ${seq.join(" → ") || "一个都没有"}）`);
+    eq(seq[seq.length - 1], "sections", `**「系统提示词」排在最后**（实际 ${seq.join(" → ")}）`);
+    ok(seq.indexOf("master") < seq.indexOf("combo"), `总开关在提示词组合之前（实际 ${seq.join(" → ")}）`);
+    ok(seq.indexOf("combo") < seq.indexOf("sections"), `提示词组合在系统提示词之前（实际 ${seq.join(" → ")}）`);
   }
 
   // ── 开关本身：借用 dsh 原生开关的类名和结构 ──────────────────────────

@@ -105,8 +105,16 @@ window.__ModuleLoader__.load({
       };
       var CARDS_GRID = {
         display: "grid",
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-        gap: "10px",
+        // ⚠️ **单列**，一行一张卡片。
+        //
+        // 原来是 `repeat(2, minmax(0, 1fr))`（一行两张）。系统提示词那块是
+        // 单列平铺（`items.push(renderSectionCard(...))`），两块内容上下挨着、
+        // 行数却不一样，看着就是两套东西 —— 用户直接问了「为什么不是像系统
+        // 提示词一样一行一卡片」。
+        //
+        // 用 grid 而不是纯块级：`gap` 直接给出行距，不用给每张卡片补 margin-bottom。
+        gridTemplateColumns: "minmax(0, 1fr)",
+        gap: "8px",
         alignItems: "start",
         listStyle: "none",
         margin: "0",
@@ -1533,49 +1541,18 @@ window.__ModuleLoader__.load({
           return react.createElement("div", null, [head].concat(items));
         }
 
-        /** 保存全局默认。 */
-        var saveDefaults = react.useCallback(
-          function (ids) {
-            setDefaultsBusy(true);
-            fetch(ROUTE_DEFAULTS, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ promptIds: ids }),
-            })
-              .then(function (res) {
-                return res.json().then(function (j) {
-                  if (!res.ok) throw new Error((j && j.error) || "HTTP " + res.status);
-                  return j;
-                });
-              })
-              .then(function (d) {
-                if (!mountedRef.current) return null;
-                var next = Array.isArray(d.defaults) ? d.defaults : ids;
-                setDefaultsDraft(next.slice());
-                setList(function (prev) {
-                  return Object.assign({}, prev || {}, { defaults: next.slice() });
-                });
-                setErr(null);
-                flash(
-                  next.length === 0
-                    ? "已清空默认 —— 新会话将不注入"
-                    : "新会话将默认挂 " + next.length + " 条" +
-                      (d.refreshed ? "（已更新 " + d.refreshed + " 个进行中的会话）" : ""),
-                );
-                return null;
-              })
-              .catch(function (e) {
-                if (!mountedRef.current) return;
-                var m = (e && e.message) || String(e);
-                setErr(m);
-                flash("保存默认失败：" + m);
-              })
-              .then(function () {
-                if (mountedRef.current) setDefaultsBusy(false);
-              });
-          },
-          [flash],
-        );
+        /**
+         * ⚠️ 这里原来有个 `saveDefaults()`（POST /defaults）。
+         *
+         * 它只被「新会话默认」那张卡片调用，卡片去掉之后就是死代码了。
+         * **全局默认仍然可写** —— 走「提示词组合」那块：scope = 全局默认时
+         * `setActivePrompts()` 打的就是 ROUTE_DEFAULTS。所以这一层没被砍掉，
+         * 只是不再有第二张卡片重复提供同一个入口。
+         *
+         * 注：对应的 `defaultsDraft` / `defaultsBusy` 两个 state 还留着。
+         * 删掉它们会让**后面所有 useState 的下标前移**，而测试是按索引塞状态的
+         * （见 client_render_test.mjs 里那张顺序表）。等测试改成按名字定位再一起清。
+         */
 
         var send = react.useCallback(
           function (payload, okText) {
@@ -2133,135 +2110,6 @@ window.__ModuleLoader__.load({
           );
         }
 
-        /**
-         * 「新会话默认」卡片。
-         *
-         * 这块以前**完全没有界面** —— 会话里能点「跟随默认」，却没地方设定默认是什么，
-         * 只能手打 POST /api/prompt-manager/defaults。现在补上。
-         */
-        function renderDefaults() {
-          var saved = (list && Array.isArray(list.defaults) ? list.defaults : []).slice();
-          var draft = Array.isArray(defaultsDraft) ? defaultsDraft : saved;
-          var dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(saved.slice().sort());
-
-          function toggleDefault(id) {
-            var next = draft.slice();
-            var at = next.indexOf(id);
-            if (at >= 0) next.splice(at, 1);
-            else next.push(id);
-            setDefaultsDraft(next);
-          }
-
-          var boxes = [];
-          var chosenTokens = 0;
-          for (var i = 0; i < prompts.length; i++) {
-            (function (p) {
-              if (!p || !p.id || p.mode === "none") return; // 不注入的条目不参与默认
-              var on = draft.indexOf(p.id) >= 0;
-              if (on) chosenTokens += p.tokens || 0;
-              boxes.push(
-                react.createElement(
-                  "label",
-                  {
-                    key: p.id,
-                    style: Object.assign({}, FORM_LINE, { flex: "0 0 auto", cursor: "pointer" }),
-                    title: p.description || p.id,
-                  },
-                  react.createElement("input", {
-                    type: "checkbox",
-                    checked: on,
-                    onChange: function () {
-                      toggleDefault(p.id);
-                    },
-                  }),
-                  react.createElement("span", null, p.name || p.id),
-                  react.createElement("span", { style: HEADING_COUNT }, fmtTokens(p.tokens)),
-                ),
-              );
-            })(prompts[i]);
-          }
-
-          // ⚠️ 库里一条可选的都没有时，**整张卡片不显示**。
-          //
-          //    这种情况下这张卡片只剩下「不注入」这个结论，而它跟「库里是空的」
-          //    是同一件事 —— 摆一张只有结论、没有任何可操作项的卡片纯属噪音。
-          //    用户提过两次「这个看着很碍眼」，根因就在这儿。
-          if (boxes.length === 0) return null;
-
-          // 干净时的状态行：已选几条说几条的 token，没选就不说（标题上已经有「不注入」）
-          var restLine = dirty
-            ? "改成 " + (draft.length === 0 ? "不注入" : "挂 " + draft.length + " 条") + "，还没保存"
-            : saved.length === 0
-              ? ""
-              : "新会话挂 " + saved.length + " 条 · 共 " + fmtTokens(chosenTokens);
-
-          return react.createElement("div", { style: Object.assign({}, CARD, { marginBottom: "10px" }) }, [
-            react.createElement(
-              "div",
-              { key: "head", style: CARD_HEAD },
-              react.createElement("div", { style: CARD_MAIN_ROW }, [
-                react.createElement("span", { key: "t", style: CARD_TITLE }, "新会话默认"),
-                react.createElement(
-                  "span",
-                  { key: "c", style: HEADING_COUNT },
-                  saved.length === 0 ? "不注入" : saved.length + " 条",
-                ),
-                // 说明收进「?」—— 这段是「怎么回事」，不是「现在什么状态」，
-                // 不需要每一眼都读一遍。
-                renderHelpIcon(
-                  "新开的会话自动挂这几条。已经单独指定过的会话不受影响；" +
-                    "想让它改跟默认，在会话头部点「跟随默认」。",
-                ),
-              ]),
-            ),
-            react.createElement(
-              "div",
-              {
-                key: "boxes",
-                style: Object.assign({}, CARD_DETAILS, { display: "flex", flexWrap: "wrap", gap: "6px 18px" }),
-              },
-              boxes,
-            ),
-            react.createElement("div", { key: "act", style: CARD_ACTIONS }, [
-              // 没有可说的就整行不渲染 —— 空 span 还会撑出 half 行高
-              restLine ? react.createElement("span", { key: "st", style: STATUS_LINE }, restLine) : null,
-              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-              // 改过才给按钮 —— 平时它们全是禁用状态，白占视线
-              dirty
-                ? react.createElement(
-                    "button",
-                    {
-                      key: "reset",
-                      type: "button",
-                      className: "pm-btn",
-                      style: defaultsBusy ? DETAIL_BTN_BUSY : DETAIL_BTN,
-                      disabled: defaultsBusy,
-                      onClick: function () {
-                        setDefaultsDraft(saved.slice());
-                      },
-                    },
-                    "撤销",
-                  )
-                : null,
-              dirty
-                ? react.createElement(
-                    "button",
-                    {
-                      key: "save",
-                      type: "button",
-                      className: "pm-btn",
-                      style: defaultsBusy ? DETAIL_BTN_BUSY : DETAIL_BTN,
-                      disabled: defaultsBusy,
-                      onClick: function () {
-                        saveDefaults(draft.slice());
-                      },
-                    },
-                    defaultsBusy ? "保存中…" : "保存",
-                  )
-                : null,
-            ]),
-          ]);
-        }
 
         // 分组标题（对齐原生 .catalogHeading：h3 + 计数）
         var header = react.createElement("div", { style: CARD_HEADING }, [
@@ -2301,12 +2149,12 @@ window.__ModuleLoader__.load({
         if (list === null) {
           body.push(react.createElement("div", { key: "loading", style: STATUS_LINE }, "读取中…"));
         } else {
-          // ⚠️ 顺序：**全局注入开关 → 新会话默认 → 提示词卡片**。
-          //    总开关排最前 —— 它管的是「注不注入」这件事本身，比任何一条配置都靠上；
-          //    摆在后面的话，用户会以为它只影响它下面那一块。
+          // ⚠️ 顺序（用户定的）：
+          //    全局注入开关 → 提示词组合 + 快速预设 → 个人提示词 → 系统提示词
+          //    从「管什么」到「管具体哪条」再到「dsh 自己的段落」，一层层收窄。
           body.push(react.createElement("div", { key: "master" }, renderMasterSwitch()));
-          // 「新会话默认」管的是所有新会话，比单条提示词重要
-          body.push(react.createElement("div", { key: "defaults" }, renderDefaults()));
+          // 提示词组合 + 快速预设 —— 管「哪些生效」，在具体条目之前
+          body.push(react.createElement("div", { key: "combo" }, renderCombo()));
           // "新建"表单放在网格之外（它需要整行宽度）
           if (edit && edit.isNew) {
             body.push(
@@ -2362,7 +2210,6 @@ window.__ModuleLoader__.load({
         }
 
         body.push(
-          react.createElement("div", { key: "combo" }, renderCombo()),
           react.createElement("div", { key: "sections" }, renderSections()),
         );
 
