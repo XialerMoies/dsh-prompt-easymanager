@@ -22,21 +22,22 @@ dsh 的系统提示词是很多段拼起来的：persona、AGENTS.md、技能、
 
 ## 安装
 
-推荐用 DSH 自带的插件命令，从 npm 装：
+从 GitHub 装（**推荐**）：
 
 ```powershell
-dsh plugin --profile web add dsh-prompt-easymanager
+dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.3
 ```
+
+`#v0.3.3` 是版本标签 —— 换个标签就是换个版本，装哪个版本一目了然。
 
 装完**重启 DSH Web**。
 
-升级：
-
-```powershell
-dsh plugin --profile web update dsh-prompt-easymanager
-```
-
 > 名字里那个 `web` 是 profile 名，按你自己的来（`dsh profile list` 能看到）。
+
+**为什么不从 npm 装**：这个包名在 npm 上被一个**功能相近的独立实现**占了
+（SaiSenBox 的 `dsh-prompt-manager`，跟这个项目没有关系）。改用
+`dsh-prompt-easymanager` 发布时，新包被 npm 扣在「暂存待批」的状态里，
+CLI 看不到也没法批。GitHub 直装不受影响。
 
 **装之前想确认它碰什么？** 见 **[docs/permissions.md](docs/permissions.md)** ——
 读写哪些文件、连什么网络、坏了会怎样、卸载后留什么。摘要：

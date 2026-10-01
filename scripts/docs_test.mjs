@@ -62,17 +62,29 @@ const readme = readFileSync(at("README.md"), "utf8");
 // README 里写过 `file:E:/ai-talk/杂谈/dsh-prompt-easymanager`，例子里还出现过
 // 作者自己那条提示词的名字 —— 用户既看不懂，也不需要知道。
 {
-  // 只查**会给用户看**的东西：README、docs/ 顶层的两份。
-  const userFacing = ["README.md", "docs/system-prompt.md", "docs/section-overrides-design.md"];
+  // 只查**会给用户看**的东西：README、docs/ 顶层的三份。
+  const userFacing = [
+    "README.md",
+    "docs/system-prompt.md",
+    "docs/section-overrides-design.md",
+    "docs/permissions.md",
+  ];
 
-  // 作者环境：绝对路径、仓库 owner、作者自用的提示词名。
+  // 作者环境：**本机路径**、作者自用的提示词名。
+  //
+  // ⚠️ 这里**故意不挡 `XialerMoies`** —— 它是**发布者名字**，出现在
+  //    README 的安装地址里是正当的：
+  //        dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.3
+  //
+  //    当初加这条是因为它只以**本地路径**形式出现过
+  //    （`file:E:/ai-talk/杂谈/…`）—— 那种由下面那几条路径判据挡住。
+  //    「作者名」和「作者的本机路径」是两回事，判据要分开。
   const AUTHOR = [
     /E:\\/,
     /E:\//,
     /[A-Z]:\\\\?(?:Users|ai-)/i,
     /ai-talk/,
     /杂谈/,
-    /XialerMoies/,
     /无限[三四]代/,
     /infinite-gen/,
   ];
