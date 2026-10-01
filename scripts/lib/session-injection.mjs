@@ -320,32 +320,19 @@ export function createSessionInjector({
             const sections = result?.sections;
             if (!Array.isArray(sections)) return result;
 
-            // ── 全局注入关掉：只掐「默认」那一层 ──────────────────────────
+            // ⚠️ **这里原来有一段「装配期把来自默认的段落清空」**（老机制，
+            //    靠 `isEnabled` 驱动）—— **已删**。
             //
-            // ⚠️ **不是「不挂载」，也不是「全停」。**
+            //    新模型下「全局注入关掉」= **`defaults` 直接是空的**
+            //    （见 index.js 的 `toInjectorState`），装配时压根不会有那几段，
+            //    所以不需要在装配期清。
             //
-            //    「不挂载」做不到即时生效 —— agent 已经 registered 了，
-            //    要让它不挂就得遍历所有 agent 卸载、再重挂，中间还有竞态。
-            //    所以走装配期：把**来自默认**的那些段落正文清空
-            //    （`renderPrompt` 会丢弃空段落），下一个模型步骤就生效。
+            //    那段还活着的唯一后果是**误导**：`isEnabled` 现在恒为 true
+            //    （语义挪到翻译层了），所以它永不触发 —— 留着会让人以为
+            //    「清空」这条路径还在用。
             //
-            // ⚠️ 清哪些是有讲究的：**只清这个会话没有显式指定的那些**。
-            //    用户在会话页自己选的提示词不该被这个开关掐掉 ——
-            //    开关关的是「往每个会话都塞默认那几条」，不是「禁止注入」。
-            //    所以这里逐个 id 问 explicitEntry，而不是无脑清 SELF_PREFIX。
-            if (isEnabled && isEnabled(agentId) === false) {
-              for (const section of sections) {
-                if (!section || typeof section.name !== "string") continue;
-                if (!section.name.startsWith(SELF_PREFIX)) continue;
-                // section 名形如 `prompt-manager:<id>` —— 抠出 id 看它是不是显式选的
-                const promptId = section.name.slice(SELF_PREFIX.length);
-                if (explicitEntry(agentId)?.value?.includes(promptId)) continue;
-                if (section.text !== "") section.text = "";
-              }
-              // ⚠️ **不 return** —— 段落改写跟「注不注入提示词」是两件事，
-              //    这个开关只管后者。关掉注入还把用户的改写一起停掉，
-              //    是在替用户做他没要求的决定。
-            }
+            //    段落改写跟「注不注入提示词」是两件事，所以下面照旧往下走、
+            //    **不 return**。
 
             // ⚠️ **按 agent 取覆盖表** —— 改写是按会话的，不同会话可以不一样。
             //    监听器本来就是每个 agent 挂一个，所以这里天然知道是谁。
@@ -812,6 +799,31 @@ export function createSessionInjector({
 
     handleAgentCreated(agent) {
       register(agent);
+    },
+
+    /**
+     * 按**当前**的 explicit / defaults 重新挂一遍所有存活会话。
+     *
+     * ⚠️ **`restore()` 之后必须调这个** —— `restore()` 只重建内部的映射表，
+     *    它**不挂载**。所以「改完盘 → restore()」这条路上，状态是对的、
+     *    但 agent 上一个 section 都没有（宿主集成测试当场逮到：
+     *    「agent 上注册了 1 个 section（实际 0）」）。
+     *
+     *    老的 `assign()` 是「设映射 + 立刻 attach」两件事一起做的，所以那时候
+     *    没这个问题；现在状态由盘上说了算，就得显式补一次挂载。
+     *
+     * @returns {number} 成功重挂的会话数
+     */
+    reattachAll() {
+      let n = 0;
+      try {
+        for (const agentId of agents.keys()) {
+          if (attach(agentId)) n += 1;
+        }
+      } catch (err) {
+        log("reattachAll 失败", err?.message);
+      }
+      return n;
     },
 
     /**

@@ -34,9 +34,11 @@ import {
   presetId,
   normalizePresets,
   capturePreset,
-  planApply,
   matchPreset,
   summarizePreset,
+  normalizeGlobal,
+  presetForSession,
+  presetLabel,
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 
@@ -53,6 +55,13 @@ export const DEFAULTS_PATH = "/api/prompt-manager/defaults";
 export const EDIT_PATH = "/api/prompt-manager/edit";
 export const SECTIONS_PATH = "/api/prompt-manager/sections";
 export const PRESETS_PATH = "/api/prompt-manager/presets";
+/**
+ * 全局那份配置：`{ enabled, presetId }`。
+ *
+ * ⚠️ 它**取代**了老的 `/defaults`（那条路由收一堆裸 prompt id）。
+ *    新模型里全局也得指向一条预设，所以这个入口叫 global 更贴切。
+ */
+export const GLOBAL_PATH = "/api/prompt-manager/global";
 
 const STATE_DIR = process.env.DSH_HOME || join(homedir(), ".dsh");
 const STATE_FILE = join(STATE_DIR, "dsh-prompt-manager-state.json");
@@ -81,11 +90,59 @@ const PROMPTS_DIR = dirname(CATALOG_PATH);
  */
 const NONE_SENTINEL = "none";
 
+/**
+ * 找到「这次请求该用哪个注入器」。
+ *
+ * ⚠️ **不能只认模块级的 `activeInjector`** —— 它是「最后一次 apply 的那个」，
+ *    而 `apply()` 每被调用一次就覆盖它。踩过（宿主集成测试里）：
+ *
+ *        apply(ctx)      → activeInjector = ctx 的注入器
+ *        apply(ctxF)     → activeInjector = **ctxF 的注入器**（覆盖了）
+ *        之后再往 ctx 发 /assign
+ *          → syncInjector() 同步的是 **ctxF 那个**，ctx 的 agent 一直挂不上
+ *          → 表现是「接口 200、状态也对，但 agent 上一个 section 都没有」
+ *
+ *    真机上 `apply` 只调一次，所以看不出来 —— 但那是**碰巧**，不是对的。
+ *    正确做法是按 ctx 认：每个 ctx 各存一份，测试里的多个 ctx 互不干扰。
+ */
+function injectorOf(ctx) {
+  const perCtx = ctx && ctx.__pmInjector;
+  if (perCtx) return perCtx;
+  return activeInjector;
+}
+
 /** apply() 时赋值，供工具与路由读取 */
 let activeInjector = null;
 let activeLibrary = null;
 let activeStore = null;
 let hostCtxRef = null;
+
+/**
+ * 找到「这次请求该用哪个提示词库」。
+ *
+ * ⚠️ 跟 `injectorOf` 同一个坑：`activeLibrary` / `activeStore` 都是**模块级**的，
+ *    每 `apply()` 一次就被覆盖。踩过（宿主集成测试里）：
+ *
+ *        apply(ctx)   → activeLibrary = ctx 的库
+ *        apply(ctxF)  → activeLibrary = **ctxF 的库**
+ *        再往 ctx 发 /edit upsert
+ *          → 写盘成功（盘上确实有那条），但 `libraryList()` 读的是 ctxF 那个库的
+ *            内存副本 → **返回的清单里没有刚新增的条目**
+ *
+ *    真机上 `apply` 只调一次所以看不出，但那是碰巧。
+ */
+function libraryOf(ctx) {
+  const perCtx = ctx && ctx.__pmLibrary;
+  if (perCtx) return perCtx;
+  return activeLibrary;
+}
+
+/** 同 `libraryOf`，写入侧。 */
+function storeOf(ctx) {
+  const perCtx = ctx && ctx.__pmStore;
+  if (perCtx) return perCtx;
+  return activeStore;
+}
 
 /**
  * 运行时诊断。
@@ -116,9 +173,9 @@ function sessionStates() {
 }
 
 /** 提示词库清单（不含正文，正文体积大，按需通过 preview/raw 取）。 */
-function libraryList() {
+function libraryList(ctx) {
   try {
-    return activeLibrary ? activeLibrary.list() : [];
+    const lib = libraryOf(ctx); return lib ? lib.list() : [];
   } catch (err) {
     return [{ error: err?.message ?? String(err) }];
   }
@@ -229,48 +286,130 @@ function findAgentFor(ctx, sessionId) {
   }
 }
 
+/**
+ * 把「预设的世界」翻译成「注入器的世界」。
+ *
+ * ⚠️ **这是这次改动最关键的一层胶水**，两个世界用的是不同的东西：
+ *
+ *     状态文件 / 界面   →  预设 id（`assignments[sid] = "写代码"`）
+ *     注入器            →  提示词 id 数组（`explicit.get(sid) = ["格式契约"]`）
+ *
+ *     `createSessionInjector` 内部按「一堆裸 promptId」建模（1133 行、199 条
+ *    测试），直接改它的内部表示风险太大。所以**保持它原样**，在这里翻译。
+ *
+ * 翻译规则（跟 `presetForSession` 一一对应）：
+ *
+ *     assignments[sid] 是预设 id  → explicit.set(sid, 那条预设的 prompts)
+ *     assignments[sid] 是 null    → explicit.set(sid, [])   ← 注入器认「空数组 = 显式不注入」
+ *     没有这个 sid                → **不设 explicit**，让它走 defaults
+ *
+ *     defaults ← 全局那条预设的 prompts（全局关掉时是空数组）
+ *
+ * ⚠️ 关键：**「跟随全局」和「显式不注入」在注入器里必须能分开** ——
+ *    前者不设 explicit，后者设成空数组。搞混了就会「选了原生但还吃全局」。
+ */
+function toInjectorState(state) {
+  const presets = state.presets ?? {};
+  const assignments = {};
+  for (const [sid, presetId] of Object.entries(state.assignments ?? {})) {
+    if (!sid) continue;
+    if (presetId === null) {
+      assignments[sid] = []; // 显式什么都不挂
+      continue;
+    }
+    const p = typeof presetId === "string" ? presets[presetId] : undefined;
+    if (!p) continue; // 指的预设不存在（被删了）→ 当没记录，走 defaults
+    assignments[sid] = [...p.prompts];
+  }
+  const g = state.global ?? {};
+  const gp = g.enabled === true && typeof g.presetId === "string" ? presets[g.presetId] : undefined;
+  return { assignments, defaults: gp ? [...gp.prompts] : [] };
+}
+
+/**
+ * 清掉**预设里**已经不存在的提示词 id。
+ *
+ * ⚠️ 这条是新模型引入的**第二层引用**，老的 `injector.pruneMissing()` 管不到：
+ *
+ *        全局 / 会话  →  预设  →  提示词
+ *
+ *    `pruneMissing()` 修的是注入器内部那套（按 prompt id 建模），
+ *    而预设里的 `prompts[]` 是盘上的数据，它碰不到。
+ *
+ *    漏了这一层的表现：预设里留着一条不存在的提示词，注入时被**静默跳过** ——
+ *    用户看到「我明明勾了 3 条，只生效 2 条」，而且不报错。
+ *
+ *    而且**不能靠 `injector.pruneMissing()` 顺带修** —— `toInjectorState()`
+ *    是从预设推出来的，预设里还留着幽灵 id 的话，下一次 `syncInjector()`
+ *    又会把它翻译回来。**必须改预设本身。**
+ *
+ * @param {(id: string) => boolean} alive 这个 id 在库里还成不成立
+ * @returns {{ presets: Record<string, string[]> }} 被剔掉的，按预设 id 分组
+ */
+function prunePresets(alive) {
+  const s = readState();
+  const dropped = {};
+  let touched = false;
+  const next = {};
+  for (const [id, p] of Object.entries(s.presets)) {
+    const ghost = (p.prompts ?? []).filter((x) => !alive(x));
+    if (ghost.length === 0) {
+      next[id] = p;
+      continue;
+    }
+    dropped[id] = ghost;
+    touched = true;
+    next[id] = { ...p, prompts: p.prompts.filter((x) => alive(x)) };
+  }
+  if (touched) writeState({ presets: next });
+  return { presets: dropped };
+}
+
 // ── 状态持久化 ────────────────────────────────────────────────────────────────
-// 形态：
+//
+// 新模型（预设是**唯一载体**）：
+//
 //   {
-//     assignments:      { "<sessionId>": ["<promptId>", ...] },
-//     defaults:         ["<promptId>", ...],
-//     sectionOverrides: { "<sectionName>": { action, text, original, originalHash, ... } },
-//     sessionSectionOverrides: { "<sessionId>": { "<sectionName>": {...} } },
-//     updatedAt:        "..."
+//     global:      { enabled: boolean, presetId: string | null },   ← 全局用哪个预设
+//     assignments: { "<sessionId>": "<presetId>" | null },          ← 会话用哪个预设
+//     presets:     { "<presetId>": { name, prompts[], sections{} } },
+//     sectionOverrides:        { … },   ← 保留：段落改写区块仍在用
+//     sessionSectionOverrides: { … },
 //   }
+//
+// ⚠️ **`assignments` 的语义变了**：老版本存的是 `["<promptId>", …]`（一堆裸 id），
+//    新版本存 `"<presetId>"` 或 `null`（什么都不挂）。读盘时按类型分辨：
+//
+//      数组 → 老数据，走迁移（见 migrateLegacyState）
+//      字符串 / null → 新数据，直接用
+//
+// `defaults` 字段**保留读取**只为迁移 —— 老版本「全局默认提示词」在那儿。
+// 迁移完就不再写它了。
 //
 // sectionOverrides 的键是**原生系统提示词段落的 name**（如 `harness:identity`），
 // **不是下标、不是 order** —— 这样官方新增/改动/删除段落时，用户的数据不用改。
 // 详见 docs/section-overrides-design.md。
-//
-// ⚠️ **改写分两层，跟注入的两层对齐：**
-//
-//     sectionOverrides        全局默认改写（所有会话都用）
-//     sessionSectionOverrides 按会话改写（只影响那一个会话，**盖住全局**）
-//
-//   合并规则是**按段落名合、会话层赢**，不是整表替换 —— 见
-//   section-overrides.mjs 的 `resolveOverrides()`（那里写了为什么）。
 function readState() {
   try {
     const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8"));
     const out = {
+      global: { enabled: false, presetId: null },
       assignments: {},
-      defaults: [],
       sectionOverrides: {},
       sessionSectionOverrides: {},
       presets: {},
-      enabled: true,
-      /** 界面补丁：**默认关** —— 它会改 dsh 自己的文件 */
     };
-    const map = parsed?.assignments;
-    if (map && typeof map === "object" && !Array.isArray(map)) out.assignments = map;
-    if (Array.isArray(parsed?.defaults)) {
-      // ⚠️ 迁移：`"none"` 是**老版本**里那条哨兵条目（内置的「不注入」提示词）。
-      //    现在库里没有它了，留着会变成指向不存在条目的悬挂 id ——
-      //    每次装配都要报一句「提示词库里没有：none」，而它的语义本来就是
-      //    「什么都不注入」，等价于从列表里去掉。
-      out.defaults = parsed.defaults.filter((x) => typeof x === "string" && x !== NONE_SENTINEL);
-    }
+    out.presets = normalizePresets(parsed?.presets);
+    out.global = normalizeGlobal(parsed?.global, {
+      // ⚠️ 按老版本的语义传：**不写 `enabled` = 开着**（`parsed?.enabled !== false`）。
+      //    传 `parsed?.enabled` 的话，「没有这个字段」会变成 undefined → 关掉，
+      //    用户升级后全局注入凭空失效。
+      switchEnabled: parsed?.enabled !== false,
+      defaults: parsed?.defaults,
+      sectionOverrides: parsed?.sectionOverrides,
+      presets: out.presets,
+    });
+    migrateLegacyState(out, parsed);
     if (parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object") {
       out.sectionOverrides = normalizeOverrides(parsed.sectionOverrides);
     }
@@ -284,35 +423,112 @@ function readState() {
         if (Object.keys(norm).length > 0) out.sessionSectionOverrides[sid] = norm;
       }
     }
-    out.presets = normalizePresets(parsed?.presets);
-    // 总开关：默认开（不写这个字段就是开）—— 老数据不用迁移
-    out.enabled = parsed?.enabled !== false;
     return out;
   } catch {
-    /* 文件不存在或损坏：等价于「全部不注入」+「不改动任何原生段落」，符合默认值 */
+    /* 文件不存在或损坏：等价于「什么都不挂」+「不改动任何原生段落」，符合默认值 */
   }
   return {
+    global: { enabled: false, presetId: null },
     assignments: {},
-    defaults: [],
     sectionOverrides: {},
     sessionSectionOverrides: {},
     presets: {},
-    enabled: true,
   };
+}
+
+/**
+ * 老数据 → 新模型。
+ *
+ * ⚠️ **这是整个改动里最容易悄悄弄丢用户配置的地方**，所以规则写清楚：
+ *
+ *   老 `assignments[sid] = ["p1","p2"]`（裸 prompt id 数组）
+ *        ↓
+ *   ① 先看这个组合**是不是已经等于某条已存预设**（内容一样就认出来，不重复存）
+ *   ② 不是 → **新存一条预设**把它装进去，名字取「（旧配置 前几个 id）」
+ *   ③ `assignments[sid]` 改成那条预设的 id
+ *
+ *   老的 `defaults[]` + `sectionOverrides` 同理 —— 但那部分由 `normalizeGlobal`
+ *   处理（它会把全局指向认出来的预设）。
+ *
+ * 认不出来的**不猜**：宁可多存一条预设让用户看见，也不要把配置抹掉。
+ */
+function migrateLegacyState(out, parsed) {
+  const map = parsed?.assignments;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return;
+  /** 迁移出来的预设名会带这个前缀，用户一眼能看出是搬过来的。 */
+  const MIGRATED = "（旧配置）";
+  for (const [sid, value] of Object.entries(map)) {
+    if (typeof sid !== "string" || !sid) continue;
+    if (Array.isArray(value)) {
+      // ── 老格式：裸 prompt id 数组 ──
+      const prompts = value.filter((x) => typeof x === "string" && x && x !== NONE_SENTINEL);
+      // 空数组 = 老的「显式不注入」→ 新模型里正好就是 null
+      if (prompts.length === 0) {
+        out.assignments[sid] = null;
+        continue;
+      }
+      const same = matchPreset({ prompts, sections: {} }, out.presets);
+      if (same) {
+        out.assignments[sid] = same.id;
+        continue;
+      }
+      // ⚠️ **必须幂等**：同一个 sid 读两遍、或者盘上还留着老数组，
+      //    每次都会走到这儿。只按内容判重不够 —— 上面的 matchPreset 只认
+      //    内容完全一样的，`["a"]` 和 `["a","b"]` 会各自长一条。
+      //    所以再按**名字**兜一层：名字是按 prompts 拼的，同样的输入必然同名。
+      const name = `${MIGRATED} ${prompts.slice(0, 3).join("、")}`;
+      const byName = Object.entries(out.presets).find(([, p]) => p.name === name);
+      if (byName) {
+        out.assignments[sid] = byName[0];
+        continue;
+      }
+      const id = presetId(name, Object.keys(out.presets));
+      out.presets[id] = capturePreset({ name, prompts, sections: {} });
+      out.assignments[sid] = id;
+      continue;
+    }
+    // ── 新格式：presetId 或 null ──
+    if (value === null) {
+      out.assignments[sid] = null;
+    } else if (typeof value === "string" && value && value !== NONE_SENTINEL) {
+      out.assignments[sid] = value;
+    }
+  }
 }
 
 function writeState(state) {
   try {
     mkdirSync(dirname(STATE_FILE), { recursive: true });
     // ⚠️ **先读盘再合并** —— 不能直接覆盖。
-    //    注入器调 saveState 时只传 `{assignments, defaults}`；如果直接写，
+    //    注入器调 saveState 时只传一部分字段；如果直接写，
     //    那一侧的写入会把 `sectionOverrides` 整块抹掉
     //    （改一次会话分配就把用户的段落改写全丢了）。
     const onDisk = readState();
     const merged = {
-      ...onDisk,
-      ...state,
-      // 显式传了才覆盖，没传就保留盘上的
+      global: {
+        // ⚠️ 两个字段分开判「有没有显式传」—— `enabled: false` 和 `presetId: null`
+        //    都是**合法的新值**，用真值判断会把它们当成「没传」。
+        enabled:
+          state && state.global && "enabled" in state.global
+            ? state.global.enabled === true
+            : onDisk.global.enabled,
+        presetId:
+          state && state.global && "presetId" in state.global
+            ? typeof state.global.presetId === "string" && state.global.presetId
+              ? state.global.presetId
+              : null
+            : onDisk.global.presetId,
+      },
+      // ⚠️ **`assignments` 只认预设 id，不认注入器传回来的 prompt id 表。**
+      //
+      //    注入器的 `persist()` 会把**整张** `assignments`（值是裸 prompt id
+      //    数组）传过来，那是它内部的表示。原样写盘的话，状态文件会被写回
+      //    老格式 —— 下次读盘又走一遍迁移，预设越迁移越多（踩过：临时目录里
+      //    长出 9 条「（旧配置）…」）。
+      //
+      //    所以这里只接受「值不是数组」的输入（字符串 = 预设 id、null = 不挂）。
+      //    注入器内部那套对不上的话，以**状态文件为准** —— 见 `syncInjector()`。
+      assignments: pickPresetAssignments(state, onDisk),
       sectionOverrides:
         state && "sectionOverrides" in state && state.sectionOverrides
           ? normalizeOverrides(state.sectionOverrides)
@@ -325,13 +541,73 @@ function writeState(state) {
         state && "presets" in state && state.presets
           ? normalizePresets(state.presets)
           : onDisk.presets,
-      // 总开关：显式传了才改（`enabled: false` 也要能写进去，所以不能用真值判断）
-      enabled: state && "enabled" in state ? state.enabled !== false : onDisk.enabled,
       updatedAt: new Date().toISOString(),
     };
     writeFileSync(STATE_FILE, JSON.stringify(merged, null, 2), "utf8");
   } catch {
     /* 持久化失败不影响本次会话内的效果 */
+  }
+}
+
+/**
+ * 从一次写入里挑出「合法的预设 id 分配」。
+ *
+ * 合法 = 值是 `string`（预设 id）或 `null`（显式不挂）。
+ *
+ * ⚠️ **只要看到一个数组，就整块放弃这次写入、保留盘上那份。**
+ *
+ *    数组是**注入器的内部表示**（一堆裸 prompt id），不是盘上的格式。
+ *    注入器的 `persist()` 在 `pruneMissing()` / `assign()` 里都会调，
+ *    传回来的就是这种数组表。
+ *
+ *    踩过两次，第二次很隐蔽：
+ *      · 第一版「原样写盘」→ 盘上被写成老格式，下次读盘又走一遍迁移，
+ *        预设越迁移越多（临时目录里长出 9 条「（旧配置）…」）。
+ *      · 第二版改成「把数组项丢掉」→ **丢掉之后写出了空对象**，
+ *        于是「删一条提示词，所有会话的预设选择全没了」。
+ *        （探针原话：`传入assignments=有 盘上={"s1":"含弃用项"} 合并后={}`。）
+ *
+ *    正确做法是**整块不认** —— 注入器那份视图跟盘上格式对不上时以盘上为准，
+ *    它内部该有什么由 `syncInjector()` 按盘重建。
+ */
+function pickPresetAssignments(state, onDisk) {
+  if (!state || !("assignments" in state) || !state.assignments) return onDisk.assignments;
+  const out = {};
+  for (const [sid, v] of Object.entries(state.assignments)) {
+    if (typeof sid !== "string" || !sid) continue;
+    // ⚠️ 数组 = 注入器的内部表示 → **整块放弃**，保留盘上那份
+    if (Array.isArray(v)) return onDisk.assignments;
+    if (v === null) out[sid] = null;
+    else if (typeof v === "string" && v) out[sid] = v;
+    // 数字 / 其他脏值：单条丢掉，不影响别的会话
+  }
+  return out;
+}
+
+/**
+ * 让注入器跟上盘上的状态。
+ *
+ * ⚠️ **状态文件是唯一真相**，注入器只是它的一份投影。
+ *    每次改完盘都调这个，注入器的内存副本就不会和盘漂移
+ *    （它内部按 prompt id 建模，翻译在 `toInjectorState`）。
+ *
+ * ⚠️ **`restore()` 之后必须 `reattachAll()`** —— `restore()` 只重建映射表、
+ *    **不挂载**。少了这一步的表现是「状态对了但 agent 上一个 section 都没有」，
+ *    而且不报错（宿主集成测试逮到过）。
+ *
+ * @param {object} [ctx] 这次操作发生在哪个 ctx 上（见 `injectorOf`）
+ */
+function syncInjector(ctx) {
+  const inj = injectorOf(ctx);
+  if (!inj) return;
+  try {
+    inj.restore(toInjectorState(readState()));
+    inj.reattachAll();
+  } catch (err) {
+    // ⚠️ **不能静默吞掉** —— 踩过：`restore()` 抛了之后注入器内部映射是**半空**的，
+    //    表现成「状态文件里明明选着预设，界面上什么都不注入」，而日志里一个字都没有，
+    //    只能逐层加探针查。至少把原因说出来。
+    console.error(`[${PLUGIN_ID}] 同步注入器失败：${err?.message ?? String(err)}`);
   }
 }
 
@@ -359,7 +635,7 @@ const promptTool = {
       stateVersion: snap.version ?? 2,
       /** 全局默认：新会话没显式指定时用这几条 */
       defaults: snap.defaults ?? [],
-      prompts: libraryList(),
+      prompts: libraryList(hostCtxRef),
       libraryErrors: libraryErrors(),
       sessions: sessionStates(),
       liveAgents: listAgentsDiag(),
@@ -389,6 +665,14 @@ export function apply(ctx) {
   // 编辑器用的写入侧（设置页那个 tab）。只动 prompts/ 目录内的文件。
   const store = createPromptStore({ catalogPath: CATALOG_PATH, baseDir: PROMPTS_DIR });
   activeStore = store;
+  // ⚠️ **按 ctx 各存一份**（原因见 libraryOf / injectorOf）——
+  //    模块级那两份会被「后一次 apply」覆盖，多 ctx 场景下读到的库就错人了。
+  try {
+    ctx.__pmLibrary = library;
+    ctx.__pmStore = store;
+  } catch {
+    /* ctx 可能是冻结对象；拿不到就退回模块级 */
+  }
 
   // ── 按会话分配 ────────────────────────────────────────────────────────────
   const injector = createSessionInjector({
@@ -400,15 +684,26 @@ export function apply(ctx) {
     // ⚠️ **入参是 sessionId，返回的是这个会话实际生效的那张表。**
     //    两层合并：全局默认改写 ← 被「该会话的改写」盖住（按段落名合）。
     //    每次装配都现取 —— 界面上改完，下一个模型步骤就生效，不用重挂 agent。
-    // 总开关：关掉时注入器会清空自己注入的段落（见 session-injection.mjs）
-    isEnabled: () => readState().enabled !== false,
+    // ⚠️ **全局开关不再传给注入器** —— 新模型里「全局关掉」= 全局那条预设
+    //    不生效（`toInjectorState` 把 defaults 算成空数组）。
+    //    注入器的 `isEnabled` 还会顺带**掐掉显式选择**（见它 443 行），
+    //    那在新模型里是错的：全局关掉时用户自己选的预设照样该生效。
+    //    所以这里恒为 true，语义完全由 `global.enabled` 在翻译层表达。
+    isEnabled: () => true,
     getSectionOverrides: (sessionId) => {
       const s = readState();
       return resolveOverrides(s.sectionOverrides, s.sessionSectionOverrides[sessionId]);
     },
   });
-  injector.restore(readState());
+  injector.restore(toInjectorState(readState()));
   activeInjector = injector;
+  // ⚠️ **按 ctx 存一份**（见 `injectorOf`）—— 多个 ctx 各用各的，
+  //    不会出现「后 apply 的那个把前一个顶掉」。
+  try {
+    ctx.__pmInjector = injector;
+  } catch {
+    /* ctx 可能是冻结对象；拿不到就退回模块级那份 */
+  }
   hostCtxRef = ctx;
 
   // 登记插件加载时已存活的顶层会话（官方惯用法：roots() + on 配对）。
@@ -497,8 +792,12 @@ const jsonOf = (body, status) =>
 
       // ── GET state：分配表 + 默认 + 提示词库 + 诊断 ──────────────────
       if (path === STATE_PATH && request.method === "GET") {
-        const snap = injector.snapshot();
-        const items = libraryList();
+        const snap = injectorOf(ctx)?.snapshot() ?? { version: 2 };
+        // ⚠️ **盘上那份才是真相**（预设、全局、会话选择），`injector.snapshot()`
+        //    是注入器内部的 prompt id 视图，跟界面要的东西对不上。
+        //    所以这里读盘，不用 snap.assignments / snap.defaults。
+        const st = readState();
+        const items = libraryList(ctx);
         // 选词面板要按分类分组，所以这份也要带分类表和目录里的自定义分类
         const custom = [...new Set(
           items
@@ -506,24 +805,37 @@ const jsonOf = (body, status) =>
             .filter((c) => c && !CATEGORIES.some((k) => k.id === c)),
         )].sort();
         return jsonOf({
-            assignments: snap.assignments, // { sessionId: [promptId, ...] }
-            defaults: snap.defaults,
             /**
-             * 原生段落的改写表。
+             * 每个会话选的是哪条预设。
              *
-             * ⚠️ **这是全局的，没有会话维度** —— 改一次影响所有会话。
-             *    （用户已确认要改成按会话，那是下一步；现在先在界面上如实暴露。）
-             *
-             * 会话头那个徽章需要它：否则「我改了系统提示词」在界面上
-             * 仍然显示成「未注入」，会让人以为没生效。
+             * ⚠️ **值现在是「预设 id 字符串」或 `null`（显式什么都不挂）。**
+             *    老版本这里是「一堆 prompt id 数组」，读盘时会被迁移成预设
+             *    （见 `migrateLegacyState`）。
              */
+            assignments: st.assignments,
             /**
-             * 原生段落改写 —— **全局默认层**（所有会话都用）。
+             * 全局那份配置：`{ enabled, presetId }`。
+             *
+             * ⚠️ 它**取代**了老版本的两个独立东西（`enabled` 总开关 + `defaults[]`
+             *    默认提示词）—— 现在全局也得指向一条预设，所以只有一处状态，
+             *    不会再出现「开关关着、但里面还设着一堆东西」那种糊里糊涂的情况。
+             */
+            global: st.global,
+            /**
+             * ⚠️ **`enabled` 也单独回一份**（就是 `global.enabled` 的投影）——
+             *    会话头那个徽章和设置页的胶囊都读它。
+             *    漏了的话客户端读到 `undefined`，而 `d.enabled !== false` 恒为 true，
+             *    表现是「开关怎么点都弹回去」（POST 明明成功，紧接着 load() 又读回 true）。
+             *    踩过一次，所以钉住。
+             */
+            enabled: st.global.enabled === true,
+            /** 预设表（界面要用它渲染勾选状态和标签） */
+            presets: st.presets,
+            /**
+             * 原生段落改写 —— **全局层**（所有会话都用）。
              * 按会话的那层在 `/sections` 里回传，会话头徽章用那个。
              */
-            sectionOverrides: readState().sectionOverrides,
-            /** 总开关 —— 设置页的胶囊和会话头徽章都要用 */
-            enabled: readState().enabled !== false,
+            sectionOverrides: st.sectionOverrides,
             version: snap.version,
             prompts: items,
             categories: CATEGORIES,
@@ -729,40 +1041,60 @@ const jsonOf = (body, status) =>
       //
       // ⚠️ **应用预设是「覆盖」不是「合并」** —— 见 presets.mjs 文件头的说明。
       //    合并的话就永远去不掉之前加的提示词，「切换」这个语义就不成立了。
+      // ── /presets：提示词组合（预设）──────────────────────────────────
+      //
+      // 新模型：**预设是配置的唯一载体**。
+      //
+      //     GET  → 预设清单 + 全局那份 + 指定会话那份
+      //     POST → save（直接收内容）/ update / delete / apply
+      //
+      // ⚠️ 跟老版本最大的不同：`save` **直接收 `prompts[]` 和 `sections{}`**，
+      //    不再「把当前那一层的状态存成快照」—— 新模型里没有「当前层状态」
+      //    这个东西了，勾选区编辑的就是预设本身。
       if (path === PRESETS_PATH) {
         const sessionId = url.searchParams.get("session") ?? undefined;
         const hasSession = typeof sessionId === "string" && sessionId.length > 0;
 
+        /** 把预设表变成界面要的列表（带显示标签）。 */
+        const presetList = (s) =>
+          Object.entries(s.presets)
+            .map(([id, p]) => ({
+              id,
+              name: p.name,
+              prompts: p.prompts,
+              sections: p.sections,
+              createdAt: p.createdAt,
+              note: p.note,
+              summary: summarizePreset(p),
+              /** 会话页标签按这个显示（只有系统改动时不显示预设名） */
+              label: presetLabel(p),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
         if (request.method === "GET") {
           const s = readState();
-          const globalLayer = { prompts: s.defaults ?? [], sections: s.sectionOverrides };
-          const sessionLayer = hasSession
-            ? {
-                prompts: Array.isArray(s.assignments[sessionId]) ? s.assignments[sessionId] : [],
-                sections: s.sessionSectionOverrides[sessionId] ?? {},
-              }
-            : null;
-
-          const list = Object.entries(s.presets).map(([id, p]) => ({
-            id,
-            ...p,
-            summary: summarizePreset(p),
-          }));
-          list.sort((a, b) => a.name.localeCompare(b.name));
-
           return jsonOf({
-              presets: list,
-              layers: { global: globalLayer, session: sessionLayer },
-              /**
-               * 当前状态**正好等于**哪条预设 —— 应用完得能看出「现在在哪个预设上」，
-               * 否则用户不知道自己在哪。手改过就是 null，界面显示「已改动」。
-               */
-              matched: {
-                global: matchPreset(globalLayer, s.presets),
-                session: sessionLayer ? matchPreset(sessionLayer, s.presets) : null,
-              },
-              sessionId: hasSession ? sessionId : null,
-            });
+            presets: presetList(s),
+            global: s.global,
+            /** 这个会话选的是哪条（null = 显式不挂；字段不存在 = 跟随全局） */
+            session: hasSession
+              ? {
+                  sessionId,
+                  presetId: Object.prototype.hasOwnProperty.call(s.assignments, sessionId)
+                    ? s.assignments[sessionId]
+                    : undefined,
+                }
+              : null,
+            /** 目前**实际生效**的是哪条（把跟随 / 显式 / 全局都算完） */
+            effective: hasSession
+              ? presetForSession({
+                  sessionId,
+                  assignments: s.assignments,
+                  global: s.global,
+                  presets: s.presets,
+                })
+              : null,
+          });
         }
 
         if (request.method === "POST") {
@@ -775,34 +1107,52 @@ const jsonOf = (body, status) =>
           }
           const action = typeof body?.action === "string" ? body.action : "";
 
-          // ── 保存：把当前这一层存成预设 ──────────────────────────────────
+          /**
+           * 校验并归一化一份「内容」。
+           *
+           * ⚠️ **没给的字段要返回 `undefined`，不能默认成空** —— 调用方靠
+           *    「是不是 undefined」区分「没传，保持原样」和「传了空，就是要清空」。
+           *
+           *    踩过：`update` 只改名（不带 prompts）时，第一版把 prompts 默认成
+           *    `[]`，于是**改个名字就把预设内容清空了**，而且界面看着一切正常。
+           *    （「只改名时内容不许被清空」那条测试当场红。）
+           */
+          const readContent = () => {
+            const out = {};
+            if ("prompts" in (body ?? {})) {
+              const prompts = Array.isArray(body.prompts) ? body.prompts : [];
+              const unknown = prompts.filter((x) => typeof x !== "string" || !libraryOf(ctx).has(x));
+              if (unknown.length > 0) return { error: `提示词库里没有：${unknown.join("、")}` };
+              out.prompts = prompts;
+            }
+            if ("sections" in (body ?? {})) {
+              out.sections =
+                body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)
+                  ? normalizeOverrides(body.sections)
+                  : {};
+            }
+            return out;
+          };
+
+          // ── 保存新预设 ──────────────────────────────────────────────────
           if (action === "save") {
             const name = typeof body?.name === "string" ? body.name.trim() : "";
             if (!name) {
               diag.lastPresets = "missing-name";
               return jsonOf({ error: "缺少预设名字" }, 400);
             }
-            const scope = body?.scope === "session" ? "session" : "global";
-            if (scope === "session" && !hasSession) {
-              diag.lastPresets = "missing-session";
-              return jsonOf({ error: "存会话层预设时必须带 ?session=<sessionId>" }, 400);
+            const content = readContent();
+            if (content.error) {
+              diag.lastPresets = "unknown-prompt";
+              return jsonOf({ error: content.error }, 400);
             }
-
             const s = readState();
-            const layer =
-              scope === "session"
-                ? {
-                    prompts: Array.isArray(s.assignments[sessionId]) ? s.assignments[sessionId] : [],
-                    sections: s.sessionSectionOverrides[sessionId] ?? {},
-                  }
-                : { prompts: s.defaults ?? [], sections: s.sectionOverrides };
-
             const id = presetId(name, Object.keys(s.presets));
             const preset = capturePreset({
               name,
-              scope,
-              prompts: layer.prompts,
-              sections: layer.sections,
+              // 「存」的时候缺字段就是空（新建没给就是空的，语义清楚）
+              prompts: content.prompts ?? [],
+              sections: content.sections ?? {},
               note: typeof body?.note === "string" ? body.note : "",
             });
             writeState({ presets: { ...s.presets, [id]: preset } });
@@ -810,7 +1160,85 @@ const jsonOf = (body, status) =>
             return jsonOf({ ok: true, id, preset });
           }
 
-          // ── 应用：覆盖写回它自己的那一层 ────────────────────────────────
+          // ── 改内容 / 改名 ───────────────────────────────────────────────
+          //
+          // ⚠️ 改名要**把指着它的引用一起改**（全局 + 各会话），否则留下悬挂
+          //    引用 —— 表现是「改完名字，会话页那条预设没了」，而且不报错。
+          if (action === "update") {
+            const id = typeof body?.id === "string" ? body.id : "";
+            const s = readState();
+            const preset = s.presets[id];
+            if (!preset) {
+              diag.lastPresets = "unknown-preset";
+              return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
+            }
+            const content = readContent();
+            if (content.error) {
+              diag.lastPresets = "unknown-prompt";
+              return jsonOf({ error: content.error }, 400);
+            }
+            const name =
+              typeof body?.name === "string" && body.name.trim() ? body.name.trim() : preset.name;
+            const nextId = presetId(name, Object.keys(s.presets).filter((x) => x !== id));
+            const nextPresets = { ...s.presets };
+            delete nextPresets[id];
+            nextPresets[nextId] = {
+              ...preset,
+              name,
+              // ⚠️ 没传就**保持原样**（`undefined` 才会走到 `??` 右边）——
+              //    改成无条件赋值的话，「只改名」会把内容清空。
+              prompts: content.prompts ?? preset.prompts,
+              sections: content.sections ?? preset.sections,
+            };
+            const patch = { presets: nextPresets };
+            if (nextId !== id) {
+              if (s.global.presetId === id) patch.global = { ...s.global, presetId: nextId };
+              const nextAssign = {};
+              let touched = false;
+              for (const [sid, v] of Object.entries(s.assignments)) {
+                if (v === id) {
+                  nextAssign[sid] = nextId;
+                  touched = true;
+                } else nextAssign[sid] = v;
+              }
+              if (touched) patch.assignments = nextAssign;
+            }
+            writeState(patch);
+            syncInjector(ctx);
+            diag.lastPresets = `update:${id}->${nextId}`;
+            return jsonOf({ ok: true, id: nextId, oldId: id, name });
+          }
+
+          // ── 删除 ────────────────────────────────────────────────────────
+          //
+          // ⚠️ 删之前要**把指着它的地方清掉**，否则全局 / 会话会指向一条不存在的
+          //    预设 —— 界面上的表现是「选了预设但什么都不生效」，且没有任何报错。
+          //    清掉之后它们退回「跟随全局 / 原生」。
+          if (action === "delete") {
+            const id = typeof body?.id === "string" ? body.id : "";
+            const s = readState();
+            if (!s.presets[id]) {
+              diag.lastPresets = "unknown-preset";
+              return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
+            }
+            const nextPresets = { ...s.presets };
+            delete nextPresets[id];
+            const patch = { presets: nextPresets };
+            if (s.global.presetId === id) patch.global = { ...s.global, presetId: null };
+            const nextAssign = {};
+            let touched = false;
+            for (const [sid, v] of Object.entries(s.assignments)) {
+              if (v === id) touched = true;
+              else nextAssign[sid] = v;
+            }
+            if (touched) patch.assignments = nextAssign;
+            writeState(patch);
+            syncInjector(ctx);
+            diag.lastPresets = `delete:${id}`;
+            return jsonOf({ ok: true, id });
+          }
+
+          // ── 应用：把某条预设挂到全局或某个会话 ──────────────────────────
           if (action === "apply") {
             const id = typeof body?.id === "string" ? body.id : "";
             const s = readState();
@@ -819,95 +1247,46 @@ const jsonOf = (body, status) =>
               diag.lastPresets = "unknown-preset";
               return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
             }
-            if (preset.scope === "session" && !hasSession) {
+            const target = body?.target === "session" ? "session" : "global";
+            if (target === "session" && !hasSession) {
               diag.lastPresets = "missing-session";
-              return jsonOf({ error: `预设「${preset.name}」是会话层的，应用时必须带 ?session=<sessionId>` }, 400);
+              return jsonOf({ error: "挂到会话上必须带 ?session=<sessionId>" }, 400);
             }
-
-            const plan = planApply(preset);
-            if (plan.scope === "session") {
-              const nextAssign = { ...s.assignments };
-              if (plan.prompts.length > 0) nextAssign[sessionId] = plan.prompts;
-              else delete nextAssign[sessionId]; // 空 = 不注入（不留空数组占位）
-              const nextSec = { ...s.sessionSectionOverrides };
-              if (Object.keys(plan.sections).length > 0) nextSec[sessionId] = plan.sections;
-              else delete nextSec[sessionId];
-              writeState({ assignments: nextAssign, sessionSectionOverrides: nextSec });
-            } else {
-              writeState({ defaults: plan.prompts, sectionOverrides: plan.sections });
-            }
-            // ⚠️ **必须让注入器重新读一遍盘。**
-            //
-            //    注入器内部缓存着 `assignments` 和 `defaults` 两份内存副本，
-            //    它调 `saveState` 时会把这两份**整个写回文件**。
-            //
-            //    上面这段是**绕过注入器直接写文件**的，所以注入器那份就过期了 ——
-            //    之后只要有人动一下任何会话的分配，注入器就拿旧值覆盖回去，
-            //    **用户刚应用的预设会被悄悄改掉**（测试逮到的就是这个：
-            //    应用完预设再改一次分配，defaults 变回了上一个预设的值）。
-            //
-            //    覆盖（sectionOverrides）不受影响：它每次装配现取，没有内存副本。
-            try {
-              injector.restore(readState());
-            } catch {
-              /* 重读失败不影响本次写入本身 */
-            }
-            // 覆盖是每次装配现取的，所以不用重挂 agent。
-
-            diag.lastPresets = `apply:${id}`;
-            return jsonOf({
-                ok: true,
-                id,
-                name: preset.name,
-                scope: plan.scope,
-                applied: { prompts: plan.prompts.length, sections: Object.keys(plan.sections).length },
+            if (target === "global") {
+              // ⚠️ 用户定的规则：全局要生效就得选定预设 —— 所以这里顺带把它打开。
+              //
+              // ⚠️ **段落覆盖也要一起写** —— 预设的两半是「个人提示词」+「系统提示词改动」，
+              //    只写前者的话，预设里改过的段落根本不会生效（而且不报错）。
+              //    全局那份覆盖存在 `sectionOverrides` 里。
+              writeState({
+                global: { ...s.global, presetId: id, enabled: true },
+                sectionOverrides: preset.sections,
               });
-          }
-
-          // ── 改名 ────────────────────────────────────────────────────────
-          //
-          // 界面上预设名是**卡片标题**，旁边一个铅笔图标改它。
-          // 改名要同时换 id（id 是从名字派生的）—— 所以返回新 id，
-          // 客户端得跟着更新「当前选中的是哪条」。
-          if (action === "rename") {
-            const id = typeof body?.id === "string" ? body.id : "";
-            const name = typeof body?.name === "string" ? body.name.trim() : "";
-            if (!name) {
-              diag.lastPresets = "missing-name";
-              return jsonOf({ error: "缺少预设名字" }, 400);
+            } else {
+              writeState({ assignments: { ...s.assignments, [sessionId]: id } });
             }
-            const s = readState();
-            const preset = s.presets[id];
-            if (!preset) {
-              diag.lastPresets = "unknown-preset";
-              return jsonOf({ error: `没有这条预设：${id}` }, 404);
-            }
-            const nextId = presetId(name, Object.keys(s.presets).filter((x) => x !== id));
-            const next = { ...s.presets };
-            delete next[id];
-            next[nextId] = { ...preset, name };
-            writeState({ presets: next });
-            diag.lastPresets = `rename:${id}->${nextId}`;
-            return jsonOf({ ok: true, id: nextId, oldId: id, name });
-          }
-
-          // ── 删除 ────────────────────────────────────────────────────────
-          if (action === "delete") {
-            const id = typeof body?.id === "string" ? body.id : "";
-            const s = readState();
-            if (!s.presets[id]) {
-              diag.lastPresets = "unknown-preset";
-              return jsonOf({ error: `没有这条预设：${id}` }, 404);
-            }
-            const next = { ...s.presets };
-            delete next[id];
-            writeState({ presets: next });
-            diag.lastPresets = `delete:${id}`;
-            return jsonOf({ ok: true, id });
+            syncInjector(ctx);
+            diag.lastPresets = `apply:${target}:${id}`;
+            return jsonOf({
+              ok: true,
+              id,
+              name: preset.name,
+              target,
+              label: presetLabel(preset),
+              applied: {
+                prompts: preset.prompts.length,
+                sections: Object.keys(preset.sections).length,
+              },
+            });
           }
 
           diag.lastPresets = "bad-action";
-          return jsonOf({ error: `action 必须是 save / apply / rename / delete，收到 ${JSON.stringify(action)}` }, 400);
+          return jsonOf(
+            {
+              error: `action 必须是 save / update / delete / apply，收到 ${JSON.stringify(action)}`,
+            },
+            400,
+          );
         }
       }
 
@@ -927,7 +1306,7 @@ const jsonOf = (body, status) =>
         if (path === RELOAD_PATH && request.method === "POST") {
           let r;
           try {
-            r = library.reload();
+            r = libraryOf(ctx).reload();
           } catch (err) {
             diag.lastPost = "reload-threw";
             return jsonOf({ error: err?.message ?? String(err) }, 500);
@@ -935,119 +1314,177 @@ const jsonOf = (body, status) =>
           diag.reloadCount += 1;
           diag.lastPost = `reload:${r.count}`;
           // 重载后：
-          //   1. 先把引用到「已不存在条目」的分配/默认清掉（否则新会话会静默挂空）
+          //   1. 先把引用到「已不存在条目」的**预设**清掉
           //   2. 再把其余会话重挂一遍 —— 提示词正文可能变了
-          const pruned = injector.pruneMissing();
-          {
-            const snap = injector.snapshot();
-            for (const sessionId of Object.keys(snap.assignments)) {
-              injector.assign(sessionId, snap.assignments[sessionId]);
-            }
-          }
-          return jsonOf({ count: r.count, errors: r.errors, prompts: libraryList(), pruned });
+          //
+          // ⚠️ 顺序要紧：**先清预设再 sync**。反过来的话，`syncInjector()` 会
+          //    按还带着幽灵 id 的预设去挂，然后又得再来一遍。
+          //    （注入器自己那份 `pruneMissing()` **修不了预设** —— 预设是盘上的
+          //      数据，它只按 prompt id 建模。见 `prunePresets` 的注释。）
+          const pruned = prunePresets((id) => libraryOf(ctx).has(id));
+          syncInjector(ctx);
+          return jsonOf({ count: r.count, errors: r.errors, prompts: libraryList(ctx), pruned });
         }
 
         // ── POST assign：给会话指定提示词（数组）────────────────────────
+        // ── POST assign：给某个会话选一条预设 ──────────────────────────
+        //
+        // ⚠️ **收的是预设 id，不是一堆 prompt id** —— 新模型里预设是唯一载体，
+        //    想挂提示词必须先存成预设。老客户端传 `promptIds` 会明确报错，
+        //    而不是被悄悄当成预设 id（那会变成「指向不存在的预设」）。
+        //
+        //      presetId: "写代码"  → 这个会话用这条预设
+        //      presetId: null      → 显式什么都不挂（压过全局）
+        //      （不传 presetId 字段 → 400；想「跟随全局」就删掉这条记录）
         if (path === ASSIGN_PATH && request.method === "POST") {
           let body;
           try {
             body = await request.json();
           } catch {
             diag.lastPost = "bad-json";
-            return new Response("Bad JSON", { status: 400 });
+            return jsonOf({ ok: false, error: "请求体不是合法 JSON" }, 400);
           }
           const sessionId = body?.sessionId;
           if (typeof sessionId !== "string" || !sessionId) {
             diag.lastPost = "missing-sessionId";
-            return new Response("sessionId required", { status: 400 });
+            return jsonOf({ ok: false, error: "缺少 sessionId" }, 400);
           }
 
+          // 老客户端的调用方式：明确说出来，别让人猜
+          if ("promptIds" in (body ?? {}) || "promptId" in (body ?? {})) {
+            diag.lastPost = "legacy-promptIds";
+            return jsonOf(
+              {
+                ok: false,
+                outcome: "preset-required",
+                error:
+                  "现在要选提示词组合（预设），不再直接收提示词 id。" +
+                  "先把组合存成预设，再传 presetId。",
+              },
+              400,
+            );
+          }
+
+          if (!("presetId" in (body ?? {}))) {
+            diag.lastPost = "missing-presetId";
+            return jsonOf({ ok: false, error: "缺少 presetId" }, 400);
+          }
+          const presetId = body.presetId;
+          if (presetId !== null && (typeof presetId !== "string" || !presetId)) {
+            diag.lastPost = "bad-presetId";
+            return jsonOf({ ok: false, error: "presetId 要么是预设名，要么是 null" }, 400);
+          }
+
+          const before = readState();
+          if (typeof presetId === "string" && !before.presets[presetId]) {
+            diag.lastPost = "unknown-preset";
+            return jsonOf(
+              {
+                ok: false,
+                outcome: "unknown-preset",
+                error: `没有这条预设：${presetId}`,
+                known: Object.keys(before.presets),
+              },
+              400,
+            );
+          }
+
+          // 会话存不存在：宽松处理 —— 「还没建出来的新会话」也要能预先选，
+          // 所以只挡**明确判定为不存在**的（`reject` 那条）。
           const verdict = classifySession(ctx, sessionId);
           diag.lastSessionCheck = verdict;
           if (verdict === "reject") {
             diag.lastPost = "unknown-session";
-            return new Response("unknown session", { status: 404 });
+            return jsonOf({ ok: false, error: "会话不存在" }, 404);
           }
 
-          // 三种输入形态：
-          //   promptIds: null       → 清除指定，回落到全局默认
-          //   promptIds: []         → 显式不注入
-          //   promptIds: ["a","b"]  → 挂这两条
-          // 兼容旧的 promptId: "a" / promptId: "none"
-          let promptIds;
-          if ("promptIds" in (body ?? {})) {
-            promptIds = body.promptIds === null ? null : body.promptIds;
-            if (promptIds !== null && !Array.isArray(promptIds)) {
-              diag.lastPost = "bad-promptIds";
-              return new Response("promptIds must be an array or null", { status: 400 });
-            }
-          } else if (typeof body?.promptId === "string") {
-            promptIds = body.promptId === "none" ? [] : [body.promptId];
-          } else {
-            diag.lastPost = "missing-promptIds";
-            return new Response("promptIds required", { status: 400 });
-          }
-
-          // 库里不存在的 id 不进状态（避免留下永远挂不上的幽灵记录）
-          if (Array.isArray(promptIds)) {
-            const unknown = promptIds.filter((id) => typeof id !== "string" || !library.has(id));
-            if (unknown.length > 0) {
-              diag.lastPost = "unknown-prompt";
-              return jsonOf({
-                  ok: false,
-                  outcome: "unknown-prompt",
-                  error: `提示词库里没有：${unknown.join("、")}`,
-                  prompts: libraryList(),
-                }, 400);
-            }
-          }
-
-          const result = injector.assign(sessionId, promptIds);
+          const nextAssign = { ...before.assignments };
+          if (presetId === null) nextAssign[sessionId] = null;
+          else nextAssign[sessionId] = presetId;
+          writeState({ assignments: nextAssign });
+          syncInjector(ctx);
           diag.assignCount += 1;
-          diag.lastPost = `assign:${Array.isArray(promptIds) ? promptIds.join(",") || "(none)" : "default"}`;
-          // 组合非法是一个**业务错误**：400，让界面直接把原因显示出来
-          const status = result.ok ? 200 : 400;
-          return Response.json({ ...result, sessionCheck: verdict }, { status, headers: jsonHeaders });
+          diag.lastPost = `assign:${presetId ?? "(none)"}`;
+          return jsonOf({
+            ok: true,
+            presetId: presetId ?? null,
+            assignments: nextAssign,
+            sessionCheck: verdict,
+          });
         }
 
-        // ── GET/POST defaults：全局默认（新会话用）──────────────────────
-        if (path === DEFAULTS_PATH) {
+        // ── GET/POST global：全局那份配置（开关 + 用哪条预设）──────────
+        if (path === GLOBAL_PATH) {
           if (request.method === "GET") {
-            return jsonOf({ defaults: injector.getDefaults() });
+            return jsonOf({ global: readState().global });
           }
           let body;
           try {
             body = await request.json();
           } catch {
             diag.lastPost = "bad-json";
-            return new Response("Bad JSON", { status: 400 });
+            return jsonOf({ ok: false, error: "请求体不是合法 JSON" }, 400);
           }
-          const ids = body?.promptIds;
-          if (!Array.isArray(ids)) {
-            diag.lastPost = "bad-defaults";
-            return new Response("promptIds must be an array", { status: 400 });
+          const s = readState();
+          const next = { ...s.global };
+          if ("enabled" in (body ?? {})) next.enabled = body.enabled === true;
+          if ("presetId" in (body ?? {})) {
+            next.presetId =
+              typeof body.presetId === "string" && body.presetId ? body.presetId : null;
           }
-          const unknown = ids.filter((id) => typeof id !== "string" || !library.has(id));
-          if (unknown.length > 0) {
-            diag.lastPost = "unknown-prompt";
-            return jsonOf({
+          // ⚠️ 用户定的规则：**要开全局注入，必须先选定一个预设。**
+          //    没选就开 → 400，并且不改动任何东西（别默默开一个什么都不注入的全局）。
+          if (next.enabled === true && !next.presetId) {
+            diag.lastPost = "global-needs-preset";
+            return jsonOf(
+              {
                 ok: false,
-                outcome: "unknown-prompt",
-                error: `提示词库里没有：${unknown.join("、")}`,
-                defaults: injector.getDefaults(),
-              }, 400);
+                outcome: "preset-required",
+                error: "要开启全局注入，得先选一个预设",
+                known: Object.keys(s.presets),
+              },
+              400,
+            );
           }
-          const result = injector.setDefaults(ids);
-          diag.lastPost = `defaults:${ids.join(",") || "(none)"}`;
-          return Response.json(
-            { ...result, defaults: injector.getDefaults() },
-            { status: result.ok ? 200 : 400, headers: jsonHeaders },
+          if (next.presetId && !s.presets[next.presetId]) {
+            diag.lastPost = "unknown-preset";
+            return jsonOf(
+              { ok: false, outcome: "unknown-preset", error: `没有这条预设：${next.presetId}` },
+              400,
+            );
+          }
+          writeState({ global: next });
+          syncInjector(ctx);
+          diag.lastToggle = next.enabled ? "enabled" : "disabled";
+          return jsonOf({ ok: true, global: readState().global });
+        }
+
+        // ── /defaults 已退役 ────────────────────────────────────────────────
+        //
+        // ⚠️ 老路由收的是「一堆裸 prompt id」，新模型里全局也得指向一条预设，
+        //    所以它没法再正确工作。**留着但不干活**，明确告诉调用方去哪儿：
+        //    删掉整条的话老客户端会拿到 404，分不清「路由没了」和「打错了」。
+        if (path === DEFAULTS_PATH) {
+          diag.lastPost = "defaults-retired";
+          return jsonOf(
+            {
+              ok: false,
+              outcome: "gone",
+              error:
+                "`/defaults` 已换成 `/global` —— 现在全局要指向一条预设，" +
+                "不再直接收提示词 id。",
+              use: GLOBAL_PATH,
+            },
+            410, // Gone：比 404 说得清楚
           );
         }
 
         // ── GET edit：编辑器要的**带正文**清单（POST 见下）─────────────
         if (path === EDIT_PATH && request.method === "GET") {
-          const items = library.raw().map((entry) => {
+          // ⚠️ 读盘（真相来源），不要绕 injector —— 它内部是 prompt id 视图，
+          //    给不出「预设表 + 全局指向哪条」这两样编辑器要的东西。
+          const stEdit = readState();
+          const items = libraryOf(ctx).raw().map((entry) => {
             const resolved = entry && typeof entry.id === "string" ? library.resolve(entry.id) : undefined;
             return {
               id: entry?.id ?? null,
@@ -1073,15 +1510,23 @@ const jsonOf = (body, status) =>
               // 内置分类表（含建议 order）+ 目录里已存在的自定义分类
               categories: CATEGORIES,
               customCategories: custom,
-              // 当前全局默认 —— 编辑器要显示勾选状态
-              defaults: injector.getDefaults(),
-              // ⚠️ 总开关的状态必须在这里回报。
-              //    漏了它编辑器读到 `undefined`，而 `d.enabled !== false` 恒为 true ——
-              //    表现是「胶囊怎么点都弹回去」：拨完 POST 成功，紧接着 load()
-              //    又把它读回 true。
-              //    取值用 readState()（真相来源），不要绕 injector ——
-              //    测试里的假注入器没有 isEnabled，会直接炸。
-              enabled: readState().enabled !== false,
+              /**
+               * ⚠️ **预设表和全局那份必须在这里回报。**
+               *
+               *    编辑器要拿它们渲染「勾了哪几条、改了哪几段、全局用哪条」。
+               *    老版本这里是 `defaults` + `enabled` 两个字段 —— 新模型下
+               *    `defaults` 没了（全局指向预设）、`enabled` 挪进了 `global`。
+               */
+              presets: stEdit.presets,
+              global: stEdit.global,
+              /**
+               * ⚠️ **`enabled` 也要单独回一份**（取 `global.enabled`）——
+               *    设置页那个「全局注入」开关的状态徽章要用它。
+               *    漏了的话它读到 `undefined`，而 `d.enabled !== false` 恒为 true，
+               *    表现是「拨完 POST 成功，紧接着 load() 又把它读回 true、弹回去」。
+               *    （踩过。值取盘上的，不要绕 injector。）
+               */
+              enabled: stEdit.global.enabled === true,
               catalogPath: CATALOG_PATH,
               promptsDir: PROMPTS_DIR,
               libraryErrors: libraryErrors(),
@@ -1105,9 +1550,9 @@ const jsonOf = (body, status) =>
 
           let result;
           if (action === "upsert") {
-            result = store.save(body?.prompt);
+            result = storeOf(ctx).save(body?.prompt);
           } else {
-            result = store.remove(body?.id);
+            result = storeOf(ctx).remove(body?.id);
           }
 
           if (!result.ok) {
@@ -1116,30 +1561,52 @@ const jsonOf = (body, status) =>
           }
 
           // 写完立刻重载，让改动马上生效
-          library.reload();
-          // 删条目 / 改 id 会让别处的引用变成幽灵，先清掉再重挂
-          const pruned = injector.pruneMissing();
+          libraryOf(ctx).reload();
+          // 删条目 / 改 id 会让别处的引用变成幽灵。
+          //
+          // ⚠️ **两层都要清，而且顺序不能反**：提示词 ← 预设 ← 全局/会话。
+          //
+          //     ① 先 `injector.pruneMissing()` —— 它按**当前预设**算出每个会话
+          //        实际还剩什么，顺手把自己那份快照 `persist()` 回盘。
+          //     ② 再 `prunePresets()` —— 把预设里已经不存在的提示词 id 剔掉。
+          //     ③ 最后 `syncInjector()` —— 按清干净的预设重挂。
+          //
+          //     **反过来会出事**（真踩到）：先清预设的话，注入器还是按旧预设翻译，
+          //     它 `persist()` 回来的 `assignments` 跟盘上对不上；而 `writeState`
+          //     会把注入器传回来的那份**当成权威**，于是 `assignments` 被整个写成
+          //     空对象 —— 表现是「删一条提示词，所有会话的预设选择全没了」。
+          //     探针抓到的原话：`传入assignments=有 盘上={"session-live-0001":"含弃用项"} 合并后={}`。
+          const pruned = {};
           {
-            const snap = injector.snapshot();
-            for (const sessionId of Object.keys(snap.assignments)) {
-              injector.assign(sessionId, snap.assignments[sessionId]);
-            }
+            const inner = injectorOf(ctx)?.pruneMissing() ?? {};
+            if (inner && Object.keys(inner.defaults ?? {}).length) pruned.defaults = inner.defaults;
+            if (inner && Object.keys(inner.sessions ?? {}).length) pruned.sessions = inner.sessions;
           }
+          // ② 清预设里的幽灵 id（第二层引用）
+          Object.assign(pruned, prunePresets((id) => libraryOf(ctx).has(id)));
+          // ③ 按清干净的预设重挂
+          syncInjector(ctx);
           diag.editCount = (diag.editCount ?? 0) + 1;
           diag.lastPost = `edit:${action}:${result.id}`;
-          return jsonOf({ ...result, pruned, prompts: libraryList(), libraryErrors: libraryErrors() });
+          return jsonOf({ ...result, pruned, prompts: libraryList(ctx), libraryErrors: libraryErrors() });
         }
 
         return new Response("Not Found", { status: 404 });
       };
 
-    // 四条路径逐个注册（原因见上面那段注释：path 必须是单个字符串）
+    // 逐个路径注册（原因见上面那段注释：path 必须是单个字符串）
+    //
+    // ⚠️ **加了新路由必须往这个列表里加一条** —— 漏了的表现是那个接口 404，
+    //    而且请求会落到默认处理，看不出是「忘了注册」还是「打错了」。
+    //    （`/state` 的 GET 里回传 `global`，但 `/global` 是**独立的一条路由**，
+    //      两者不是一回事，别只加前者。）
     const disposers = [
       STATE_PATH,
       ASSIGN_PATH,
       PREVIEW_PATH,
       RELOAD_PATH,
       DEFAULTS_PATH,
+      GLOBAL_PATH,
       EDIT_PATH,
       SECTIONS_PATH,
       PRESETS_PATH,

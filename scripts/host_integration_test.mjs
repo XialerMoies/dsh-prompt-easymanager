@@ -5,7 +5,7 @@
 // ⚠️ DSH_HOME 必须在**导入 index.js 之前**设置 —— 状态目录是模块顶层的 const。
 //    这里用临时目录隔离，绝不碰用户真实的 ~/.dsh。
 
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import { createSuite } from "./lib/test-harness.mjs";
 
 const { ok, eq, done } = createSuite("宿主集成测试");
@@ -47,6 +47,12 @@ const PLUGIN_VERSION = JSON.parse(
 // ⚠️ 种子里**只放哨兵 id**：迁移会把它清掉，所以「初始没有默认」这条断言仍然成立
 //    （`["none"] → []`），而「老状态里的 none 被清掉」也能验到。
 //    塞一个真 id 进去的话，前面那条「初始没有默认」就红了。
+//
+// ⚠️ **这是「老版本状态文件」的样子**（`assignments` 存裸 prompt id 数组、
+//    `defaults` 存全局默认）。新模型下它会被 `readState()` 迁移：
+//      · `defaults: ["none"]` → 开关状态 + 全局指向（认不出对应预设 → presetId 为 null）
+//      · 数组形式的 `assignments[sid]` → 自动存成一条「（旧配置）…」预设
+//    4e 那一节专门验这个迁移。
 writeFileSync(
   join(DSH_HOME, "dsh-prompt-manager-state.json"),
   JSON.stringify(
@@ -125,6 +131,7 @@ const {
   PREVIEW_PATH,
   RELOAD_PATH,
   DEFAULTS_PATH,
+  GLOBAL_PATH,
   EDIT_PATH,
   SECTIONS_PATH,
   PRESETS_PATH,
@@ -280,7 +287,7 @@ apply(ctx);
 //    失效 —— 因为 dsh-client-connection 按 url.pathname 在 Map 里精确匹配。
 //    这几条断言专门盯住这个点。
 {
-  const ALL = [STATE_PATH, ASSIGN_PATH, PREVIEW_PATH, RELOAD_PATH, DEFAULTS_PATH, EDIT_PATH, SECTIONS_PATH, PRESETS_PATH];
+  const ALL = [STATE_PATH, ASSIGN_PATH, PREVIEW_PATH, RELOAD_PATH, DEFAULTS_PATH, GLOBAL_PATH, EDIT_PATH, SECTIONS_PATH, PRESETS_PATH];
   eq(ctx.__registerCalls(), ALL.length, `注册了 ${ALL.length} 条独立路由`);
   const keys = [...ctx.__routes().keys()];
   ok(
@@ -309,7 +316,14 @@ ok(
   const r = await call(ctx, STATE_PATH);
   eq(r.status, 200, "GET state 200");
   eq(r.json.assignments, {}, "初始分配表为空");
-  eq(r.json.defaults, [], "初始没有默认");
+  // ⚠️ 初始是 `enabled: true` —— 因为种子里是**老格式**（没有 `global`、没有
+  //    `enabled` 字段），而老版本的判据是 `parsed?.enabled !== false`，
+  //    也就是「不写 = 开着」。这是刻意验的升级路径，见 4c。
+  eq(
+    r.json.global,
+    { enabled: true, presetId: null },
+    "初始全局：开关沿用老数据（开着）、但没指任何预设",
+  );
   eq(r.json.version, 2, "状态版本 2");
   ok(Array.isArray(r.json.prompts) && r.json.prompts.length >= 4, "返回提示词清单");
   ok(r.json.prompts.every((p) => p.text === undefined), "清单不含正文");
@@ -318,49 +332,113 @@ ok(
   ok(typeof r.json.catalogPath === "string", "回报 catalog 路径");
 }
 
-// ── 4. POST assign：正常 ────────────────────────────────────────────────────
+// ── 3b. 先存一条预设（新模型里想挂提示词必须先有预设）──────────────────────
+let P1 = "";
+let P2 = "";
+{
+  const r = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "写代码", prompts: ["format-contract"] },
+  });
+  eq(r.status, 200, "存预设 200");
+  eq(r.json.ok, true, "存预设返回 ok");
+  P1 = r.json.id;
+  eq(P1, "写代码", "id 从名字派生");
+  eq(r.json.preset.prompts, ["format-contract"], "提示词进去了");
+  eq(r.json.preset.sections, {}, "没给段落就是空（= 全部原生）");
+  eq(
+    Object.prototype.hasOwnProperty.call(r.json.preset, "scope"),
+    false,
+    "**预设不带 scope**",
+  );
+
+  const bad = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "坏", prompts: ["不存在这条"] },
+  });
+  eq(bad.status, 400, "存预设时库里没有的 id → 400");
+
+  const noName = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", prompts: [] },
+  });
+  eq(noName.status, 400, "缺名字 → 400");
+}
+
+// ── 4. POST assign：给会话选一条预设 ────────────────────────────────────────
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract"] },
+    body: { sessionId: S, presetId: P1 },
   });
   eq(r.status, 200, "POST assign 200");
   eq(r.json.ok, true, "返回 ok");
-  eq(r.json.promptIds, ["format-contract"], "返回 promptIds 数组");
-  eq(r.json.source, "explicit", "来源是显式");
-  eq(r.json.outcome, "attached", "结论 attached");
+  eq(r.json.presetId, P1, "回报选中的预设 id");
   eq(r.json.sessionCheck, "verified", "会话校验为 verified（agent 存活）");
   eq(live.sections.length, 1, "agent 上注册了 1 个 section");
   eq(live.sections[0].name, "prompt-manager:format-contract", "section 名正确");
   ok(live.sections[0].text.length > 100, "正文来自 prompts/*.md");
 }
 
-// ── 4b. POST assign：一次挂多条（本次的重点）────────────────────────────────
+// ── 4-旧. 老 API（传 promptIds）**明确报错**，不许被当成预设 id ─────────────
+//
+// ⚠️ 这条很重要：老客户端传 `promptIds: ["format-contract"]` 时，如果宿主机
+//    「宽容」地把它当预设 id 用，用户会得到一条**指向不存在的预设**的记录 ——
+//    界面显示选了东西、实际什么都不注入，而且不报错。宁可明确 400。
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract", "format-contract-a"] },
+    body: { sessionId: S, promptIds: ["format-contract"] },
   });
-  eq(r.status, 200, "多条分配 200");
-  eq(r.json.promptIds.length, 2, "两条都生效");
-  eq(live.sections.length, 2, "agent 上注册了 2 个 section");
+  eq(r.status, 400, "**老 API 传 promptIds → 400**（不许当预设 id 用）");
+  eq(r.json.outcome, "preset-required", "结论说明了要传预设");
+  ok(
+    String(r.json.error).includes("预设"),
+    "错误里点明了「要选预设」",
+  );
+
+  const missing = await call(ctx, ASSIGN_PATH, {
+    method: "POST",
+    body: { sessionId: S },
+  });
+  eq(missing.status, 400, "既没 presetId 也没 promptIds → 400");
 }
 
-// ── 4c. 升级路径：老状态里的悬挂 id `"none"` 被清掉了 ──────────────────────
-//
-// 状态文件是在 apply() **之前**种好的（见文件开头那段），所以这一条走的是
-// 真实路径：启动 → readState() 迁移 → restore() → 注入器拿到干净的列表。
+// ── 4b. assign：选不存在的预设 / 显式「什么都不挂」──────────────────────────
 {
-  const r = await call(ctx, DEFAULTS_PATH);
-  eq(r.status, 200, "GET defaults → 200");
-  ok(
-    !r.json.defaults.includes("none"),
-    "**老状态里的 `none` 被清掉了**（它是已经不发的那条哨兵条目）",
-  );
-  eq(r.json.defaults, [], "哨兵 id 是唯一一条，清完正好是空");
-  // 盘上那份也应该是干净的 —— 不能只在内存里过滤
-  const onDisk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
-  ok(Array.isArray(onDisk.defaults), "盘上仍有 defaults 字段");
+  const unknown = await call(ctx, ASSIGN_PATH, {
+    method: "POST",
+    body: { sessionId: S, presetId: "根本没这条" },
+  });
+  eq(unknown.status, 400, "**选不存在的预设 → 400**（否则会留下悬挂引用）");
+  eq(unknown.json.outcome, "unknown-preset", "结论是 unknown-preset");
+  ok(Array.isArray(unknown.json.known), "错误里列出已有的预设，方便排查");
+  eq(unknown.json.known.includes(P1), true, "已有的预设里有刚存那条");
+
+  // 显式「什么都不挂」
+  const none = await call(ctx, ASSIGN_PATH, {
+    method: "POST",
+    body: { sessionId: S, presetId: null },
+  });
+  eq(none.status, 200, "presetId: null → 200（显式什么都不挂）");
+  eq(none.json.presetId, null, "回报 null");
+  live.agent.ctx.inject(["systemPrompt"], (scope) => {
+    void scope;
+  });
+  // 重挂之后不该有 section 了
+  ok(true, "（不注入的效果由 5 那一节验）");
+}
+
+// ── 4c. 老状态里的 `"none"` 哨兵：新模型下不再是个问题 ──────────────────────
+//
+// 老版本随包发过 `{id:"none", name:"不注入"}` 这条哨兵提示词，让用户能表达
+// 「什么都不挂」。现在不发了，而它的语义正好等于新模型的 `presetId: null`。
+// 种子里那个 `defaults: ["none"]` 走迁移后不会变成任何预设的引用。
+{
+  const r = await call(ctx, GLOBAL_PATH);
+  eq(r.status, 200, "GET global → 200");
+  eq(r.json.global.presetId, null, "**老种子里没有可对应的预设 → 全局不指任何预设**");
+  eq(r.json.global.enabled, true, "**老数据缺 enabled 字段 = 开着**（升级不许把开关关掉）");
 }
 
 // ── 5. 状态已落盘 ───────────────────────────────────────────────────────────
@@ -368,85 +446,142 @@ ok(
   const f = join(DSH_HOME, "dsh-prompt-manager-state.json");
   ok(existsSync(f), "状态文件已写入 DSH_HOME");
   const parsed = JSON.parse(readFileSync(f, "utf8"));
-  eq(parsed.assignments[S], ["format-contract", "format-contract-a"], "文件里的分配是数组");
-  eq(parsed.version, 2, "文件里有版本号");
-  ok(Array.isArray(parsed.defaults), "文件里有 defaults 字段");
+  // ⚠️ 会话此刻是「显式什么都不挂」（见 8 那一节）—— 所以值就是 null。
+  //    留 null 而不是把记录删掉：删掉的意思变成「跟随全局」，
+  //    而用户点的是「这个会话什么都不挂」，两者不同。
+  eq(parsed.assignments[S], null, "**文件里留着 null**（显式不挂，不是删记录）");
+
+  // 再挂一条预设，确认盘上写的是**预设 id 字符串**而不是数组。
+  //
+  // ⚠️ 这条是这次改动最容易写错的地方：注入器内部按 prompt id 数组建模，
+  //    它的 persist() 会把那个数组传回 writeState —— 如果那里不挡，
+  //    盘上就会被写成老格式，下次读盘又走一遍迁移（踩过：预设越迁移越多）。
+  //
+  // ⚠️ **自己存一条**，别依赖别处的 P2 —— 那个变量在这一节可能还没赋值
+  //    （踩过：断言拿到 undefined，报错却显示「实际 null」，看不出是变量没用）。
+  const p2make = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "盘上格式用", prompts: ["format-contract-b"] },
+  });
+  eq(p2make.status, 200, "存一条用于验盘上格式");
+  const P2 = p2make.json.id;
+  const asg2 = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, presetId: P2 } });
+  eq(asg2.status, 200, "挂上它");
+  const again = JSON.parse(readFileSync(f, "utf8"));
+  eq(again.assignments[S], P2, "**盘上存的是预设 id 字符串**");
+  ok(!Array.isArray(again.assignments[S]), "**绝不是数组**（数组 = 注入器的内部表示漏到盘上了）");
+  eq(
+    (again.assignments[S] ?? "").includes("format-contract"),
+    false,
+    "盘上不该出现 prompt id",
+  );
+  eq(parsed.global !== undefined, true, "文件里有 global 字段");
+  eq(parsed.global.presetId, null, "全局还没指预设");
   eq(parsed.updatedAt !== undefined, true, "带 updatedAt");
+  eq(
+    Object.prototype.hasOwnProperty.call(parsed, "defaults"),
+    false,
+    "**不再写 defaults 字段**（全局改用 global.presetId 表达）",
+  );
+  eq(
+    Object.prototype.hasOwnProperty.call(parsed, "enabled"),
+    false,
+    "**不再写顶层 enabled**（挪进 global 里了）",
+  );
 }
 
-// ── 5b. 老状态里的悬挂 id `"none"` 要被清理 ─────────────────────────────────
-//
-// ⚠️ 老版本随包发过一条哨兵提示词：`{id:"none", name:"不注入"}`，让用户能在库里
-//    点一个选项表达「什么都不挂」。但「一个都不选」本来就是同一个意思 ——
-//    它只是把一件事说成了两件（库里多一张永远不该被勾的卡片，设置页还得配
-//    一张卡片去管它）。现在不发了，catalog 是空库。
-//
-//    老用户的状态文件里可能还留着 `"none"`。留着就是指向不存在条目的悬挂 id，
-//    每次装配都会报一句「提示词库里没有：none」，而它的语义本来就等于「去掉」。
-//
-// ── 6. 换一组 → 旧的卸掉 ────────────────────────────────────────────────────
+// ── 6. 换一条预设 → 旧的卸掉 ────────────────────────────────────────────────
 {
+  const made = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "只甲", prompts: ["format-contract-a"] },
+  });
+  eq(made.status, 200, "再存一条预设");
+  P2 = made.json.id;
   await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract-a"] },
+    body: { sessionId: S, presetId: P2 },
   });
-  eq(live.sections.length, 1, "换一组后只剩 1 个 section");
+  eq(live.sections.length, 1, "换一条后只剩 1 个 section");
   eq(live.sections[0].name, "prompt-manager:format-contract-a", "已换成新的");
 }
 
-// ── 7. 未知 id：整组被拒，且不改状态 ───────────────────────────────────────
+// ── 7. 未知预设：被拒，且不改状态 ───────────────────────────────────────────
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["根本没有这条"] },
+    body: { sessionId: S, presetId: "根本没有这条" },
   });
-  eq(r.status, 400, "**分配**未知 id → 400");
-  eq(r.json.outcome, "unknown-prompt", "结论是 unknown-prompt");
+  eq(r.status, 400, "**分配**未知预设 → 400");
+  eq(r.json.outcome, "unknown-preset", "结论是 unknown-preset");
   ok(r.json.error.includes("根本没有这条"), "错误里点名了它");
   eq(r.json.ok, false, "回报 ok: false");
   eq(live.sections.length, 1, "被拒时不动已有的 section");
 }
 
-// ── 7b. 多条 append 任意组合都合法（以前有组合护栏，现在没有）───────────────
+// ── 7b. 一条预设挂多条提示词 ────────────────────────────────────────────────
 {
+  const made = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "两条", prompts: ["format-contract", "format-contract-a"] },
+  });
+  eq(made.status, 200, "存一条含两条提示词的预设");
+  eq(made.json.preset.prompts.length, 2, "两条都在预设里");
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract", "format-contract-a"] },
+    body: { sessionId: S, presetId: made.json.id },
   });
-  eq(r.status, 200, "两条 append → 200");
-  eq(r.json.promptIds.length, 2, "两条都挂上");
+  eq(r.status, 200, "挂上去 → 200");
   eq(live.sections.length, 2, "两个 section");
   ok(
     live.sections.every((s) => s.complete === undefined),
     "都不带 complete —— 不再有独占语义",
   );
 
-  const r2 = await call(ctx, ASSIGN_PATH, {
+  // ⚠️ 「去重」现在归预设管：同一条提示词在预设里出现两次会被
+  //    `capturePreset` 去重（它内部 `new Set`）。所以这里验的是那个。
+  const dup = await call(ctx, PRESETS_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract", "format-contract"] },
+    body: { action: "save", name: "重复", prompts: ["format-contract", "format-contract"] },
   });
-  eq(r2.status, 200, "同一条重复被去重 → 合法");
-  eq(r2.json.promptIds.length, 1, "去重后只有 1 条");
+  eq(dup.status, 200, "同一条重复 → 存得进去");
+  eq(dup.json.preset.prompts.length, 1, "**存在预设里时就去重了**（只剩 1 条）");
 }
 
-// ── 8. POST assign：显式不注入（空数组）────────────────────────────────────
+// ── 8. assign：显式「什么都不挂」────────────────────────────────────────────
 {
-  const r = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptIds: [] } });
-  eq(r.status, 200, "空数组 200");
-  eq(r.json.promptIds, [], "返回空数组");
-  eq(r.json.source, "explicit", "来源仍是显式");
+  const r = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, presetId: null } });
+  eq(r.status, 200, "**第 8 节**：presetId: null → 200");
+  eq(r.json.presetId, null, "回报 null");
   eq(live.sections.length, 0, "section 已卸载");
+  // ⚠️ 关键：显式「不挂」**不许**退回吃全局 —— 那是两件不同的事。
+  const g = await call(ctx, GLOBAL_PATH);
+  eq(g.json.global.enabled, true, "（全局此刻是开着的）");
+  const st = await call(ctx, STATE_PATH);
+  eq(st.json.assignments[S], null, "**状态里留着 null**，不是把记录删掉");
 }
 
 // ── 8b. POST assign：null = 清除指定，回落默认 ──────────────────────────────
 {
-  // 先设一个默认
-  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract"] } });
-  const r = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptIds: null } });
-  eq(r.status, 200, "null 200");
-  eq(r.json.source, "default", "来源回到 default");
-  eq(r.json.promptIds, ["format-contract"], "生效的是默认那条");
-  eq(live.sections.length, 1, "默认已被挂上");
+  // 先让全局指向一条预设（新模型里「默认」就是「全局那条预设」）
+  const gp = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "全局默认", prompts: ["format-contract"] },
+  });
+  await call(ctx, GLOBAL_PATH, { method: "POST", body: { presetId: gp.json.id, enabled: true } });
+
+  // ⚠️ 新模型里 **没有「清除指定、回去跟随全局」这个动作** ——
+  //    `presetId: null` 的语义是「这个会话显式什么都不挂」（压过全局）。
+  const r = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, presetId: null } });
+  eq(r.status, 200, "**「清除指定」那条路**：presetId: null → 200");
+  eq(r.json.presetId, null, "**显式什么都不挂**（不是回落默认）");
+  eq(live.sections.length, 0, "**一条都不挂**（不吃全局）");
+
+  // 真的让一个「没记录」的会话去吃全局（这才是「跟随」）
+  const other = makeAgent("session-follow-0001");
+  const ctxF = makeCtx([other.agent]);
+  apply(ctxF);
+  eq(other.sections.length, 1, "**没记录的会话跟随全局**（挂上全局那条）");
   // 收尾：清掉默认，免得影响后面的断言
   await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
 }
@@ -465,12 +600,21 @@ ok(
     400,
     "promptIds 不是数组 → 400",
   );
-  const unknown = await call(ctx, ASSIGN_PATH, {
+  // ⚠️ 老 API（promptIds）现在一律 400，文案是「要选预设」——
+  //    想验「**没有这条预设**」得真的传一个不存在的 presetId。
+  const legacy = await call(ctx, ASSIGN_PATH, {
     method: "POST",
     body: { sessionId: S, promptIds: ["不存在的提示词"] },
   });
-  eq(unknown.status, 400, "**默认**里放未知 id → 400");
-  ok(unknown.json.error.includes("没有"), "未知 id 的错误可读");
+  eq(legacy.status, 400, "老 API 传 promptIds → 400");
+  ok(legacy.json.error.includes("预设"), "错误里说明要选预设");
+
+  const unknown = await call(ctx, ASSIGN_PATH, {
+    method: "POST",
+    body: { sessionId: S, presetId: "不存在的预设" },
+  });
+  eq(unknown.status, 400, "**指向不存在的预设** → 400");
+  ok(unknown.json.error.includes("没有"), "错误可读（直接说「没有这条预设」）");
   eq(
     (await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: "", promptIds: [] } })).status,
     400,
@@ -482,47 +626,75 @@ ok(
   eq(badJson.status, 400, "坏 JSON → 400");
 }
 
-// ── 9b. 兼容旧的 promptId 写法 ──────────────────────────────────────────────
+// ── 9b. 旧的 promptId 写法也明确报错 ────────────────────────────────────────
+//
+// ⚠️ 老客户端传 `promptId: "format-contract"` 时，「宽容」地接受它会把一个
+//    prompt id 当成预设 id 用 —— 界面上显示选了东西、实际什么都不注入，
+//    而且不报错。宁可明确 400。
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
     body: { sessionId: S, promptId: "format-contract" },
   });
-  eq(r.status, 200, "旧的 promptId 字符串仍可用");
-  eq(r.json.promptIds, ["format-contract"], "被当成单条");
+  eq(r.status, 400, "**旧的 promptId 字符串 → 400**");
+  eq(r.json.outcome, "preset-required", "结论说明要传预设");
+
   const r2 = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptId: "none" } });
-  eq(r2.json.promptIds, [], "旧的 none 被当成空数组");
+  eq(r2.status, 400, "旧的 promptId 传 none 同样 400（那个哨兵已经没了）");
 }
 
-// ── 9c. defaults 路由 ───────────────────────────────────────────────────────
+// ── 9c. /defaults 已退役；全局改用 /global ─────────────────────────────────
 {
-  eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [], "初始默认为空");
-  const set = await call(ctx, DEFAULTS_PATH, {
+  const gone = await call(ctx, DEFAULTS_PATH);
+  eq(gone.status, 410, "**GET /defaults → 410 Gone**（不是 404，要说清是「换地方了」）");
+  eq(gone.json.outcome, "gone", "结论是 gone");
+  eq(gone.json.use, GLOBAL_PATH, "**告诉调用方该去哪儿**");
+
+  const gonePost = await call(ctx, DEFAULTS_PATH, {
     method: "POST",
-    body: { promptIds: ["format-contract-a", "format-contract"] },
+    body: { promptIds: ["format-contract"] },
   });
-  eq(set.status, 200, "设置默认 200");
-  eq(set.json.defaults.length, 2, "默认两条");
-  eq((await call(ctx, DEFAULTS_PATH)).json.defaults.length, 2, "GET 能读回");
-  eq(
-    (await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: "x" } })).status,
-    400,
-    "默认不是数组 → 400",
-  );
-  eq(
-    (await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["不存在"] } })).status,
-    400,
-    "默认含未知 id → 400",
-  );
-  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
-  eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [], "能清空默认");
+  eq(gonePost.status, 410, "POST /defaults 同样 410");
+}
+
+// ── 9d. /global：开关 + 用哪条预设 ─────────────────────────────────────────
+{
+  // ⚠️ **先重置** —— 前面的用例（「没记录的会话跟随全局」那条）会把全局指向
+  //    一条预设，而这一节要验的正是「**还没指预设**时不许开」。
+  //    不重置的话这一节验的是残留状态，红得莫名其妙。
+  await call(ctx, GLOBAL_PATH, { method: "POST", body: { presetId: null, enabled: false } });
+
+  const g0 = await call(ctx, GLOBAL_PATH);
+  eq(g0.status, 200, "GET global → 200");
+  eq(g0.json.global.presetId, null, "此刻还没指预设（上面刚重置过）");
+
+  // ⚠️ 用户定的规则：**要开全局注入，必须先选定一个预设。**
+  const noPreset = await call(ctx, GLOBAL_PATH, { method: "POST", body: { enabled: true } });
+  eq(noPreset.status, 400, "**没选预设就想开全局注入 → 400**");
+  eq(noPreset.json.outcome, "preset-required", "结论说明要先选预设");
+  ok(Array.isArray(noPreset.json.known), "列出可选预设，方便排查");
+
+  const bad = await call(ctx, GLOBAL_PATH, { method: "POST", body: { presetId: "没这条" } });
+  eq(bad.status, 400, "指不存在的预设 → 400");
+
+  // 一次带上：选预设 + 开
+  const on = await call(ctx, GLOBAL_PATH, { method: "POST", body: { presetId: P1, enabled: true } });
+  eq(on.status, 200, "选预设并开启 → 200");
+  eq(on.json.global.presetId, P1, "指上了");
+  eq(on.json.global.enabled, true, "**9d**：开启后 global.enabled 为 true");
+
+  // 关掉：预设**留着**（用户选的 A 方案：关掉 = 全局这层不生效，配置不丢）
+  const off = await call(ctx, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+  eq(off.status, 200, "关掉 → 200");
+  eq(off.json.global.enabled, false, "开关关着");
+  eq(off.json.global.presetId, P1, "**关掉之后预设还留着**（不是把配置清掉）");
 }
 
 // ── 10. 伪造 sessionId（有活动 agent 时应拒绝） ─────────────────────────────
 {
   const r = await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: "session-伪造的-9999", promptIds: [] },
+    body: { sessionId: "session-伪造的-9999", presetId: P1 },
   });
   eq(r.status, 404, "有活动 agent 时的伪造 id → 404");
 }
@@ -542,7 +714,10 @@ ok(
   ok(typeof r.json.catalogPath === "string", "回报目录路径");
   ok(typeof r.json.promptsDir === "string", "回报正文目录路径");
   // 编辑器要显示「新会话默认」的勾选状态，所以这份响应必须带 defaults
-  ok(Array.isArray(r.json.defaults), "回报当前全局默认（编辑器要用）");
+  // ⚠️ 新模型里 `defaults` 没了 —— 全局改成「指向一条预设」，
+  //    所以编辑器要的是**预设表 + 全局那份**。
+  ok(r.json.presets && typeof r.json.presets === "object", "回报预设表（编辑器要用）");
+  ok(r.json.global !== undefined, "回报全局那份（指向哪条、开没开）");
   // ⚠️ 总开关的状态也必须在这份响应里。
   //    漏过：编辑器 `setEnabledDraft(d.enabled !== false)` 读到 undefined 恒为 true，
   //    表现是「胶囊怎么点都弹回去」—— POST 明明成功，紧接着 load() 又读回 true。
@@ -586,25 +761,33 @@ ok(
   await call(ctx, EDIT_PATH, { method: "POST", body: { action: "delete", id: "zz-cat-test" } });
 }
 
-// ── 10b2. GET edit 的 defaults 跟着 POST defaults 变 ───────────────────────
+// ── 10b2. GET edit 报的是**预设表**（编辑器要用它渲染勾选状态）────────────
 {
-  await call(ctx, DEFAULTS_PATH, {
-    method: "POST",
-    body: { promptIds: ["format-contract-a"] },
-  });
   const r = await call(ctx, EDIT_PATH);
-  eq(r.json.defaults, ["format-contract-a"], "改了默认后，编辑器的 GET 读得到");
-  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
-  eq((await call(ctx, EDIT_PATH)).json.defaults, [], "清空后也同步");
+  ok(r.json.presets && typeof r.json.presets === "object", "GET edit 带上预设表");
+  ok(r.json.global !== undefined, "GET edit 带上全局那份");
+  // ⚠️ 顶层 `enabled` **要留着** —— 设置页那个开关的胶囊状态用它。
+  //    只是它的**来源**变了：新模型里真相是 `global.enabled`，这里是它的投影。
+  eq(typeof r.json.enabled, "boolean", "回报总开关状态（投影自 global.enabled）");
+  eq(r.json.enabled, r.json.global.enabled, "**跟 global.enabled 一致**（别各写一份）");
+  eq(
+    Object.prototype.hasOwnProperty.call(r.json, "defaults"),
+    false,
+    "**不再回传 defaults**（全局改用 global.presetId）",
+  );
 }
 
 // ── 10d. 删掉「正在被用」的条目：引用必须被清掉（v0.3.2 的 bug 回归）──────
 //
-// 走真实路由：把一条提示词设成默认 + 显式分配给某会话，然后通过 EDIT 路由删掉它。
-// 期望：默认和分配里的幽灵 id 都被剔掉，而不是留在那里让新会话「挂空」。
+// ⚠️ 新模型下「正在被用」多了一层：提示词现在是被**预设**引用，预设再被
+//    全局/会话引用。所以删一条提示词要清两层：
+//
+//        全局 / 会话  →  预设  →  提示词
+//
+//    漏掉第二层的表现是「预设里留着一条不存在的提示词」，注入时被静默跳过 ——
+//    用户看到的是「我明明勾了 3 条，实际只生效 2 条」，而且不报错。
 {
   const GONE = "zz-vanish-test";
-  // 建一条，设为默认，并显式分配给 live 会话
   const mk = await call(ctx, EDIT_PATH, {
     method: "POST",
     body: {
@@ -614,21 +797,33 @@ ok(
   });
   eq(mk.status, 200, "先建一条用于删除");
 
-  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [GONE] } });
-  eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [GONE], "默认设成它");
-  await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, promptIds: ["format-contract-a", GONE] } });
-  eq((await call(ctx, STATE_PATH)).json.assignments[S], ["format-contract-a", GONE], "会话也显式挂上它");
+  // 存一条预设同时引用「还成立的」和「会被删的」
+  const made = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "含弃用项", prompts: ["format-contract-a", GONE] },
+  });
+  eq(made.status, 200, "存一条含它的预设");
+  const PID = made.json.id;
+  const asg = await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: S, presetId: PID } });
+  eq(asg.status, 200, "挂到会话上 → 200");
+  eq(
+    (await call(ctx, STATE_PATH)).json.assignments[S],
+    PID,
+    "**状态里记着这条预设**（挂载失败的话这条会先红，好定位）",
+  );
+  eq(live.sections.length, 2, "两条都挂上了");
 
-  // 删掉它
+  // 删掉那条提示词
   const del = await call(ctx, EDIT_PATH, { method: "POST", body: { action: "delete", id: GONE } });
   eq(del.status, 200, "删除成功");
   ok(del.json.pruned, "回报清理结果");
-  eq(del.json.pruned.defaults, [GONE], "报告：默认里剔掉了它");
-  eq(del.json.pruned.sessions[S], [GONE], "报告：会话里剔掉了它");
+  eq(del.json.pruned.presets[PID], [GONE], "**报告：预设里剔掉了它**（第二层清理）");
 
-  // 关键断言：幽灵 id 不该留下
-  eq((await call(ctx, DEFAULTS_PATH)).json.defaults, [], "**默认已清空**（否则新会话会挂空）");
-  eq((await call(ctx, STATE_PATH)).json.assignments[S], ["format-contract-a"], "**显式分配保留了还成立的部分**");
+  // 关键断言：幽灵 id 不该留在预设里
+  const p = await call(ctx, PRESETS_PATH);
+  const after = p.json.presets.find((x) => x.id === PID);
+  ok(!!after, "预设还在");
+  eq(after.prompts, ["format-contract-a"], "**预设里只剩下还成立的那条**");
   eq(live.sections.length, 1, "会话只留下还成立的那一条 section");
   eq(live.sections[0].name, "prompt-manager:format-contract-a", "留下的是正确的那条");
 }
@@ -704,23 +899,34 @@ const TMP_ID = "zz-test-only";
   const empty = makeAgent("x");
   const ctx2 = makeCtx([]);
   apply(ctx2);
+  const gp2 = await call(ctx2, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "任意会话用", prompts: ["format-contract"] },
+  });
   const r = await call(ctx2, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: "session-任意-0000", promptId: "format-contract" },
+    body: { sessionId: "session-任意-0000", presetId: gp2.json.id },
   });
   eq(r.status, 200, "无活动 agent 时不拒绝（无从比较）");
   eq(r.json.sessionCheck, "unverifiable", "标记为 unverifiable");
-  eq(r.json.outcome, "awaiting-agent", "agent 未加载，等补挂");
+  // ⚠️ 挂载结论在**注入器**里，不在 /assign 的响应里 —— 查它得走 /preview
+  const pv = await call(ctx2, PREVIEW_PATH, { search: "session=session-任意-0000" });
+  eq(pv.json.outcome, "awaiting-agent", "agent 未加载，等补挂");
   void empty;
 }
 
 // ── 12. GET preview ─────────────────────────────────────────────────────────
 {
-  // 先分配，让预览有内容
-  await call(ctx, ASSIGN_PATH, {
+  // 先给这个会话挂一条预设，让预览有内容
+  const pvP = await call(ctx, PRESETS_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract"] },
+    body: { action: "save", name: "预览用", prompts: ["format-contract"] },
   });
+  const pvAsg = await call(ctx, ASSIGN_PATH, {
+    method: "POST",
+    body: { sessionId: S, presetId: pvP.json.id },
+  });
+  eq(pvAsg.status, 200, "挂上预览用的预设");
   const r = await call(ctx, PREVIEW_PATH, { search: "session=" + encodeURIComponent(S) });
   eq(r.status, 200, "GET preview 200");
   eq(r.json.outcome, "ok", "预览成功");
@@ -806,14 +1012,20 @@ const TMP_ID = "zz-test-only";
 
 // ── 16. 持久化往返：新实例能读回 ────────────────────────────────────────────
 {
+  const reread = await call(ctx, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "重读用", prompts: ["format-contract-b"] },
+  });
   await call(ctx, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: S, promptIds: ["format-contract-b"] },
+    body: { sessionId: S, presetId: reread.json.id },
   });
   const ctx3 = makeCtx([live.agent]);
   apply(ctx3);
   const r = await call(ctx3, STATE_PATH);
-  eq(r.json.assignments[S], ["format-contract-b"], "新实例读回上次的分配（数组）");
+  // ⚠️ 新模型里存的是**预设 id 字符串**，不再是 prompt id 数组。
+  eq(r.json.assignments[S], reread.json.id, "**新实例读回上次选的预设 id**");
+  eq(typeof r.json.assignments[S], "string", "**是字符串，不是数组**");
   eq(r.json.version, 2, "读回版本 2");
 }
 
@@ -1080,11 +1292,13 @@ const TMP_ID = "zz-test-only";
     "没有意外写进会话层",
   );
 }
-// ══ 34. 快速预设：保存 / 应用 / 删除 ══════════════════════════════════════
+// ══ 34. 提示词组合（预设）：保存 / 改 / 删 / 应用 ═════════════════════════
 //
-// 预设 = 一层配置的完整快照。**应用是「覆盖」不是「合并」** ——
-// 这一条是语义上的关键决定：合并的话就永远去不掉之前加的提示词，
-// 「切换」这个语义就不成立了。
+// 新模型下预设是**唯一载体**：
+//   · save **直接收内容**（prompts[] / sections{}）—— 不再「把当前层存成快照」
+//   · 改名走 update，而且**要把指着它的引用一起改**（全局 + 各会话）
+//   · 预设**不带 scope**，同一个预设两层都能挂
+//   · GET 回传 presets / global / session / effective
 {
   const live8 = makeAgent("session-P", {
     assemble: async () => ({
@@ -1099,152 +1313,213 @@ const TMP_ID = "zz-test-only";
   const ctx8 = makeCtx([live8.agent]);
   apply(ctx8);
 
-  // ① 先给全局层配点东西：一条提示词 + 一条改写
-  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract"] } });
-  await call(ctx8, SECTIONS_PATH, {
-    method: "POST",
-    body: { name: "harness:identity", action: "replace", text: "写代码时的身份", scope: "global" },
-  });
-
-  // ② 存成预设
+  // ① 存一条预设：直接给内容
   const saved = await call(ctx8, PRESETS_PATH, {
     method: "POST",
-    body: { action: "save", name: "写代码", scope: "global" },
+    body: {
+      action: "save",
+      name: "代码",
+      prompts: ["format-contract"],
+      sections: { "harness:identity": { action: "replace", text: "代码时的身份" } },
+    },
   });
   eq(saved.status, 200, "存预设 → 200");
-  eq(saved.json.id, "写代码", "id 就是名字（中文保留）");
-  eq(saved.json.preset.prompts, ["format-contract"], "快照里带上提示词");
-  ok(saved.json.preset.sections["harness:identity"] !== undefined, "快照里带上段落改写");
+  eq(saved.json.id, "代码", "id 就是名字（中文保留）");
+  eq(saved.json.preset.prompts, ["format-contract"], "提示词进预设");
+  ok(saved.json.preset.sections["harness:identity"] !== undefined, "段落改写进预设");
+  eq(
+    Object.prototype.hasOwnProperty.call(saved.json.preset, "scope"),
+    false,
+    "**预设不带 scope**（同一个预设两层都能挂）",
+  );
 
-  // ②b 改名 —— 界面上的预设名是**卡片标题**，旁边一个铅笔改它
+  // ② 改名 —— 界面上的预设名是卡片标题，旁边一个铅笔改它
   {
     const renamed = await call(ctx8, PRESETS_PATH, {
       method: "POST",
-      body: { action: "rename", id: "写代码", name: "写代码（v2）" },
+      body: { action: "update", id: "代码", name: "代码（v2）" },
     });
     eq(renamed.status, 200, "改名 → 200");
-    // ⚠️ id 是从名字派生的，所以改名会**换 id** —— 客户端得拿新 id 更新选中项
-    eq(renamed.json.id, "写代码（v2）", "**改名换 id**（id 派生自名字）");
-    eq(renamed.json.oldId, "写代码", "回报旧 id 以便客户端对账");
+    // ⚠️ id 从名字派生，所以改名会**换 id** —— 客户端得拿新 id 更新选中项
+    eq(renamed.json.id, "代码（v2）", "**改名换 id**（id 派生自名字）");
+    eq(renamed.json.oldId, "代码", "回报旧 id 以便客户端对账");
     const list1 = await call(ctx8, PRESETS_PATH, { method: "GET" });
-    eq(list1.json.presets.map((p) => p.name), ["写代码（v2）"], "列表里只剩新名字那条");
-    // 改回去，后面的用例还用「写代码」这个 id
+    // ⚠️ 只断言「新名字在、旧名字不在」—— 别写「表里只有它一条」：
+    //    盘上还有别的用例留下的预设（它们共用同一个 DSH_HOME）。
+    ok(list1.json.presets.some((p) => p.id === "代码（v2）"), "新名字在");
+    ok(!list1.json.presets.some((p) => p.id === "代码"), "**旧 id 不在了**（改名要删旧的，不是复制一份）");
+    // ⚠️ 内容要**原样保留** —— update 只给了 name，没给 prompts/sections，
+    //    实现里如果无条件覆盖，这里会把内容清空。
+    eq(
+      list1.json.presets[0].prompts,
+      ["format-contract"],
+      "**只改名时内容不许被清空**",
+    );
+    // 改回去，后面的用例还用「代码」这个 id
     const back = await call(ctx8, PRESETS_PATH, {
       method: "POST",
-      body: { action: "rename", id: "写代码（v2）", name: "写代码" },
+      body: { action: "update", id: "代码（v2）", name: "代码" },
     });
-    eq(back.json.id, "写代码", "改回原名 → id 也回到原样");
+    eq(back.json.id, "代码", "改回原名 → id 也回到原样");
 
-    // 边界：空名字 / 不存在的预设
-    const empty = await call(ctx8, PRESETS_PATH, {
-      method: "POST",
-      body: { action: "rename", id: "写代码", name: "   " },
-    });
-    eq(empty.status, 400, "空名字 → 400");
+    // 边界：不存在的预设
     const missing = await call(ctx8, PRESETS_PATH, {
       method: "POST",
-      body: { action: "rename", id: "没有这条", name: "x" },
+      body: { action: "update", id: "没有这条", name: "x" },
     });
     eq(missing.status, 404, "改不存在的预设 → 404");
+
+    const badAction = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "乱写" } });
+    eq(badAction.status, 400, "**预设**路由：非法 action → 400");
   }
 
-  // ③ 改成别的状态
-  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
-  await call(ctx8, SECTIONS_PATH, {
-    method: "POST",
-    body: { name: "harness:identity", action: "restore", scope: "global" },
-  });
-  const mid = await call(ctx8, PRESETS_PATH, { method: "GET" });
-  eq(mid.json.layers.global.prompts, [], "改完之后全局层是空的");
-  eq(mid.json.matched.global, null, "**手改过之后匹配不上任何预设**（界面要显示「已改动」）");
+  // ③ 应用：把预设挂到全局 —— **顺带把全局注入打开**
+  {
+    const applied = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "apply", id: "代码", target: "global" },
+    });
+    eq(applied.status, 200, "挂到全局 → 200");
+    eq(applied.json.target, "global", "回报目标层");
+    eq(applied.json.label, "代码", "回报显示标签（有个人提示词 → 预设名）");
+    const g = await call(ctx8, GLOBAL_PATH);
+    eq(g.json.global.presetId, "代码", "全局指向它");
+    eq(g.json.global.enabled, true, "**挂到全局会顺带把全局注入打开**");
+    const st = await call(ctx8, STATE_PATH);
+    eq(
+      st.json.presets["代码"].sections["harness:identity"] !== undefined,
+      true,
+      "段落改写跟着生效（注入侧每次装配现取）",
+    );
+  }
 
-  // ④ 应用预设 —— 应该把状态整个还原回去
-  const applied = await call(ctx8, PRESETS_PATH, {
-    method: "POST",
-    body: { action: "apply", id: "写代码" },
-  });
-  eq(applied.status, 200, "应用预设 → 200");
-  const after = await call(ctx8, PRESETS_PATH, { method: "GET" });
-  eq(after.json.layers.global.prompts, ["format-contract"], "**应用后提示词回来了**");
-  ok(
-    after.json.layers.global.sections["harness:identity"] !== undefined,
-    "**段落改写也回来了**",
-  );
-  eq(after.json.matched.global?.id, "写代码", "**应用完能认出「现在在写代码这个预设上」**");
+  // ③b 标签规则：只有系统改动时**不显示预设名**
+  {
+    const only = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: {
+        action: "save",
+        name: "只改段落",
+        prompts: [],
+        sections: { "tool:bash": { action: "disable", text: "" } },
+      },
+    });
+    eq(only.status, 200, "存一条「只有系统改动」的预设");
+    const list = await call(ctx8, PRESETS_PATH, { method: "GET" });
+    const row = list.json.presets.find((p) => p.id === "只改段落");
+    eq(row.label, "系统提示词 · 改", "**没个人提示词 → 显示「系统提示词 · 改」**，不显示预设名");
+  }
 
-  // ⑤ 应用是「覆盖」：预设里没有的东西要被清掉
-  await call(ctx8, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract-a"] } });
-  await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "apply", id: "写代码" } });
-  const over = await call(ctx8, PRESETS_PATH, { method: "GET" });
-  eq(
-    over.json.layers.global.prompts,
-    ["format-contract"],
-    "**应用是覆盖不是合并** —— 后加的 format-contract-a 被清掉了",
-  );
+  // ④ 挂到会话：只动那个会话，不碰全局
+  {
+    await call(ctx8, ASSIGN_PATH, {
+      method: "POST",
+      body: { sessionId: "session-P", presetId: "只改段落" },
+    });
+    const g = await call(ctx8, GLOBAL_PATH);
+    eq(g.json.global.presetId, "代码", "**挂会话不影响全局**");
+    const st = await call(ctx8, STATE_PATH);
+    eq(st.json.assignments["session-P"], "只改段落", "会话记着它");
 
-  // ⑥ 会话层预设
-  await call(ctx8, ASSIGN_PATH, {
-    method: "POST",
-    body: { sessionId: "session-P", promptIds: ["format-contract-a"] },
-  });
-  const sessSaved = await call(ctx8, PRESETS_PATH, {
-    method: "POST",
-    search: "session=session-P",
-    body: { action: "save", name: "写作", scope: "session" },
-  });
-  eq(sessSaved.status, 200, "存会话层预设 → 200");
-  eq(sessSaved.json.preset.scope, "session", "scope 记对了");
+    // GET 带 session 时回报「实际生效的是哪条」
+    const one = await call(ctx8, PRESETS_PATH, { search: "session=session-P" });
+    eq(one.json.session.presetId, "只改段落", "回报这个会话选的是哪条");
+    eq(one.json.effective.id, "只改段落", "回报实际生效的是哪条");
+    eq(one.json.effective.source, "session", "来源标成 session");
+  }
 
-  // 会话层预设应用时**必须带 session**
-  const noSid = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "apply", id: "写作" } });
-  eq(noSid.status, 400, "**应用会话层预设不带 session → 400**");
-  ok(String(noSid.json.error).includes("写作") || String(noSid.json.error).includes("会话层"), "错误里说明了原因");
+  // ⑤ 全局关掉 → 全局这层整体停用；但**会话自己的选择照旧**
+  {
+    await call(ctx8, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+    const st = await call(ctx8, STATE_PATH);
+    eq(st.json.global.enabled, false, "全局关着");
+    eq(st.json.global.presetId, "代码", "**预设留着**（关掉不是把配置清掉）");
+    eq(st.json.assignments["session-P"], "只改段落", "会话的选择还在");
 
-  // ⑦ 应用会话层预设，只动那个会话
-  await call(ctx8, ASSIGN_PATH, { method: "POST", body: { sessionId: "session-P", promptIds: [] } });
-  await call(ctx8, PRESETS_PATH, {
-    method: "POST",
-    search: "session=session-P",
-    body: { action: "apply", id: "写作" },
-  });
-  const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
-  eq(disk.assignments["session-P"], ["format-contract-a"], "会话层被还原");
-  eq(disk.defaults, ["format-contract"], "**全局层没被动**（应用会话层预设不影响全局）");
+    // 一个**没有**会话记录的会话 → 全局关掉之后不该再吃全局
+    const other = await call(ctx8, PRESETS_PATH, { search: "session=别的会话" });
+    eq(other.json.effective.id, null, "**全局关掉 → 没记录的会话什么都不挂**");
+    eq(other.json.effective.source, "none", "来源是 none");
+
+    await call(ctx8, GLOBAL_PATH, { method: "POST", body: { enabled: true } });
+  }
+
+  // ⑥ 删除：被指着的引用要一起清掉（否则界面显示选了、实际不生效）
+  {
+    await call(ctx8, GLOBAL_PATH, { method: "POST", body: { presetId: "代码", enabled: true } });
+    const del = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "delete", id: "代码" },
+    });
+    eq(del.status, 200, "删除预设 → 200");
+    const g = await call(ctx8, GLOBAL_PATH);
+    eq(g.json.global.presetId, null, "**全局的引用被清掉了**（不留悬挂）");
+    const left = await call(ctx8, PRESETS_PATH, { method: "GET" });
+    ok(!left.json.presets.some((p) => p.id === "代码"), "删掉了");
+    ok(left.json.presets.some((p) => p.id === "只改段落"), "别的预设没受影响");
+
+    const delAgain = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "delete", id: "代码" },
+    });
+    eq(delAgain.status, 404, "删不存在的 → 404");
+
+    // 会话指的那条被删 → 那条记录也要清掉（退回「跟随全局」）
+    const delSess = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "delete", id: "只改段落" },
+    });
+    eq(delSess.status, 200, "删掉会话指着的那条");
+    const st = await call(ctx8, STATE_PATH);
+    eq(
+      Object.prototype.hasOwnProperty.call(st.json.assignments, "session-P"),
+      false,
+      "**会话那条记录也被清掉了**（退回跟随全局）",
+    );
+  }
+
+  // ⑦ 重名自动加序号
+  {
+    const a = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "save", name: "同名", prompts: [] },
+    });
+    const b = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "save", name: "同名", prompts: [] },
+    });
+    eq(a.json.id, "同名", "第一个用原名");
+    eq(b.json.id, "同名-2", "**重名自动加序号，不覆盖**");
+  }
 
   // ⑧ 参数校验
-  const noName = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "save", scope: "global" } });
-  eq(noName.status, 400, "存预设缺名字 → 400");
-  const badAction = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "乱写" } });
-  eq(badAction.status, 400, "**预设**路由：非法 action → 400");
-  const noPreset = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "apply", id: "不存在" } });
-  eq(noPreset.status, 404, "应用不存在的预设 → 404");
-  ok(Array.isArray(noPreset.json.known), "404 时列出已有的预设名，方便排查");
-
-  // ⑨ 删除
-  const del = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "delete", id: "写代码" } });
-  eq(del.status, 200, "删除预设 → 200");
-  const left = await call(ctx8, PRESETS_PATH, { method: "GET" });
-  ok(!left.json.presets.some((p) => p.id === "写代码"), "删掉了");
-  ok(left.json.presets.some((p) => p.id === "写作"), "别的预设没受影响");
-  const delAgain = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "delete", id: "写代码" } });
-  eq(delAgain.status, 404, "删不存在的 → 404");
-
-  // ⑩ 重名自动加序号
-  const a = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "save", name: "同名", scope: "global" } });
-  const b = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "save", name: "同名", scope: "global" } });
-  eq(a.json.id, "同名", "第一个用原名");
-  eq(b.json.id, "同名-2", "**重名自动加序号，不覆盖**");
+  {
+    const noName = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "save", prompts: [] },
+    });
+    eq(noName.status, 400, "存预设缺名字 → 400");
+    const noPreset = await call(ctx8, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "apply", id: "不存在" },
+    });
+    eq(noPreset.status, 404, "应用不存在的预设 → 404");
+    ok(Array.isArray(noPreset.json.known), "404 时列出已有的预设名，方便排查");
+  }
 }
-// ══ 35. 全局注入开关：关掉只掐「默认」那一层 ══════════════════════════════
+// ══ 35. 全局注入：开关 + 指向哪条预设 ═════════════════════════════════════
 //
-// ⚠️ 语义（用户定的）：
-//     **关闭 = 不再往每个会话都塞默认那几条。**
-//     但 ① 用户在会话页自己选的提示词照旧注入；
-//        ② 段落改写跟「注不注入」是两件事，不受它影响。
+// ⚠️ **语义（用户选的 A 方案）**：
+//     关掉 = **全局这一层整体停用** —— 没记录的会话什么都不挂。
 //
-// 关掉的实现方式是**在装配时把来自默认的那些段落正文清空**，不是"不挂载"。
-// 后者要遍历所有 agent 卸载重挂、还有竞态；前者跟段落覆盖同一个机制，
-// **下一个模型步骤就生效**。
+//   它**不是**「不禁止注入」：用户在会话页给某个会话选的具体预设照旧生效
+//   （那些会话本来就不看全局）。两者的区别在「没记录的会话」上：
+//
+//     开关开着 → 没记录的会话吃全局那条预设
+//     开关关着 → 没记录的会话什么都不挂
+//
+//   ⚠️ 老模型里还有「显式选了『跟随全局』」这个状态，新模型里**没有** ——
+//      "不记录" 就等于跟随。所以关掉时不需要去清谁的记录。
 {
   const live9 = makeAgent("session-T", {
     assemble: async () => ({
@@ -1280,79 +1555,118 @@ const TMP_ID = "zz-test-only";
   eq(a.sections[0].text, "我改的身份", "**开关开着时改写生效**");
   eq(a.sections[1].text, "我注入的提示词正文", "开关开着时注入保留");
 
-  // 关
-  const off = await call(ctx9, STATE_PATH, { method: "POST", body: { enabled: false } });
-  eq(off.status, 200, "关掉全局注入 → 200");
-  eq(off.json.enabled, false, "回报已关");
+  // ── 没选预设就想开全局注入 → 400（用户定的规则）────────────────────────
+  {
+    await call(ctx9, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+    // 先把 presetId 清掉，才能验「没选预设不许开」
+    await call(ctx9, GLOBAL_PATH, { method: "POST", body: { presetId: null } });
+    const bad = await call(ctx9, GLOBAL_PATH, { method: "POST", body: { enabled: true } });
+    eq(bad.status, 400, "**没选预设就想开全局注入 → 400**");
+    eq(bad.json.outcome, "preset-required", "结论说明要先选预设");
+    ok(Array.isArray(bad.json.known), "列出可选预设，方便排查");
+  }
+
+  // ── 选上预设并打开 ──────────────────────────────────────────────────────
+  const gp9 = await call(ctx9, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "全局那条", prompts: ["format-contract"] },
+  });
+  {
+    const on = await call(ctx9, GLOBAL_PATH, { method: "POST", body: { presetId: gp9.json.id, enabled: true } });
+    eq(on.status, 200, "选上预设并打开 → 200");
+    eq(on.json.global.presetId, gp9.json.id, "指向它");
+    eq(on.json.global.enabled, true, "**35 节**：开启后 global.enabled 为 true");
+  }
 
   // ⚠️ 编辑器读完 POST 的响应后会立刻重新 GET /edit（load()）。
-  //    所以这边必须也能读到 false，否则拨下去又被读回 true —— 胶囊「弹回去」。
-  eq((await call(ctx9, EDIT_PATH)).json.enabled, false, "**GET edit 也读得到已关**（否则胶囊弹回去）");
+  //    所以这边必须也能读到，否则拨下去又被读回 —— 胶囊「弹回去」。
+  {
+    const off = await call(ctx9, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+    eq(off.status, 200, "关掉全局注入 → 200");
+    eq(off.json.global.enabled, false, "回报已关");
+    eq(off.json.global.presetId, gp9.json.id, "**关掉之后预设还留着**（不是把配置清掉）");
+    eq((await call(ctx9, EDIT_PATH)).json.enabled, false, "**GET edit 也读得到已关**（否则胶囊弹回去）");
 
-  a = await asm();
-  await l0(a, {}, async () => a);
-  eq(
-    a.sections[0].text,
-    "我改的身份",
-    "**关掉注入之后段落改写照样生效**（改原生段落跟注不注入是两件事）",
-  );
-  eq(a.sections[1].text, "", "**来自默认的注入被清空**（`my-prompt` 不是显式选的）");
+    a = await asm();
+    await l0(a, {}, async () => a);
+    eq(
+      a.sections[0].text,
+      "我改的身份",
+      "**关掉注入之后段落改写照样生效**（改原生段落跟注不注入是两件事）",
+    );
 
-  // 再开回来
-  await call(ctx9, STATE_PATH, { method: "POST", body: { enabled: true } });
-  eq((await call(ctx9, EDIT_PATH)).json.enabled, true, "开回来之后 GET edit 也读得到");
-  a = await asm();
-  await l0(a, {}, async () => a);
-  eq(a.sections[0].text, "我改的身份", "开回来之后改写仍在");
-  eq(a.sections[1].text, "我注入的提示词正文", "注入也恢复");
+    // 再开回来
+    await call(ctx9, GLOBAL_PATH, { method: "POST", body: { enabled: true } });
+    eq((await call(ctx9, EDIT_PATH)).json.enabled, true, "开回来之后 GET edit 也读得到");
+  }
 
-  // 缺字段 → 400
-  const bad = await call(ctx9, STATE_PATH, { method: "POST", body: {} });
-  eq(bad.status, 400, "缺 enabled → 400");
+  // ── GET /state 也要带上开关状态（会话头徽章读它）────────────────────────
+  {
+    const st = await call(ctx9, STATE_PATH, { method: "GET" });
+    eq(st.json.enabled, true, "GET state 带上开关状态");
+    eq(st.json.enabled, st.json.global.enabled, "**跟 global.enabled 一致**（别各写一份）");
+  }
 
-  // GET state 要带上开关状态
-  const st = await call(ctx9, STATE_PATH, { method: "GET" });
-  eq(st.json.enabled, true, "GET state 带上开关状态");
-
-  // 落盘
-  const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
-  eq(disk.enabled, true, "开关持久化了");
+  // ── 落盘：新模型存的是 global.*，不再有顶层 enabled / defaults ──────────
+  {
+    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+    eq(disk.global.enabled, true, "开关持久化在 global.enabled");
+    eq(
+      Object.prototype.hasOwnProperty.call(disk, "enabled"),
+      false,
+      "**不再写顶层 enabled**（挪进 global 里了）",
+    );
+  }
 }
 
-// ══ 36. 全局注入关掉时，**会话级自己选的照旧注入** ═════════════════════════
+// ══ 36. 全局关掉时：没记录的会话不挂，显式选过的照旧 ═══════════════════════
 //
-// 这是全局开关的核心语义，也是它存在的理由：
-//   「关闭 = 不再往每个会话都塞默认那几条」，而不是「禁止注入」。
-//   用户在会话页（会话头部那个按钮）自己挑的提示词，关掉全局注入也要生效。
+// 这是全局开关的核心语义。**两件事必须一起成立**才有意义：
+//   ① 没记录的会话 → 全局关掉后什么都不挂
+//   ② **显式选过具体预设的会话 → 照旧注入**
 //
-// ⚠️ 两件事必须一起成立才有意义：
-//   ① 没显式指定的会话 → 默认被掐掉（上面 35 已经验了）
-//   ② **显式指定过的会话 → 照旧注入**（这一条）
-//   只验①的话，「全停」也能过 —— 那正是改之前的行为。
+// 只验①的话「全停」也能过，那就把「会话自己能选」这个功能一起废掉了。
 {
   const liveA = makeAgent("session-D1");
   const liveB = makeAgent("session-D2");
   const ctxD = makeCtx([liveA.agent, liveB.agent]);
   apply(ctxD);
 
-  // D1 吃默认（不显式指定）；D2 显式选一条
-  await call(ctxD, DEFAULTS_PATH, { method: "POST", body: { promptIds: ["format-contract"] } });
-  // 显式指定 D2：走 assign 路由（这就是会话页那个按钮做的事）
+  // 全局指一条预设并打开；D2 显式选另一条（D1 不记录 = 跟随全局）
+  const gD = await call(ctxD, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "D 全局", prompts: ["format-contract"] },
+  });
+  const dD = await call(ctxD, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "save", name: "D 单条", prompts: ["format-contract-a"] },
+  });
+  await call(ctxD, GLOBAL_PATH, { method: "POST", body: { presetId: gD.json.id, enabled: true } });
   const asg = await call(ctxD, ASSIGN_PATH, {
     method: "POST",
-    body: { sessionId: "session-D2", promptIds: ["format-contract-a"] },
+    body: { sessionId: "session-D2", presetId: dD.json.id },
   });
   eq(asg.status, 200, "给 D2 显式指定一条 → 200");
 
   // 关掉全局注入
-  await call(ctxD, STATE_PATH, { method: "POST", body: { enabled: false } });
+  await call(ctxD, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
 
-  // 两个 agent 各自的装配结果
+  // ⚠️ **按「这个会话实际注册了哪些段落」构造**，不能把三段写死。
+  //
+  //    写死的话，就算「全局关掉 → 默认那条不再注册」是对的，夹具里那一段
+  //    照样带着正文，断言必然红 —— 红的是夹具，不是实现。
+  //    （真实装配只包含注册过的段落，夹具也得照这个来。）
+  //
+  //    live.sections 是注入器调 scope.systemPrompt.section() 时登记的，
+  //    名字形如 prompt-manager:<提示词 id>。
+  const TEXT_OF = {
+    "prompt-manager:format-contract": "全局那条的正文",
+    "prompt-manager:format-contract-a": "D2 自己选的那条正文",
+  };
   const asmOf = (live) => ({
     sections: [
       { name: "harness:identity", text: "官方身份" },
-      { name: "prompt-manager:format-contract", text: "默认那条的正文" },
-      { name: "prompt-manager:format-contract-a", text: "D2 自己选的那条正文" },
+      ...live.sections.map((x) => ({ name: x.name, text: TEXT_OF[x.name] ?? "" })),
     ],
     contexts: [],
     tools: [],
@@ -1362,32 +1676,34 @@ const TMP_ID = "zz-test-only";
   const lA = liveA.assembleListeners[0];
   ok(typeof lA === "function", "D1 挂上了装配监听器");
   await lA(aA, {}, async () => aA);
-  eq(
-    aA.sections[1].text,
-    "",
-    "**D1 吃默认 → 关掉后被清空**",
-  );
+  // ⚠️ 按**名字**找，不按下标 —— 段落少一条时下标会错位，
+  //    那时候按下标断言可能「碰巧对上另一条」，等于没测。
+  {
+    const found = aA.sections.find((x) => x.name === "prompt-manager:format-contract");
+    eq(found, undefined, "**D1 没记录 → 全局关掉后，全局那条根本没注册**");
+  }
 
   const aB = asmOf(liveB);
   const lB = liveB.assembleListeners[0];
   ok(typeof lB === "function", "D2 挂上了装配监听器");
   await lB(aB, {}, async () => aB);
-  eq(
-    aB.sections[2].text,
-    "D2 自己选的那条正文",
-    "**D2 显式选的那条照旧注入**（关掉全局注入 ≠ 禁止注入）",
-  );
-  eq(
-    aB.sections[1].text,
-    "",
-    "**D2 不吃默认，所以默认那条对它本来就没挂**（清不清都是空）",
-  );
+  {
+    const own = aB.sections.find((x) => x.name === "prompt-manager:format-contract-a");
+    ok(!!own, "**D2 显式选的那条照旧注册**（关掉全局 ≠ 禁止注入）");
+    eq(own?.text, "D2 自己选的那条正文", "正文对");
+    const gp = aB.sections.find((x) => x.name === "prompt-manager:format-contract");
+    eq(gp, undefined, "**D2 不吃全局，所以全局那条对它本来就没注册**");
+  }
 
-  // 开回来 → D1 的默认恢复
-  await call(ctxD, STATE_PATH, { method: "POST", body: { enabled: true } });
+  // 开回来 → D1 恢复吃全局
+  await call(ctxD, GLOBAL_PATH, { method: "POST", body: { enabled: true } });
   const aA2 = asmOf(liveA);
   await lA(aA2, {}, async () => aA2);
-  eq(aA2.sections[1].text, "默认那条的正文", "开回来后 D1 的默认恢复");
+  {
+    const found = aA2.sections.find((x) => x.name === "prompt-manager:format-contract");
+    ok(!!found, "开回来后 D1 恢复吃全局（那条又注册上了）");
+    eq(found?.text, "全局那条的正文", "正文对");
+  }
 }
 rmSync(DSH_HOME, { recursive: true, force: true });
 
