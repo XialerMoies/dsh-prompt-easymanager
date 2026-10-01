@@ -241,7 +241,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           gap: "4px",
           padding: "2px 6px",
           borderRadius: "5px",
-          border: "1px solid rgba(128,128,128,.35)",
+          border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
           background: "transparent",
           color: "inherit",
           fontFamily: "inherit",
@@ -291,8 +291,8 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           color: "#047857",
         });
         var BADGE_OFF = Object.assign({}, BADGE, {
-          borderColor: "rgba(128,128,128,.5)",
-          background: "rgba(128,128,128,.14)",
+          borderColor: "var(--dsw-alias-border-l3, rgba(128,128,128,.45))",
+          background: "var(--dsw-specific-menu, rgba(128,128,128,.14))",
           color: "var(--dsw-alias-label-secondary, inherit)",
         });
         var BADGE_MUTED = Object.assign({}, BADGE, {
@@ -387,7 +387,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           justifyContent: "space-between",
           gap: "8px",
           padding: "10px 12px",
-          borderBottom: "1px solid rgba(128,128,128,.25)",
+          borderBottom: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         };
         var PANEL_BODY = { padding: "10px 12px", overflow: "auto", flex: "1 1 auto" };
         var PANEL_FOOT = {
@@ -396,7 +396,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           justifyContent: "space-between",
           gap: "8px",
           padding: "10px 12px",
-          borderTop: "1px solid rgba(128,128,128,.25)",
+          borderTop: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
           flexWrap: "wrap",
         };
 
@@ -580,7 +580,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         height: "6px",
         borderRadius: "50%",
         flex: "none",
-        background: "rgba(128,128,128,.6)",
+        background: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.6))",
       };
       var DOT_DEFAULT = Object.assign({}, DOT, { background: "#3b82f6" });
       var DOT_ERR = Object.assign({}, DOT, { background: "#ef4444" });
@@ -645,7 +645,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
       var HEADING = {
         margin: "14px 0 6px",
         paddingBottom: "4px",
-        borderBottom: "1px solid rgba(128,128,128,.28)",
+        borderBottom: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         fontWeight: "bold",
         opacity: 0.9,
       };
@@ -694,7 +694,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         gap: "8px",
         padding: "7px 9px",
         borderRadius: "6px",
-        border: "1px solid rgba(128,128,128,.22)",
+        border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         marginBottom: "6px",
         cursor: "pointer",
       };
@@ -733,7 +733,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         whiteSpace: "nowrap",
       };
       var SEC = {
-        border: "1px solid rgba(128,128,128,.22)",
+        border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         borderRadius: "6px",
         padding: "8px 10px",
         marginBottom: "8px",
@@ -812,7 +812,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         lineHeight: "20px",
       };
       var SUMSUM = {
-        border: "1px solid rgba(128,128,128,.3)",
+        border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
         borderRadius: "6px",
         padding: "8px 10px",
         marginBottom: "4px",
@@ -845,7 +845,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
       alignItems: "center",
       gap: "4px",
       padding: "1px 8px",
-      border: "1px solid rgba(128,128,128,.35)",
+      border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
       borderRadius: "999px",
       cursor: "pointer",
       fontSize: "12px",

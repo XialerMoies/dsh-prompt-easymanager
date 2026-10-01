@@ -3054,6 +3054,34 @@ function makeSectionsData(over = {}) {
     for (const m of codeOnly.matchAll(/--dsh-[\w-]+/g)) used.add(m[0]);
     eq([...used], [], "**不许用 `--dsh-*` 这种不存在的变量**（正确命名空间是 `--dsw-alias-*`）");
 
+    // ── 硬编码灰度：必须在 var(--dsw-…) 的兜底位里 ────────────────────
+    //
+    // ⚠️ 用户报过：面板的 borderBottom 写的是纯 rgba(128,128,128,.25)，
+    //    **完全没套变量** —— 浅色主题下这个固定灰跟 dsh 的边框色明显不是一个调子。
+    //
+    //    更深一层：**兜底值本身**也是硬编码浅色灰。变量在的时候没事，
+    //    但变量一旦取不到，退回去的就是个不跟主题走的灰。
+    //
+    //    所以判据不是「有没有 var(...)」，而是「这个灰度**在不在 var 的兜底位里**」。
+    {
+      const bare = [];
+      const re = /rgba\(\s*128\s*,\s*128\s*,\s*128\s*,\s*[\d.]+\s*\)/g;
+      for (const m of codeOnly.matchAll(re)) {
+        const at = m.index;
+        // 往前 60 个字符里得有一个**还没闭合**的 var(--dsw-
+        const before = codeOnly.slice(Math.max(0, at - 60), at);
+        const openIdx = before.lastIndexOf("var(--dsw-");
+        const closeIdx = before.lastIndexOf(")");
+        if (openIdx < 0 || closeIdx > openIdx) {
+          bare.push(m[0] + " @" + codeOnly.slice(0, at).split("\n").length);
+        }
+      }
+      eq(
+        bare,
+        [],
+        "**硬编码灰度必须落在主题变量的兜底位里**（裸写的话浅色主题下颜色不对）",
+      );
+    }
     // 浮窗/面板的背景必须走主题变量，不能写死颜色。
     // PANEL 那一族现在住在宿主（面板和预览两个 chunk 各自从 api.style 取），
     // 所以扫描必然能从拼起来的源码里找到它 —— 找不到就说明它被搬丢了。
