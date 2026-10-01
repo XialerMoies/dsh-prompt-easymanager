@@ -794,6 +794,32 @@ const Picker = pickerBox.PromptPicker;
 const Editor = editorBox.PromptEditor;
 ok(typeof Picker === "function", "create(api) 造出了 PromptPicker");
 ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
+  // ── 问题2：hero chip 在**开关关着**时不该显示那条预设 ────────────────────
+  //
+  // ⚠️ 用户报的：「初始会话页显示的预设是测试t-1」，而且说明「发生在
+  //    全局注入开关关闭状态下」。
+  //
+  //    根因：开关关掉时 `global.presetId` **仍然指着上次选的那条**
+  //    （那是设计：配置留着，打开开关就能用）。原来的判据只看
+  //    「presetId 是不是字符串」，完全没看开关 → 显示成那条预设名。
+  //
+  //    关掉开关的语义是「全局这一层整体停用」→ 新会话什么都不挂。
+  {
+    const base = {
+      presets: [{ id: "测试t-1", name: "测试t-1", label: "测试t-1", prompts: ["a"], sections: {} }],
+      global: { enabled: false, presetId: "测试t-1" },
+    };
+    shims.setStates([base, false]);
+    const off = flattenText(shims.render(pickerBox.HeroPresetChip, {})).join(" ");
+    ok(
+      !off.includes("测试t-1") && off.includes("系统提示词"),
+      "**开关关着时 hero 显示「系统提示词」**（不是那条预设名）—— 实际：" + off.slice(0, 60),
+    );
+
+    shims.setStates([Object.assign({}, base, { global: { enabled: true, presetId: "测试t-1" } }), false]);
+    const on = flattenText(shims.render(pickerBox.HeroPresetChip, {})).join(" ");
+    ok(on.includes("测试t-1"), "**开关打开后才显示那条预设名** —— 实际：" + on.slice(0, 60));
+  }
   // ── DOM 补丁：找不到目标行时**什么都不做** ──────────────────────────────
   //
   // ⚠️ 新会话页那个下拉框只能靠 DOM 补丁插（那一行的两个槽位都是 kind:single
@@ -1332,7 +1358,71 @@ const renderEditor = (props = {}) =>
   }
 
 
-// ── 5z. 勾选区那组「系统提示词」tag ────────────────────────────────────────
+// ── 5aa. **开关关掉时会话页能不能切预设** ──────────────────────────────────
+//
+// ⚠️ 用户报的：「已有上下文的会话页的预设选择默认是测试t-1，**不能点击切换其他**」，
+//    而且特别说明「均发生在全局注入开关关闭状态下」。
+{
+  const stateOff = {
+    assignments: { s1: "测试t-1" },
+    // ⚠️ 开关**关着**，但 presetId **仍然指着上次选的那条**（那是设计：
+    //    配置留着，打开开关就能用）。所以光看 presetId 判断不出开关状态 ——
+    //    这一条正是问题2 的根因。
+    global: { enabled: false, presetId: "测试t-1" },
+    presets: {
+      "测试t-1": { name: "测试t-1", prompts: ["P1"], sections: {} },
+      "测试t-2": { name: "测试t-2", prompts: ["P2"], sections: {} },
+    },
+    prompts: [
+      { id: "P1", name: "甲", mode: "append", order: 100, tokens: 10 },
+      { id: "P2", name: "乙", mode: "append", order: 200, tokens: 10 },
+    ],
+    diag: { routeRegistered: true, sessions: [] },
+  };
+  const presetsResp = {
+    presets: [
+      { id: "测试t-1", name: "测试t-1", label: "测试t-1", prompts: ["P1"], sections: {} },
+      { id: "测试t-2", name: "测试t-2", label: "测试t-2", prompts: ["P2"], sections: {} },
+    ],
+    global: { enabled: false, presetId: "测试t-1" },
+    session: { sessionId: "s1", presetId: "测试t-1" },
+    effective: { id: "测试t-1", preset: null, source: "session" },
+  };
+
+  const posts = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, init) => {
+    if (init && init.method === "POST") posts.push({ url: String(url), body: init.body });
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(String(url).includes("/presets") ? presetsResp : stateOff),
+    });
+  };
+
+  // ⚠️ 顺序：0 data / 1 busy / 2 err / 3 preview / **4 picking** / 5 message
+  shims.setStates([stateOff, false, null, null, true, null]);
+  const el = renderPicker({ sessionId: "s1" });
+  const txt = flattenText(el).join(" ");
+
+  ok(
+    !txt.includes("跟随全局"),
+    "**开关关着时不显示「跟随全局」**（那时根本不能跟随全局）",
+  );
+
+  // 点「测试t-2」
+  const t2 = [];
+  findEl(el, (n) => {
+    if (n.type === "button" && flattenText(n).join(" ").includes("测试t-2")) t2.push(n);
+    return false;
+  });
+  ok(t2.length > 0, "面板里列得出「测试t-2」");
+  if (t2[0]) t2[0].props.onClick();
+
+  eq(posts.length, 1, "**点「测试t-2」真的发了一次请求**（不能只关面板）");
+  eq(JSON.parse((posts[0] && posts[0].body) || "{}").presetId, "测试t-2", "带的是「测试t-2」");
+
+  globalThis.fetch = realFetch;
+}
 //
 // 用户原话：「勾选**个人提示词与系统提示词 tag**」。
 //

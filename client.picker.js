@@ -322,10 +322,20 @@ window.__ModuleLoader__.load({
             : undefined;
         }
 
-        // ① 跟随全局（只在全局真有一条预设时才有意义）
+        // ① 跟随全局
+        //
+        // ⚠️ **两个条件，缺一不可**：
+        //      开关开着（关掉 = 全局这一层整体停用，那时**不能**跟随）
+        //      而且真有一条预设可跟
+        //
+        //    只看 `g.presetId` 是不够的 —— 开关关掉时它**仍然指着上次选的那条**
+        //    （那是设计：配置留着，打开开关就能用）。所以开关关着的时候，
+        //    这一项会照样出现、还被标成当前项 → 用户看到的「默认是测试t-1」。
         var gp = null;
-        for (var k = 0; k < list.length; k++) {
-          if (list[k] && list[k].id === g.presetId) gp = list[k];
+        if (g.enabled === true) {
+          for (var k = 0; k < list.length; k++) {
+            if (list[k] && list[k].id === g.presetId) gp = list[k];
+          }
         }
         if (gp) {
           out.push({
@@ -460,8 +470,17 @@ window.__ModuleLoader__.load({
           };
         }, [load]);
 
-        var label = "提示词组合";
-        if (data && data.global && typeof data.global.presetId === "string") {
+        // ⚠️ **开关关着就不该显示那条预设** —— 那时全局这一层整体停用，
+        //    新会话什么都不挂。只判 `presetId` 是字符串的话，开关关掉之后
+        //    它**仍然指着上次选的那条**，于是显示成「测试t-1」（用户报的
+        //    「初始会话页显示的预设是测试t-1」就是这么来的）。
+        var label = "系统提示词";
+        if (
+          data &&
+          data.global &&
+          data.global.enabled === true &&
+          typeof data.global.presetId === "string"
+        ) {
           var list = Array.isArray(data.presets) ? data.presets : [];
           for (var i = 0; i < list.length; i++) {
             if (list[i] && list[i].id === data.global.presetId) label = list[i].label || list[i].name;
@@ -561,7 +580,7 @@ window.__ModuleLoader__.load({
         for (var i = 0; i < list.length; i++) {
           var p = list[i];
           if (!p) continue;
-          var active = g.presetId === p.id;
+          var active = g.enabled === true && g.presetId === p.id;
           rows.push(
             react.createElement(
               "button",
