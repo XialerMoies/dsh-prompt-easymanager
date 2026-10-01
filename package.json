@@ -25,11 +25,12 @@
     "assets"
   ],
   "scripts": {
-    "harness:check": "node scripts/check-syntax.mjs",
-    "test": "node scripts/presets_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs && node scripts/docs_test.mjs",
+    "harness:check": "node scripts/check-syntax.mjs && node scripts/check-props.mjs",
+    "test": "node scripts/check-props.mjs && node scripts/presets_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs && node scripts/docs_test.mjs",
     "test:client": "node scripts/client_render_test.mjs",
     "test:docs": "node scripts/docs_test.mjs",
     "test:store": "node scripts/prompt_store_test.mjs",
+    "test:props": "node scripts/check-props.mjs",
     "bump:rev": "node scripts/bump-client-rev.mjs",
     "pack:release": "node scripts/pack-release.mjs"
   },
