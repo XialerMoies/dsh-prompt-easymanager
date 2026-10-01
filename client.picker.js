@@ -80,113 +80,13 @@ window.__ModuleLoader__.load({
         background: "var(--dsw-alias-bg-layer-1, Canvas)",
         color: "inherit",
       };
-      /** 灰卡片（没被注册的槽位）的头 —— 内边距跟正常卡片头对齐。 */
-      var SLOT_HEAD = Object.assign({}, CARD_MAIN_ROW, {
-        flexDirection: "row",
-        minHeight: "0",
-        padding: "10px 14px",
-      });
-      /** 灰卡片的说明行。 */
-      var SLOT_WHY = {
-        padding: "0 14px 10px",
-        fontSize: "11.5px",
-        lineHeight: "17px",
-        color: "var(--dsw-alias-label-tertiary, inherit)",
-      };
-      /**
-       * 段落卡片标题旁的小字原始名（`harness:identity` 这种）。
-       * 中文名给人看，原始名给排查用 —— 同一个 name 才能在服务端对上。
-       */
-      var RAW_NAME = {
-        flex: "0 1 auto",
-        minWidth: "0",
-        fontFamily: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
-        fontSize: "10.5px",
-        lineHeight: "16px",
-        color: "var(--dsw-alias-label-tertiary, inherit)",
-        opacity: 0.75,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      };
-      var DOT = {
-        width: "6px",
-        height: "6px",
-        borderRadius: "50%",
-        flex: "none",
-        background: "rgba(128,128,128,.6)",
-      };
-      var DOT_OK = Object.assign({}, DOT, { background: "#10b981" });
-      var DOT_DEFAULT = Object.assign({}, DOT, { background: "#3b82f6" });
-      var DOT_WAIT = Object.assign({}, DOT, { background: "#f59e0b" });
-      var DOT_ERR = Object.assign({}, DOT, { background: "#ef4444" });
-      var ERRBOX = {
-        border: "1px solid rgba(239,68,68,.7)",
-        background: "rgba(239,68,68,.1)",
-        borderRadius: "5px",
-        padding: "2px 6px",
-        fontSize: "11px",
-        lineHeight: "16px",
-        maxWidth: "260px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        flex: "none",
-      };
 
-      var PICK = {
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "8px",
-        padding: "7px 9px",
-        borderRadius: "6px",
-        border: "1px solid rgba(128,128,128,.22)",
-        marginBottom: "6px",
-        cursor: "pointer",
-      };
-      var PICK_ON = Object.assign({}, PICK, {
-        borderColor: "rgba(16,185,129,.7)",
-        background: "rgba(16,185,129,.08)",
-      });
-      var MONO = {
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        fontSize: "11px",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        maxHeight: "180px",
-        overflow: "auto",
-        margin: "6px 0 0",
-        opacity: 0.9,
-      };
-      var MONO_TAIL = Object.assign({}, MONO, { maxHeight: "420px" });
-      var WARN = {
-        border: "1px solid rgba(239,68,68,.7)",
-        background: "rgba(239,68,68,.08)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "10px",
-      };
       var ADVISE = {
         border: "1px solid rgba(245,158,11,.7)",
         background: "rgba(245,158,11,.08)",
         borderRadius: "6px",
         padding: "8px 10px",
         marginBottom: "10px",
-      };
-      var MUTED = { opacity: 0.65 };
-      var HEADING = {
-        margin: "14px 0 6px",
-        paddingBottom: "4px",
-        borderBottom: "1px solid rgba(128,128,128,.28)",
-        fontWeight: "bold",
-        opacity: 0.9,
-      };
-      var SUMSUM = {
-        border: "1px solid rgba(128,128,128,.3)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "4px",
-        lineHeight: "1.7",
       };
       var ROW = { display: "inline-flex", alignItems: "center", gap: "4px", flex: "none" };
       var PILL_SWITCH = {
@@ -197,26 +97,6 @@ window.__ModuleLoader__.load({
         borderRadius: "999px",
         padding: "0",
         transition: "background .15s ease, border-color .15s ease",
-      };
-      var CARD_HEADING = { display: "flex", alignItems: "baseline", gap: "7px", padding: "0 2px" };
-      var HEADING_TITLE = { fontSize: "13px", fontWeight: 600, lineHeight: "20px" };
-      var HEADING_COUNT = {
-        color: "var(--dsw-alias-label-tertiary, inherit)",
-        fontVariantNumeric: "tabular-nums",
-        fontSize: "12px",
-        lineHeight: "18px",
-      };
-      var DETAIL_BTN = {
-        font: "inherit",
-        fontSize: "12px",
-        lineHeight: "18px",
-        padding: "3px 10px",
-        borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.45))",
-        background: "transparent",
-        color: "var(--dsw-alias-label-primary, inherit)",
-        cursor: "pointer",
-        whiteSpace: "nowrap",
       };
       /** 组件共用的浮层外壳：portal 到 body，点遮罩关闭。 */
       function Overlay(props) {

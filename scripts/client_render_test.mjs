@@ -1606,29 +1606,36 @@ const renderEditor = (props = {}) =>
       {
         const S = (el.props && el.props.style) || {};
         eq(S.gap, "12px", "**功能之间 12px**（父级 gap，跟参考页一致）");
-        // ⚠️ `SECTION` 在**两处**各写了一份（client.js 的宿主 + client.editor.js），
-        //    后者覆盖前者。只改一处的话页面纹丝不动 —— 踩过。
-        //    这条断言读两个源文件，把两份钉成同一个值。
+        // ⚠️ 这里原来有一条「两份 SECTION 的 gap 要一致」的断言 —— **已退役**。
+        //
+        //    背景：`SECTION` 曾经在 client.js（宿主）和 client.editor.js 里**各写一份**，
+        //    后者覆盖前者，只改一处页面纹丝不动（踩过，所以加了那条断言）。
+        //    现在编辑器里那份本地样式常量副本**整块删掉了**（27 个 / 233 行）——
+        //    样式只有 `api.style` 一个来源，不存在「两份」了，那条断言失去对象。
+        //
+        //    改成反过来盯「**不许再长出第二份**」：
         {
-          const hostSrc = readFileSync(join(HERE, "..", "client.js"), "utf8");
-          const chunkSrc = readFileSync(join(HERE, "..", "client.editor.js"), "utf8");
-          const gapOf = (src, label) => {
-            const i = src.indexOf("var SECTION = {");
-            if (i < 0) return `(${label} 里没找到 SECTION)`;
-            // 取到这个对象结束为止（`};`），中间可能有注释
-            const rest = src.slice(i);
-            const end = rest.indexOf("\n      };");
-            const seg = end > 0 ? rest.slice(0, end) : rest.slice(0, 2000);
-            const m = seg.match(/gap:\s*"([^"]+)"/);
-            return m ? m[1] : `(${label} 里没找到 gap)`;
+          // 三个 chunk 一起查：只要出现 `^ {6}var X = {`（6 空格缩进的对象字面量
+          // 常量），就说明又长出了一份本地样式副本 —— 它会**盖掉** api.style 那份，
+          // 于是「改了宿主没反应」。
+          //
+          // 删掉的那批：editor 27 个 / picker 21 个 / preview 7 个（共 55 个副本）。
+          // 各自留下的必须项（宿主没有或值故意不同）单独列在下面。
+          const ALLOWED = {
+            "client.editor.js": [],                       // 一个都不留
+            "client.picker.js": ["SELECT_SM", "ADVISE", "ROW", "PILL_SWITCH"],
+            "client.preview.js": ["SEC", "ADVISE"],
           };
-          const hostGap = gapOf(hostSrc, "client.js");
-          const chunkGap = gapOf(chunkSrc, "client.editor.js");
-          eq(
-            chunkGap,
-            hostGap,
-            "**两份 SECTION 的 gap 一致**（只改一处的话另一处会盖掉它）",
-          );
+          for (const [file, allowed] of Object.entries(ALLOWED)) {
+            const src = readFileSync(join(HERE, "..", file), "utf8");
+            const local = [...src.matchAll(/^ {6}var (\w+) = \{/gm)].map((m) => m[1]);
+            const extra = local.filter((n) => !allowed.includes(n));
+            eq(
+              extra.join(","),
+              "",
+              `**${file} 没有多出来的本地样式常量副本**（多出来的会盖掉 api.style 那份）`,
+            );
+          }
         }
         const second = rootKids[1];
         ok(!!second, "有第一个功能块");

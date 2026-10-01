@@ -47,46 +47,12 @@ window.__ModuleLoader__.load({
         padding: "8px 10px",
         marginBottom: "8px",
       };
-      var SEC_OURS = Object.assign({}, SEC, { borderColor: "rgba(16,185,129,.7)" });
-      var MONO = {
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        fontSize: "11px",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        maxHeight: "180px",
-        overflow: "auto",
-        margin: "6px 0 0",
-        opacity: 0.9,
-      };
-      var MONO_TAIL = Object.assign({}, MONO, { maxHeight: "420px" });
-      var WARN = {
-        border: "1px solid rgba(239,68,68,.7)",
-        background: "rgba(239,68,68,.08)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "10px",
-      };
       var ADVISE = {
         border: "1px solid rgba(245,158,11,.7)",
         background: "rgba(245,158,11,.08)",
         borderRadius: "6px",
         padding: "8px 10px",
         marginBottom: "10px",
-      };
-      var MUTED = { opacity: 0.65 };
-      var HEADING = {
-        margin: "14px 0 6px",
-        paddingBottom: "4px",
-        borderBottom: "1px solid rgba(128,128,128,.28)",
-        fontWeight: "bold",
-        opacity: 0.9,
-      };
-      var SUMSUM = {
-        border: "1px solid rgba(128,128,128,.3)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "4px",
-        lineHeight: "1.7",
       };
       function Overlay(props) {
         return reactDom.createPortal(
