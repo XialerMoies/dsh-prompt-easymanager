@@ -1245,52 +1245,46 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           /**
            * 找「工作区 / agent 预设」那一行。
            *
-           * ── dsh 里的真实结构（查过源码）──────────────────────────────────
+           * ── 现在靠什么找：**槽位属性** ──────────────────────────────────
            *
-           *     <div class="heroWorkspaceRow">          ← 一行，3 个孩子
-           *       <WorkspaceChip/>                        工作区胶囊
-           *       {renderSlot("conversation.hero.workspace")}
-           *       {renderSlot("conversation.hero.agentPreset")}
-           *     </div>
+           * dsh 的槽位渲染器（`dsh-client-ui-renderer` 的 `SlotOutlet`）给每个
+           * 槽位容器都加了 `data-slot="<slotKey>"`：
            *
-           *     agent 预设那个座位是 **`<button aria-haspopup="menu">`**
-           *     （`AgentPresetSeat` 的 `menuAnchor`）。
+           *     <div data-slot="conversation.hero.agentPreset" style="display:contents">…</div>
            *
-           * ── 踩过的三次 ───────────────────────────────────────────────────
+           * 这是 **dsh 自己定义的键**，不随 CSS module 的哈希 class 变，
+           * 也不随它内部塞几个孩子变 —— **比数孩子稳得多**。
            *
-           *   ① `btn.parentElement.parentElement` —— 走太高，落到「包住整块输入区」
-           *      的外层容器上 → 控件被插到**输入框下面另起一行**。
-           *   ② 只认 `[aria-haspopup='menu']`（精确值）—— 真机上**返回 0 个**
-           *      （控制台诊断确认）。而且我把日志设成「只打一次」，
-           *      所以只看到那一次失败的样子，误以为是属性不存在。
-           *   ③ 编辑器本体（contenteditable 那个 div）**也带** `aria-haspopup`，
-           *      所以不能取「第一个匹配」—— 得从 **button** 里挑。
+           *     槽位容器（display:contents）的**父元素**就是那一行。
            *
-           * ⚠️ 判据故意**放宽**到「孩子数 2–4、里面至少 2 个 button」——
-           *    写死「正好 3 个孩子」的话，dsh 以后加一个就失效。
+           * ── 踩过的四次（每次都是判据太松或太紧）─────────────────────────
+           *
+           *   ① `btn.parentElement.parentElement` —— 走太高，插到「包住整块输入区」
+           *      的外层容器上 → 控件另起一行。
+           *   ② 只认 `[aria-haspopup='menu']` —— 真机返回 0 个（那时页面还没渲染），
+           *      而日志设成「只打一次」，只留下最早那次失败的样子。
+           *   ③ 判据放宽成「孩子数 2–4、至少 2 个 button」—— **太松**：
+           *      匹配到了输入框那行的 `standardControls`（正好 2 个孩子），
+           *      于是控件被插到了**发送按钮后面**（用户贴的 DOM 里能看到）。
+           *   ④ 所以现在**不再数孩子**，直接认槽位键。
            */
           /** 试过几次（诊断用）。⚠️ 必须声明在 apply **之前** ——
            *  `var` 会提升，但值是 undefined，`tries++` 就成了 NaN。 */
           var tries = 0;
 
+          /** 那一行的槽位键（dsh 定的，见上面说明）。 */
+          var HERO_SLOT = "conversation.hero.agentPreset";
+
           function rowOf() {
             try {
-              var chips = document.querySelectorAll("button[aria-haspopup]");
-              for (var i = 0; i < chips.length; i++) {
-                var el = chips[i].parentElement;
-                for (var up = 0; el && up < 8; up++) {
-                  var kids = el.children ? el.children.length : 0;
-                  if (kids >= 2 && kids <= 4) {
-                    var ctrl = 0;
-                    for (var k = 0; k < el.children.length; k++) {
-                      var c = el.children[k];
-                      if (c && c.tagName === "BUTTON") ctrl++;
-                    }
-                    if (ctrl >= 2 && !el.querySelector("[" + HOST_ATTR + "]")) return el;
-                  }
-                  el = el.parentElement;
-                }
-              }
+              var anchor = document.querySelector('[data-slot="' + HERO_SLOT + '"]');
+              if (!anchor) return null;
+              // ⚠️ 槽位容器自己是 `display:contents`（**没有盒子**），
+              //    往里 append 子元素布局上会散架 —— 要插到它**父元素**里。
+              var row = anchor.parentElement;
+              if (!row) return null;
+              if (row.querySelector("[" + HOST_ATTR + "]")) return null; // 已插过
+              return row;
             } catch {
               /* 结构变了就算了 */
             }
@@ -1336,12 +1330,14 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
                 //      之后成功了也不打，于是我只看到失败那次的样子。）
                 note(
                   "没找到目标行（第 " + tries + " 次尝试）；" +
-                    "button[aria-haspopup] 有 " +
-                    document.querySelectorAll("button[aria-haspopup]").length +
-                    " 个，[aria-haspopup] 全体有 " +
-                    document.querySelectorAll("[aria-haspopup]").length +
-                    " 个；第一个 button 的父链：" +
-                    describeChain(document.querySelector("button[aria-haspopup]")),
+                    "页面上有 " +
+                    document.querySelectorAll("[data-slot]").length +
+                    " 个槽位容器，其中 hero 那个（" +
+                    HERO_SLOT +
+                    "）有 " +
+                    document.querySelectorAll('[data-slot="' + HERO_SLOT + '"]').length +
+                    " 个；第一个槽位的父链：" +
+                    describeChain(document.querySelector("[data-slot]")),
                 );
                 return false;
               }

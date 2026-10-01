@@ -828,6 +828,36 @@ ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
     const on = flattenText(shims.render(pickerBox.HeroPresetChip, {})).join(" ");
     ok(on.includes("测试t-1"), "**开关打开后才显示那条预设名** —— 实际：" + on.slice(0, 60));
   }
+  // ── hero 补丁用**槽位键**找位置（不许回头数孩子）──────────────────────
+  //
+  // ⚠️ 为这个位置返工了四轮，每轮都是判据太松或太紧：
+  //      太紧 → 找不到（真机日志：0 个）
+  //      太松 → 匹配到输入框那行的 standardControls（正好 2 个孩子），
+  //             控件被插到**发送按钮后面**（用户贴的 DOM 里能看到）
+  //
+  //    dsh 的槽位渲染器给每个槽位容器加了 `data-slot="<slotKey>"`，
+  //    那是它自己定义的键 —— 不随 class 哈希变、不随内部孩子数变。
+  {
+    const host = readFileSync(join(HERE, "..", "client.js"), "utf8");
+    ok(
+      host.includes('conversation.hero.agentPreset'),
+      "**靠槽位键 conversation.hero.agentPreset 定位**（dsh 自己定义的，最稳）",
+    );
+    ok(
+      /querySelector\('\[data-slot="' \+ HERO_SLOT/.test(host),
+      "查询用的是 `[data-slot=…]`，且键走常量（不是散落的字面量）",
+    );
+    // 反例：不许再出现「数孩子」的判据
+    ok(
+      !/kids >= 2 && kids <= 4/.test(host) && !/kids === 3/.test(host),
+      "**没有「数孩子」的判据**（太松会插到发送按钮后面，太紧会找不到）",
+    );
+    // 槽位容器自己是 display:contents —— 必须插到它**父元素**里
+    ok(
+      /anchor\.parentElement/.test(host),
+      "插到槽位容器的**父元素**（槽位自己是 display:contents，往里塞会散架）",
+    );
+  }
   // ── DOM 补丁：找不到目标行时**什么都不做** ──────────────────────────────
   //
   // ⚠️ 新会话页那个下拉框只能靠 DOM 补丁插（那一行的两个槽位都是 kind:single
