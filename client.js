@@ -107,6 +107,16 @@
     var req = null; // factory 的材料化参数，见下面 factory 开头
     var react = null; // 同上 —— useChunk 在模块级，读不到 factory 里的局部变量
 
+    /**
+     * 设置面板侧边栏那一项的文案。
+     *
+     * ⚠️ **必须只有这一份** —— 侧边栏图标补丁是**按这段文案找按钮**的
+     *    （见 patchNavIcon，因为 dsh 的 `SettingsSectionRow` 只有
+     *    `{id, order, label}`，没有 icon，认不出就换不了图标）。
+     *    把文案写两遍的话，改一处就会让另一处静默失效。
+     */
+    var NAV_TITLE = "提示词管理";
+
     // 已加载好的 chunk：loader → 模块本体（失败了就删掉，下次重试）
     var chunkCache = new Map();
     /** 「正在加载」的占位符 —— 只用来占住缓存键，绝不作为模块交出去。 */
@@ -915,6 +925,90 @@
           return react.createElement(m.box.PromptEditor, null);
         }
 
+        /**
+         * 把侧边栏里那一项的图标从**兜底齿轮**换成我们自己的。
+         *
+         * ── 为什么只能这么干 ────────────────────────────────────────────────
+         *
+         * dsh 的侧边导航图标是**硬编码白名单**：
+         *
+         *     function navIcon(id) {
+         *       if (id === "account") return <IconUser…/>;
+         *       if (id === "models")  return <IconData…/>;
+         *       …
+         *       return <IconSettings…/>;   // ← 未知 id 一律齿轮
+         *     }
+         *
+         * 而注册表能带的信息只有三个字段（设置壳的 contract 里写着）：
+         *
+         *     interface SettingsSectionRow { id: string; order: number; label: string }
+         *
+         * **没有 icon 字段，也没有图标注册表** —— 第三方插件无法通过 API 指定图标。
+         * 所以只能渲染后替换。
+         *
+         * ⚠️ 这是 DOM 补丁，dsh 改版就可能失效，所以：
+         *    · 全程 try/catch，失败就保持原样（齿轮也不难看）；
+         *    · 用 MutationObserver 兜住 React 的重新渲染（否则切一次面板就被还原）；
+         *    · 只在**确实找到那一项**时才动它，认不出就什么都不做。
+         */
+        function patchNavIcon() {
+          if (typeof document === "undefined" || !document.body) return;
+
+          var KEY = "pmNavIconDone";
+          var SVG_NS = "http://www.w3.org/2000/svg";
+
+          /** 改名/编辑那支笔 —— 跟这块的语义（管理提示词）对得上。 */
+          function makeIcon() {
+            var svg = document.createElementNS(SVG_NS, "svg");
+            svg.setAttribute("viewBox", "0 0 16 16");
+            svg.setAttribute("width", "16");
+            svg.setAttribute("height", "16");
+            svg.setAttribute("fill", "none");
+            svg.setAttribute("aria-hidden", "true");
+            svg.style.flex = "none";
+            var path = document.createElementNS(SVG_NS, "path");
+            path.setAttribute("d", "M11.2 2.3l2.5 2.5-8 8L3 13.4l.6-2.7 7.6-8.4z");
+            path.setAttribute("stroke", "currentColor");
+            path.setAttribute("stroke-width", "1.3");
+            path.setAttribute("stroke-linejoin", "round");
+            path.setAttribute("stroke-linecap", "round");
+            svg.appendChild(path);
+            return svg;
+          }
+
+          function apply() {
+            try {
+              // 找导航里**文案就是这一项**的那个按钮（用同一份常量，见 NAV_TITLE）。
+              // 不靠 class（那是 CSS module 的哈希，会变），靠文案。
+              var buttons = document.querySelectorAll("button");
+              for (var i = 0; i < buttons.length; i++) {
+                var b = buttons[i];
+                if (b.textContent !== NAV_TITLE) continue;
+                if (b.getAttribute(KEY) === "1") continue; // 已经是我们的图标
+                var old = b.querySelector("svg");
+                if (!old) continue;
+                old.replaceWith(makeIcon());
+                b.setAttribute(KEY, "1");
+                return true;
+              }
+            } catch {
+              /* 补丁失败不影响功能 */
+            }
+            return false;
+          }
+
+          // 立刻试一次；没找到（面板还没开）就靠 observer 等
+          apply();
+          try {
+            var obs = new MutationObserver(function () {
+              apply();
+            });
+            obs.observe(document.body, { childList: true, subtree: true });
+          } catch {
+            /* 没有 MutationObserver 就只生效一次 */
+          }
+        }
+
         function apply(ctx) {
           // 会话头部：每个会话的多选器
           ctx.slots.inject("conversation.session.header.actions", () =>
@@ -937,11 +1031,14 @@
                 name: "settings.section",
                 id: "prompt-manager",
                 order: 50,
-                label: () => "提示词管理",
+                label: () => NAV_TITLE,
               },
               EditorSlot,
             ),
           );
+          // 侧边栏那一项的图标：dsh 只给白名单 id 配图标，我们落到了兜底齿轮
+          // （原因见 patchNavIcon 上面那段）。渲染后替换掉。
+          patchNavIcon();
         }
 
         exports.name = "dsh-prompt-manager";

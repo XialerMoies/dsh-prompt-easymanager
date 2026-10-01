@@ -410,6 +410,123 @@ const regs = [];
   }
 }
 
+// ── 2c. 侧边栏图标补丁 ─────────────────────────────────────────────────────
+//
+// dsh 的侧边导航图标是**硬编码白名单**（`navIcon(id)`），能带的信息只有
+// `{id, order, label}` 三个字段 —— 没有 icon，也没有图标注册表。
+// 所以插件只能渲染后替换。这段就是验那个替换。
+//
+// ⚠️ 必须**注入一个能用的假 DOM**：沙箱默认那个 document 是残缺的
+//    （只有 body/head/getElementById），`patchNavIcon` 会在 try/catch 里静默失败 ——
+//    测试照样绿，但什么都没验到。第一版就是这个坑。
+{
+  // 极简假 DOM：够 patchNavIcon 用（querySelectorAll → 按钮；replaceWith；setAttribute）
+  const makeEl = (tag) => {
+    const attrs = {};
+    const el = {
+      tagName: tag.toUpperCase(),
+      textContent: "",
+      children: [],
+      style: {},
+      attrs,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null),
+      setAttribute: (k, v) => {
+        attrs[k] = String(v);
+      },
+      appendChild(c) {
+        this.children.push(c);
+        return c;
+      },
+      querySelector(sel) {
+        if (sel !== "svg") return null;
+        return this.children.find((c) => c.tagName === "SVG") || null;
+      },
+      replaceWith(next) {
+        const i = this.parent.children.indexOf(this);
+        if (i >= 0) this.parent.children[i] = next;
+      },
+    };
+    return el;
+  };
+  const mk = (tag, parent) => {
+    const e = makeEl(tag);
+    e.parent = parent || null;
+    return e;
+  };
+
+  // 造一个「侧边栏」：两个按钮，其中一个文案是「提示词管理」，里面带齿轮 svg
+  const nav = mk("div");
+  const otherBtn = mk("button", nav);
+  otherBtn.textContent = "插件";
+  otherBtn.appendChild(mk("svg", otherBtn));
+  const ourBtn = mk("button", nav);
+  ourBtn.textContent = "提示词管理";
+  const gear = mk("svg", ourBtn);
+  ourBtn.appendChild(gear);
+  nav.children.push(otherBtn, ourBtn);
+
+  const body = mk("body");
+  const fakeDoc = {
+    body,
+    head: null,
+    getElementById: () => null,
+    // ⚠️ 假 DOM 必须把补丁用到的 API 都给全。第一版漏了 createElementNS，
+    //    补丁在造图标那一步抛错、被它自己的 try/catch 吞掉 ——
+    //    表现为「什么都没发生」，而断言红了却看不出原因。
+    createElementNS: (_ns, tag) => mk(tag),
+    querySelectorAll: (sel) => (sel === "button" ? [otherBtn, ourBtn] : []),
+  };
+
+  // ⚠️ `document` 是**第二个参数**（opts）里的，不是 shims 里的。
+  //    第一版写成 `createClientSandbox({ react, reactDom, document })` ——
+  //    被当成 shims，`opts.document` 恒为 undefined，于是拿到默认的残缺 document，
+  //    补丁静默失败、断言红得莫名其妙。
+  const sb = createClientSandbox({ react: {}, reactDom: {} }, { document: fakeDoc });
+  const loaded = sb.load("client.js");
+  loaded.mod.apply({
+    slots: { inject: () => {}, register: () => {} },
+  });
+
+  const now = ourBtn.children.find((c) => c.tagName === "SVG");
+  ok(!!now, "我们的按钮里还有 svg");
+  eq(
+    ourBtn.getAttribute("pmNavIconDone"),
+    "1",
+    "**「提示词管理」那一项被打了标记**（说明补丁认出了它）",
+  );
+  const replaced = now !== gear;
+  ok(replaced, "**齿轮被换掉了**（原来那个 svg 元素已不在原位）");
+  // 新图标是我们造的：只有一条 path，且 viewBox 是 16
+  const path = now && now.children.find((c) => c.tagName === "PATH");
+  ok(!!path, "新图标里有 path");
+  eq(now.getAttribute("viewBox") || now.attrs?.viewBox, "0 0 16 16", "新图标 viewBox 16");
+  // 别的项不许动
+  eq(otherBtn.getAttribute("pmNavIconDone"), null, "**别的导航项不被动**（只认「提示词管理」那一项）");
+
+  // ⚠️ 补丁是**按文案认按钮**的（dsh 的 section 注册只有 {id, order, label}，
+  //    没有 icon），所以「标签文案」和「补丁找的文案」必须是同一份常量。
+  //    这里把两者绑起来：改文案而忘了改另一边 → 立刻红。
+  {
+    const regs2 = [];
+    const sb2 = createClientSandbox({ react: {}, reactDom: {} }, { document: fakeDoc });
+    sb2.load("client.js").mod.apply({
+      slots: {
+        inject: (_name, fn) => fn(),
+        register: (o) => regs2.push(o),
+      },
+    });
+    const declared = regs2.find((o) => o.name === "settings.section");
+    ok(!!declared, "拿到 settings.section 的注册选项");
+    if (declared) {
+      eq(
+        declared.label(),
+        "提示词管理",
+        "**标签文案 = 补丁找的文案**（写两份就会有一处静默失效）",
+      );
+    }
+  }
+}
+
 // ── 3. factory 必须**同步**交出 exports ────────────────────────────────────
 // 这一条是补的：宿主曾经在 factory 里 `useChunk(loadHelpers)` 等一个 chunk，
 // factory 于是抛出一个 pending Promise，`module.exports` 永远返回不了 ——

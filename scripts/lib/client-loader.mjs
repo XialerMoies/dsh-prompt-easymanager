@@ -86,7 +86,18 @@ export function createClientSandbox(shims, opts = {}) {
   // 测试拿它去造组件 —— 用真 api，而不是自己照着复刻一份。
   const seen = { api: null };
 
-  const documentShim = { body: { __isBody: true }, head: null, getElementById: () => null };
+  // 默认是一个**残缺**的 document：只有 body/head/getElementById。
+  //
+  // ⚠️ 这个残缺是**故意的**（`installStyles` 走 getElementById 判断有没有装过），
+  //    但它意味着任何 `querySelectorAll` 之类的真实 DOM 操作都会抛错 ——
+  //    而宿主里的 DOM 补丁函数会把错误吞掉，于是**测试照样绿、什么也没验到**。
+  //    要验那类代码，用 `opts.document` 注入一个能用的假 DOM（见 client_render_test
+  //    里的「侧边栏图标」用例）。
+  const documentShim = opts.document || {
+    body: { __isBody: true },
+    head: null,
+    getElementById: () => null,
+  };
 
   const sandboxWindow = {
     __ModuleLoader__: {
