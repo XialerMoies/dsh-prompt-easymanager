@@ -105,6 +105,8 @@
     var loadEditor = function () { return req.async("./client.editor.js"); };
     /** 设置页里的「总开关」那一块 + 共用的「?」图标。 */
     var loadEditorSwitch = function () { return req.async("./client.editor.switch.js"); };
+    /** 设置页里的「系统提示词段落改写」那一块。 */
+    var loadEditorSections = function () { return req.async("./client.editor.sections.js"); };
 
     var req = null; // factory 的材料化参数，见下面 factory 开头
     var react = null; // 同上 —— useChunk 在模块级，读不到 factory 里的局部变量
@@ -922,20 +924,24 @@
         /** 设置页那一栏。 */
         function EditorSlot() {
           var m = useChunk(loadEditor);
-          // 兄弟 chunk：总开关 + 「?」图标。editor 自己要渲染总开关，所以要等它。
+          // 兄弟 chunk —— editor 自己要渲染这两块，所以都得等到。
           var sw = useChunk(loadEditorSwitch);
-          if (!m || !sw) return null;
+          var sec = useChunk(loadEditorSections);
+          if (!m || !sw || !sec) return null;
           // ⚠️ `installStyles` 在 **create() 的返回值**里，不在模块上 ——
           //    chunk 的 module.exports 只有 `{ create }`。
           if (!m.box) m.box = m.create(CHUNK_API);
           if (!sw.box) sw.box = sw.create(CHUNK_API);
+          if (!sec.box) sec.box = sec.create(CHUNK_API);
           m.box.installStyles();
           sw.box.installStyles();
-          // ⚠️ 总开关和「?」图标归 switch chunk，但编辑器里要用 —— 由宿主递进去，
-          //    而不是让编辑器自己去拉一份（那样两边各一份缓存，还要各自处理加载态）。
+          sec.box.installStyles();
+          // ⚠️ 拆出去的那几块由宿主**当 props 递进去**，而不是让编辑器自己去拉 ——
+          //    自己拉会让两边各有一份缓存、还要各自处理加载态。
           return react.createElement(m.box.PromptEditor, {
             MasterSwitch: sw.box.MasterSwitch,
             helpIcon: sw.box.helpIcon,
+            SectionsBlock: sec.box.SectionsBlock,
           });
         }
 

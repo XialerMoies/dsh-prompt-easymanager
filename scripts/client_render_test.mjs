@@ -630,6 +630,10 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Componen
       "**宿主把 MasterSwitch 递给了编辑器**（漏了就是总开关静默消失）",
     );
     ok(typeof seenEditorProps.helpIcon === "function", "**宿主把 helpIcon 递给了编辑器**");
+    ok(
+      typeof seenEditorProps.SectionsBlock === "function",
+      "**宿主把 SectionsBlock 递给了编辑器**（漏了系统提示词那一整块静默消失）",
+    );
   }
 }
 ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
@@ -677,7 +681,19 @@ ok(!!modSwitch, "拿得到 switch chunk 模块");
 const switchBox = modSwitch.create(strict.api);
 ok(typeof switchBox.MasterSwitch === "function", "switch chunk 导出了 MasterSwitch");
 ok(typeof switchBox.helpIcon === "function", "switch chunk 导出了 helpIcon");
-const EDITOR_PROPS = { MasterSwitch: switchBox.MasterSwitch, helpIcon: switchBox.helpIcon };
+
+// 「系统提示词段落改写」那一块同理 —— 也是宿主递进来的。
+sandbox.preload("client.editor.sections.js");
+const modSections = sandbox.cache.get("dsh-prompt-manager/client.editor.sections.js");
+ok(!!modSections, "拿得到 sections chunk 模块");
+const sectionsBox = modSections.create(strict.api);
+ok(typeof sectionsBox.SectionsBlock === "function", "sections chunk 导出了 SectionsBlock");
+
+const EDITOR_PROPS = {
+  MasterSwitch: switchBox.MasterSwitch,
+  helpIcon: switchBox.helpIcon,
+  SectionsBlock: sectionsBox.SectionsBlock,
+};
 
 // 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
 // （点预览那一刻才炸是这条链最容易断的地方，见 client.js 里那段注释）。
@@ -729,6 +745,22 @@ const renderEditor = (props = {}) =>
   ok(!/loadSwitch|useSwitchChunk/.test(edSrc), "编辑器不再自己拉 switch chunk（改由宿主递 props）");
   ok(/props && props\.MasterSwitch/.test(edSrc), "编辑器从 props 取 MasterSwitch");
   ok(/props && props\.helpIcon/.test(edSrc), "编辑器从 props 取 helpIcon");
+
+  // ── 「系统提示词段落改写」那一块（第二个拆出去的）────────────────────
+  const secSrc = readFileSync(join(HERE, "..", "client.editor.sections.js"), "utf8");
+  for (const gone of ["sectionBadge", "renderSectionCard", "renderEmptySlot", "renderSections"]) {
+    ok(
+      !new RegExp("function " + gone + "\\(").test(edSrc),
+      `编辑器里不再有 ${gone}（已搬进 sections chunk）`,
+    );
+  }
+  ok(/function SectionsBlock\(props\)/.test(secSrc), "sections chunk 里 SectionsBlock 收 props");
+  ok(
+    /function renderSectionCard\(row, props\)/.test(secSrc) &&
+      /function renderEmptySlot\(slot, props\)/.test(secSrc),
+    "**内部两个渲染函数也把 props 接了下去**（漏了就是 props is not defined）",
+  );
+  ok(/react\.createElement\(props\.SectionsBlock/.test(edSrc), "编辑器从 props 取 SectionsBlock");
 
   // 方向二（渲染出来还在）见下面「总开关」那一节 —— 那里状态才设齐，
   // 放在这儿渲染出来的是「读取中…」，断言会假红。
