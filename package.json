@@ -38,13 +38,17 @@
     "client.js",
     "client.*.js",
     "cordis.patch.yml",
+    "scripts/lib/library-migration.mjs",
+    "scripts/lib/presets.mjs",
+    "scripts/lib/prompt-library.mjs",
+    "scripts/lib/section-overrides.mjs",
+    "scripts/lib/section-slots.mjs",
+    "scripts/lib/session-injection.mjs",
     "README.md",
-    "README.en.md",
     "CHANGELOG.md",
-    "docs",
     "LICENSE",
-    "scripts",
-    "assets"
+    "docs/system-prompt.md",
+    "docs/section-overrides-design.md"
   ],
   "scripts": {
     "harness:check": "node scripts/check-syntax.mjs && node scripts/check-props.mjs",

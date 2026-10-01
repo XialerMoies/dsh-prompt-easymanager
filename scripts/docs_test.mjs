@@ -302,6 +302,67 @@ const readme = readFileSync(at("README.md"), "utf8");
   );
 }
 
+// ── 10. 发布包里不许有测试，但运行时文件一个都不能少 ──────────────────────
+//
+// ⚠️ **两头都会出事**，所以两边都要盯：
+//
+//   · 带了测试 → 用户装完多出 400 KB 用不到的东西（12 个测试文件 + 测试脚手架）
+//   · 漏了运行时文件 → **装了直接跑不起来**（`index.js` 会 import 不到）
+//
+// ⚠️ 为什么用 `files` 白名单而不是 `.npmignore`：**实测 `.npmignore` 根本没被读** ——
+//    往里加 `CHANGELOG.md` / `README.md` 两条，`npm pack --dry-run` 里两个都还在、
+//    文件数一动不动（46）。而 `files` 确实生效。
+//    白名单比黑名单危险（漏一个就坏），所以这里**从 index.js 反推**要哪些文件。
+{
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+  const files = Array.isArray(pkg.files) ? pkg.files : [];
+  ok(files.length > 0, "package.json 有 files 白名单");
+
+  // ① 测试与开发工具不该在里面
+  const badEntries = files.filter((f) => /_test\.mjs$|test-harness|check-|bump-client-rev|extract_section_names/.test(f));
+  eq(badEntries, [], "**files 里没有测试 / 开发工具**");
+
+  // ② 也不该整个目录地放 scripts —— 那样测试就跟着进去了
+  ok(!files.includes("scripts"), "`files` 里没有整个 scripts 目录（会带进测试）");
+  ok(!files.includes("scripts/lib"), "`files` 里没有整个 scripts/lib（会带进 test-harness）");
+
+  // ③ **运行时文件一个都不能漏** —— 从 index.js 的 import 反推
+  //
+  //    ⚠️ 这条是这套白名单的**安全网**。以后给 index.js 加一个
+  //       `./scripts/lib/xxx.mjs` 的 import 却忘了加进 files，
+  //       发布出去就是「装了跑不起来」—— 而且本地 link: 装法**测不出来**。
+  const idx = readFileSync(at("index.js"), "utf8");
+  const needed = new Set();
+  /** 递归收 —— 被 import 的模块自己还 import 别人。 */
+  const collect = (file) => {
+    if (needed.has(file)) return;
+    needed.add(file);
+    const p = at("scripts", "lib", file);
+    if (!existsSync(p)) return;
+    for (const m of readFileSync(p, "utf8").matchAll(/from "\.\/([a-z-]+\.mjs)"/g)) collect(m[1]);
+  };
+  for (const m of idx.matchAll(/from "\.\/scripts\/lib\/([a-z-]+\.mjs)"/g)) collect(m[1]);
+
+  ok(needed.size > 0, "从 index.js 反推出了运行时依赖", [...needed].join(", "));
+  const missing = [...needed].filter((f) => !files.includes("scripts/lib/" + f));
+  eq(missing, [], "**运行时依赖都在 files 里**（漏一个就是「装了跑不起来」）");
+
+  // ④ 客户端那 8 个要能被打包 —— DSH 按「包名 + 文件名」加载它们
+  ok(files.includes("client.js"), "files 里有 client.js");
+  ok(files.includes("client.*.js"), "files 里有 client.*.js（8 个 chunk）");
+  ok(files.includes("index.js"), "files 里有 index.js");
+  ok(files.includes("cordis.patch.yml"), "files 里有 cordis.patch.yml");
+
+  // ⑤ 库绝不能进包 —— 它是本机运行时数据（v0.3.2 起在 $DSH_HOME/prompts/）
+  ok(!files.includes("prompts"), "**files 里没有 prompts**（那是运行时数据，不是源码）");
+
+  // ⑥ 别把仓库门面图塞进包：banner 917 KB，占包体九成，而且 README 没引用它
+  ok(
+    !files.includes("assets/banner.png"),
+    "**没有把 banner 图打进包**（917 KB，README 里并没有引用）",
+  );
+}
+
 // ── 断言描述不许在同一个文件里重复 ──────────────────────────────────────
 //
 // ⚠️ 描述是断言失败时**唯一的定位信息**。同名两条的话，红了一条你不知道是哪个 ——
