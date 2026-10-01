@@ -1083,6 +1083,14 @@ const renderEditor = (props = {}) =>
         renameDraft: "",
         setRenaming: () => {},
         setRenameDraft: () => {},
+        // ⚠️ 勾选走**草稿**（原来那个 setActivePrompts 打的是已退役的 /defaults）。
+        //    不给的话勾选框一 onChange 就炸。
+        presetDraft: ["P1", "P2"],
+        setPresetDraft: () => {},
+        saveDraft: () => {},
+        MasterSwitch: null,
+        globalEnabled: true,
+        onToggleGlobal: () => {},
         presetName: "",
         setPresetName: () => {},
         loadPresets: () => {},
@@ -1112,7 +1120,14 @@ const renderEditor = (props = {}) =>
     eq(spy.length, 1, "**点保存真的调到了 doPreset**（回调链没被 props 断掉）");
     eq(spy[0] && spy[0].action, "save", "提交的是 save");
     eq(spy[0] && spy[0].name, "写代码", "覆盖当前匹配到的那条预设");
-    eq(spy[0] && spy[0].scope, "global", "写全局层");
+    // ⚠️ 原来这条验的是 `scope: "global"` —— 那个字段**已经删了**
+    //    （预设不再带作用范围，挂在哪层由位置决定）。
+    //    现在要守的是：**保存时把勾选草稿一起交上去** ——
+    //    不带的话「勾了几条 → 保存」只会存下预设的旧内容，用户白勾。
+    ok(
+      Array.isArray(spy[0] && spy[0].prompts),
+      "**保存时带上了勾选草稿**（不带的话勾了等于白勾）：" + JSON.stringify(spy[0] && spy[0].prompts),
+    );
   }
 
   // 预设下拉：选另一条 → doPreset({action:"apply", id})
@@ -1140,13 +1155,13 @@ const renderEditor = (props = {}) =>
   const picked = [];
   const el3 = shims.render(
     comboBox.ComboBlock,
-    comboProps({ setActivePrompts: (ids) => picked.push(ids) }),
+    comboProps({ setPresetDraft: (ids) => picked.push(ids) }),
   );
   const cb = findEl(el3, (n) => n.type === "input" && n.props && n.props.type === "checkbox");
   ok(!!cb, "找得到勾选框");
   if (cb) {
     cb.props.onChange();
-    eq(picked.length, 1, "**勾一下真的调到了 setActivePrompts**");
+    eq(picked.length, 1, "**勾一下真的交给了草稿**（不再直接写盘 —— 那条走的是已退役的 /defaults）");
     ok(Array.isArray(picked[0]), "交出的是 id 数组：" + JSON.stringify(picked[0]));
   }
 
@@ -1221,6 +1236,10 @@ const renderEditor = (props = {}) =>
       "preSt",
       "preBusySt",
       "preNameSt",
+      // ⚠️ `draftSt` = 勾选草稿（序号 15）。加它是因为勾选不再直接写盘 ——
+      //    原来那条路打的是**已退役的 /defaults**（回 410）。
+      //    这个守卫当场点名了「实际……draftSt……，期望……」。
+      "draftSt",
       "enSt",
       "catSt",
       "rnSt",
@@ -2906,8 +2925,10 @@ function makeSectionsData(over = {}) {
 //   0-9   list / busy / err / edit / message / openId / defaultsDraft /
 //         defaultsBusy / sections / sectionsBusy
 //   10-12 openSection / sectionDraft / presetsData
-//   13-16 presetsBusy / presetName / enabledDraft / closedCats
-//   17-18 renaming / renameDraft
+//   13-15 presetsBusy / presetName / **presetDraft（勾选草稿）**
+//   16 enabledDraft（总开关）
+//   17 closedCats
+//   18-19 renaming / renameDraft
 //
 // ⚠️ 原来 12/13 是 `sectionScope` / `sectionSessionId` —— **已删除**
 //    （两个 setter 从没被调用过，界面上也从来没有那个开关）。
@@ -3219,10 +3240,17 @@ function makeSectionsData(over = {}) {
     { presets: [], global: { enabled: false, presetId: null }, session: null, effective: null, sessionId: null },
     false, // presetsBusy
     "", // presetName
-    null, // enabledDraft ← 就是它
+    // ⚠️ presetDraft（勾选草稿，序号 15）—— 漏了这一格的话后面全错位，
+    //    而 `withEnabled` 改的就是错位后的那一格（踩过）。
+    [],
+    null, // enabledDraft ← 序号 16，就是它
   ];
   /** 把 enabledDraft（最后一位）换成 v，返回完整状态表。 */
-  const withEnabled = (v) => base.slice(0, -1).concat([v]);
+  // ⚠️ **别用 `slice(0, -1)`** —— 那只在「enabledDraft 是最后一个 state」时成立。
+  //    加了 presetDraft 之后末尾是 rnDraftSt，改末尾等于没改开关
+  //    （踩过：「关闭时说明还有什么在生效」红，而开关其实一直是开着的）。
+  const ENABLED_AT = 16; // enabledDraft 的下标（见文件上方那张表）
+  const withEnabled = (v) => base.map((x, i) => (i === ENABLED_AT ? v : x));
 
   shims.setStates(withEnabled(true));
   let el = renderEditor({});

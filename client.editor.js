@@ -175,6 +175,13 @@ window.__ModuleLoader__.load({
         var preNameSt = react.useState("");
         var presetName = preNameSt[0];
         var setPresetName = preNameSt[1];
+
+        // ⚠️ **勾选草稿**：勾选不再立刻写盘（原来那个走的是已退役的 /defaults，
+        //    点了只会弹 410）。改草稿 → 点「保存」才写进当前那条预设。
+        //    `null` = 还没建过草稿（第一次渲染时按当前预设建）。
+        var draftSt = react.useState(null);
+        var presetDraft = draftSt[0];
+        var setPresetDraft = draftSt[1];
         /** 总开关的本地态（带乐观更新 —— 拨一下立刻变色，失败再回滚） */
         var enSt = react.useState(null);
         var enabledDraft = enSt[0];
@@ -330,6 +337,19 @@ window.__ModuleLoader__.load({
           loadPresets();
         }, [loadPresets]);
 
+        // ⚠️ **草稿跟着「当前是哪条预设」走** —— 换一条预设就重建草稿。
+        //    不重建的话勾选框还显示上一条的内容，跟盘上对不上。
+        //
+        //    ⚠️ 依赖是 **presetId**（不是整个 presetsData）—— 用后者的话，
+        //      每次 loadPresets 都会把用户正在勾的草稿冲掉。
+        react.useEffect(function () {
+          var g = presetsData && presetsData.global;
+          var id = g && typeof g.presetId === "string" ? g.presetId : "";
+          var one = presetById(presetsData, id);
+          setPresetDraft(one && Array.isArray(one.prompts) ? one.prompts.slice() : []);
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [presetsData && presetsData.global && presetsData.global.presetId]);
+
         /** 预设类操作：save / apply / delete。完事两边都重读。 */
         var doPreset = react.useCallback(
           function (payload) {
@@ -375,41 +395,48 @@ window.__ModuleLoader__.load({
           [flash, loadPresets, loadSections],
         );
 
-        /**
-         * 把一条提示词移进/移出生效列表。
-         *
-         * 走的是既有的 DEFAULTS_PATH（全局）和 ASSIGN_PATH（按会话）——
-         * **没有另造一套接口**，所以这里改完，会话头那个徽章看到的东西是一致的。
-         */
-        var setActivePrompts = react.useCallback(
-          function (nextIds) {
-            setPresetsBusy(true);
-            // 只写全局层。会话层的分配由会话页负责（那边天然带着 sessionId）。
-            var url = ROUTE_DEFAULTS;
-            var body = { promptIds: nextIds };
-            return fetch(url, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(body),
-            })
-              .then(function (res) {
-                if (!res.ok) throw new Error("HTTP " + res.status);
-                return null;
-              })
-              .then(function () {
-                if (!mountedRef.current) return null;
-                loadPresets(scope, sid);
-                return null;
-              })
-              .catch(function (e) {
-                if (mountedRef.current) flash("失败：" + ((e && e.message) || String(e)));
-              })
-              .then(function () {
-                if (mountedRef.current) setPresetsBusy(false);
-              });
-          },
-          [flash, loadPresets],
-        );
+/**
+ * 把勾选草稿写进**当前那条全局预设**。
+ *
+ * ⚠️ 一次 `update` 同时写 `prompts` —— 预设是**唯一载体**，所以勾选不是
+ *    写到别处的「生效列表」，而是**改这条预设的内容**。
+ *    没有当前预设时（手改过的状态）走 `save` 存一条新的。
+ */
+var saveDraft = react.useCallback(
+  function (nextIds, name) {
+    var matched =
+      presetsData && presetsData.global && typeof presetsData.global.presetId === "string"
+        ? presetById(presetsData, presetsData.global.presetId)
+        : null;
+    if (matched) {
+      setPresetsBusy(true);
+      return doPreset({ action: "update", id: matched.id, prompts: nextIds });
+    }
+    var nm = (name || "").trim();
+    if (!nm) {
+      flash("先给它起个名字");
+      setRenaming(true);
+      setRenameDraft("");
+      return null;
+    }
+    setPresetsBusy(true);
+    return doPreset({ action: "save", name: nm, prompts: nextIds });
+  },
+  [doPreset, flash, presetsData, setRenameDraft, setRenaming],
+);
+
+/** 按 id 在预设表里查一条（表可能是对象也可能是数组）。 */
+function presetById(d, id) {
+  if (!d || !d.presets) return null;
+  if (Array.isArray(d.presets)) {
+    for (var i = 0; i < d.presets.length; i++) {
+      if (d.presets[i] && d.presets[i].id === id) return d.presets[i];
+    }
+    return null;
+  }
+  var one = d.presets[id];
+  return one ? Object.assign({ id: id }, one) : null;
+}
 
         /** 改一段：action = replace | disable | restore | acknowledge */
         var applySection = react.useCallback(
@@ -637,7 +664,7 @@ window.__ModuleLoader__.load({
                * props 全从这边递：**状态和动作都留在本组件**（presetsData /
                * presetsBusy / presetName / renaming / renameDraft，以及
                * doPreset / applyPreset / savePreset / commitRename /
-               * setActivePrompts / loadPresets / flash）—— 它们跟 /defaults、
+               * saveDraft / loadPresets / flash）—— 它们跟 /defaults、
                * /presets、/edit 几条接口的数据流缠在一起，而且测试按 hook 下标
                * 塞状态，搬走会让按索引塞状态的地方全错位。这一块只搬了渲染。
                */
@@ -656,7 +683,12 @@ window.__ModuleLoader__.load({
                     loadPresets: loadPresets,
                     flash: flash,
                     doPreset: doPreset,
-                    setActivePrompts: setActivePrompts,
+                    // ⚠️ 勾选走**草稿**：勾的时候只改草稿（不发请求），点「保存」才写进预设。
+                    //    原来那个 setActivePrompts 打的是**已退役的 /defaults**（回 410），
+                    //    点一下只会弹「失败」，所以整个换掉了。
+                    presetDraft: presetDraft,
+                    setPresetDraft: setPresetDraft,
+                    saveDraft: saveDraft,
                     // ⚠️ 开关随 ComboBlock 一起递下去 —— 它渲染在组合卡的行首。
                     //    漏了的话开关**静默消失**（ComboBlock 拿不到组件就渲染 null），不报错。
                     MasterSwitch: props.MasterSwitch,

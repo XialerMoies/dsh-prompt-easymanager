@@ -67,7 +67,12 @@ window.__ModuleLoader__.load({
         // ⚠️ 只取 global 层。不带 ?session= 时后端**根本不返回** session 层，
         //    原来那个三元的 session 分支永远取到 undefined（死代码，已删）。
         var globalPreset = globalPresetOf(props);
-        var activeIds = (globalPreset && Array.isArray(globalPreset.prompts) ? globalPreset.prompts : []).slice();
+        // ⚠️ **草稿优先**：用户勾了还没保存时，看到的应该是勾选状态本身，
+  //    而不是盘上那条预设的旧内容。
+  //    （踩过：勾一下弹 410，勾选框弹回去 —— 因为写的还是退役的 /defaults。）
+  var activeIds = Array.isArray(props.presetDraft)
+    ? props.presetDraft.slice()
+    : (globalPreset && Array.isArray(globalPreset.prompts) ? globalPreset.prompts : []).slice();
 
         var usable = [];
         for (var pi = 0; pi < props.prompts.length; pi++) {
@@ -126,7 +131,9 @@ window.__ModuleLoader__.load({
                       var next = on
                         ? activeIds.filter(function (x) { return x !== p.id; })
                         : activeIds.concat([p.id]);
-                      props.setActivePrompts(next);
+                      // ⚠️ **只改草稿** —— 保存时才写进预设。
+                      //    预设是唯一载体，所以勾选不是「另一份生效列表」。
+                      props.setPresetDraft(next);
                     },
                   }),
                   // 名字占满剩余宽度。
@@ -415,9 +422,11 @@ window.__ModuleLoader__.load({
        *    覆盖走同一条 save（同名 → presetId 命中同一条）。
        */
       function savePreset(props) {
+    // ⚠️ 草稿要**一起交上去** —— 不然「勾了几条 → 保存」只会存下预设的旧内容。
+    var draft = Array.isArray(props.presetDraft) ? props.presetDraft : null;
         var matched = globalPresetOf(props);
         if (matched) {
-          props.doPreset({ action: "save", name: matched.name, scope: "global" });
+          props.doPreset(Object.assign({ action: "save", name: matched.name }, draft ? { prompts: draft } : {}));
           return;
         }
         var name = props.presetName.trim();
@@ -427,7 +436,7 @@ window.__ModuleLoader__.load({
           props.setRenameDraft("");
           return;
         }
-        props.doPreset({ action: "save", name: name, scope: "global" }).then(function () {
+        props.doPreset(Object.assign({ action: "save", name: name }, draft ? { prompts: draft } : {})).then(function () {
           props.setPresetName("");
         });
       }
