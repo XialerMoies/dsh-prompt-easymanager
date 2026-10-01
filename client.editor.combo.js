@@ -241,6 +241,18 @@ window.__ModuleLoader__.load({
             //    塞个静态标题进来会把两件事混在一行。
             //    （踩过两轮：先是把区块标题整个换成预设名 → 标题没了；
             //      再把标题塞进卡片头 → 用户说「为什么功能标题在卡片顶部」。）
+            // ⚠️ **全局注入开关在这一行行首** —— 用户要求「全局注入开关合入提示词组合」：
+            //    它管的是**全局这一层整体注不注入**（关掉 = 没记录的会话什么都不挂），
+            //    跟这一块是同一件事的两个面，所以放同一张卡。
+            //    原来它自己占一张卡，用户分不清两个控件的边界。
+            props.MasterSwitch
+              ? react.createElement(props.MasterSwitch, {
+                  key: "sw",
+                  enabled: props.globalEnabled,
+                  busy: props.presetsBusy,
+                  onToggle: props.onToggleGlobal,
+                })
+              : null,
             titleNode,
             // 改名铅笔：只有「当前这套是一条真预设」时才有意义
             currentId && !props.renaming
@@ -312,6 +324,28 @@ window.__ModuleLoader__.load({
               },
               props.presetsBusy ? "保存中…" : "保存",
             ),
+              // ── 删除这条预设 ────────────────────────────────────────────────
+              // ⚠️ 位置是用户指定的：**保存和刷新之间**。
+              //    只在「当前这套是一条真预设」时才有意义（手改过的状态没东西可删）。
+              //    ⚠️ 不新增 state —— hook 下标一动，测试里所有按序号塞状态的用例
+              //       都要跟着挪。做完就走，反馈交给 flash。
+              currentId
+                ? react.createElement(
+                    "button",
+                    {
+                      key: "del",
+                      type: "button",
+                      className: "pm-btn",
+                      style: bus ? BTN_BUSY : BTN,
+                      disabled: bus,
+                      title: "删掉预设「" + currentName + "」（用它挂着的全局/会话会自动退回）",
+                      onClick: function () {
+                        props.doPreset({ action: "delete", id: currentId });
+                      },
+                    },
+                    "删除",
+                  )
+                : null,
             react.createElement(
               "button",
               {

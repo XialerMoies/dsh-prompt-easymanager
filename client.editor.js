@@ -254,7 +254,10 @@ window.__ModuleLoader__.load({
           function (next) {
             var prev = enabledDraft;
             setEnabledDraft(next);
-            return fetch(ROUTE_STATE, {
+            // ⚠️ 走 **`/global`** —— 它才认「开关 + 指向哪条预设」这一对，
+            //    而且「要开就得先选预设」那条规则在那边（没选 → 400）。
+            //    `/state` 现在也能改 enabled，但带不上 presetId。
+            return fetch(ROUTE_GLOBAL, {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ enabled: next }),
@@ -621,7 +624,10 @@ window.__ModuleLoader__.load({
           // ⚠️ 顺序（用户定的）：
           //    全局注入开关 → 提示词组合 + 快速预设 → 个人提示词 → 系统提示词
           //    从「管什么」到「管具体哪条」再到「dsh 自己的段落」，一层层收窄。
-          body.push(react.createElement("div", { key: "master" }, renderMasterSwitch()));
+          // ⚠️ 开关**不再单独占一张卡** —— 用户要求「全局注入开关合入提示词组合」。
+          //    它现在渲染在提示词组合卡片的**行首**（见 client.editor.combo.js），
+          //    由 ComboBlock 从 props 拿（下面递给它）。
+          void renderMasterSwitch;
           // 提示词组合 + 快速预设 —— 管「哪些生效」，在具体条目之前
           body.push(
             react.createElement("div", { key: "combo" },
@@ -635,7 +641,8 @@ window.__ModuleLoader__.load({
                * /presets、/edit 几条接口的数据流缠在一起，而且测试按 hook 下标
                * 塞状态，搬走会让按索引塞状态的地方全错位。这一块只搬了渲染。
                */
-              props.ComboBlock
+              // ⚠️ 开关随 ComboBlock 一起递下去 —— 它渲染在组合卡的行首。
+            props.ComboBlock
                 ? react.createElement(props.ComboBlock, {
                     presetsData: presetsData,
                     presetsBusy: presetsBusy,
@@ -650,6 +657,11 @@ window.__ModuleLoader__.load({
                     flash: flash,
                     doPreset: doPreset,
                     setActivePrompts: setActivePrompts,
+                    // ⚠️ 开关随 ComboBlock 一起递下去 —— 它渲染在组合卡的行首。
+                    //    漏了的话开关**静默消失**（ComboBlock 拿不到组件就渲染 null），不报错。
+                    MasterSwitch: props.MasterSwitch,
+                    globalEnabled: enabledDraft,
+                    onToggleGlobal: toggleEnabled,
                   })
                 : null,
             ),
