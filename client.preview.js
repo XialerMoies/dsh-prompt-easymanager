@@ -1,13 +1,13 @@
-// dsh-prompt-manager · 最终提示词预览（包内 chunk）
+// dsh-prompt-easymanager · 最终提示词预览（包内 chunk）
 //
 // 由 client.js 用 require.async("./client.preview.js") 拉起；必须注册成
-// id "dsh-prompt-manager" + chunk 文件名，否则宿主报「loaded without registering」。
+// id "dsh-prompt-easymanager" + chunk 文件名，否则宿主报「loaded without registering」。
 //
 // ⚠️ 改完必须重启 dsh —— chunk 的 rev 跟着 client.js 的 mtime 走，
 //    浏览器会拿旧 rev 请求，文件对不上就是 404，表现为设置页整片空白。
 
 window.__ModuleLoader__.load({
-  id: "dsh-prompt-manager",
+  id: "dsh-prompt-easymanager",
   chunk: "client.preview.js",
   factory: (require) => {
     var module = { exports: {} };

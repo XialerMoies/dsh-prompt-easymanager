@@ -1,9 +1,31 @@
 {
-  "name": "dsh-prompt-manager",
-  "version": "0.3.0",
-  "description": "个人提示词 —— 为 DSH 的每个会话挂载若干条系统提示词（按分类组织、各自按 order 插入），支持全局默认、设置页编辑提示词库，以及最终系统提示词的实时预览。",
+  "name": "dsh-prompt-easymanager",
+  "version": "0.3.1",
+  "description": "给 DeepSeek Harness 用的个人提示词管理器：把「个人提示词 + 系统提示词改动」存成预设，按会话或全局挂载，并能改写、关闭、还原 DSH 的原生段落，还能看清模型实际收到的最终提示词。",
   "type": "module",
   "main": "./index.js",
+  "license": "MIT",
+  "author": "XialerMoies",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XialerMoies/dsh-prompt-easymanager.git"
+  },
+  "homepage": "https://github.com/XialerMoies/dsh-prompt-easymanager#readme",
+  "bugs": {
+    "url": "https://github.com/XialerMoies/dsh-prompt-easymanager/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "prompt",
+    "prompt-manager",
+    "system-prompt"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,6 +39,7 @@
     "client.*.js",
     "cordis.patch.yml",
     "README.md",
+    "README.en.md",
     "CHANGELOG.md",
     "docs",
     "LICENSE",
@@ -33,13 +56,18 @@
     "test:props": "node scripts/check-props.mjs",
     "test:adapter": "node scripts/preset_adapter_test.mjs",
     "bump:rev": "node scripts/bump-client-rev.mjs",
-    "pack:release": "node scripts/pack-release.mjs"
+    "pack:release": "node scripts/pack-release.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dsh": {
-    "id": "dsh-prompt-manager",
+    "id": "dsh-prompt-easymanager",
     "name": "个人提示词",
-    "version": "0.3.0",
-    "repo": "local/dsh-prompt-manager",
+    "version": "0.3.1",
+    "repo": "XialerMoies/dsh-prompt-easymanager",
     "permissions": "系统提示词注入（按会话）, 会话头部选择器, 只读系统提示词预览",
     "bundle": {
       "patch": "./cordis.patch.yml"

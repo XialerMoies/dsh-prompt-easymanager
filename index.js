@@ -15,7 +15,7 @@
 //     客户端点击毫无反应且无从排障。
 //   - 诊断信息随 GET 一起返回，失败原因在界面上一眼可见。
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,9 +42,9 @@ import {
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 
-const PLUGIN_ID = "dsh-prompt-manager";
+const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.0";
+const PLUGIN_VERSION = "0.3.1";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
 export const STATE_PATH = "/api/prompt-manager/state";
@@ -64,18 +64,65 @@ export const PRESETS_PATH = "/api/prompt-manager/presets";
 export const GLOBAL_PATH = "/api/prompt-manager/global";
 
 const STATE_DIR = process.env.DSH_HOME || join(homedir(), ".dsh");
-const STATE_FILE = join(STATE_DIR, "dsh-prompt-manager-state.json");
+const STATE_FILE = join(STATE_DIR, "dsh-prompt-easymanager-state.json");
+
+/**
+ * 改名之前的状态文件。
+ *
+ * ⚠️ **必须兼容读** —— 插件从 `dsh-prompt-manager` 改名成
+ *    `dsh-prompt-easymanager`，状态文件名跟着变了。只认新名字的话，
+ *    老用户升级后**读不到自己那份配置**，打开插件一片空白
+ *    （跟之前那个「开关关着就丢配置」是同一类后果）。
+ *
+ * 策略：**新名字优先；新文件不存在而老文件在 → 读老的**。
+ *       写的时候一律写新名字（见 `writeState`），所以读一次就迁过来了，
+ *       老文件**留着不动** —— 万一新版有问题，退回去还能用。
+ */
+const LEGACY_STATE_FILE = join(STATE_DIR, "dsh-prompt-manager-state.json");
+
+/** 这次请求该读哪个状态文件。 */
+function stateFilePath() {
+  try {
+    if (existsSync(STATE_FILE)) return STATE_FILE;
+    if (existsSync(LEGACY_STATE_FILE)) {
+      // 只在**第一次**读老文件时说一声，免得每次请求都刷
+      if (!legacyNoticeDone) {
+        legacyNoticeDone = true;
+        try {
+          console.info(
+            "[dsh-prompt-easymanager] 从旧状态文件读取配置（" +
+              LEGACY_STATE_FILE +
+              "），下次写入会落到新文件。旧文件保留不动。",
+          );
+        } catch {
+          /* 没有 console 就算了 */
+        }
+      }
+      return LEGACY_STATE_FILE;
+    }
+  } catch {
+    /* 读不到就当没有 */
+  }
+  return STATE_FILE;
+}
+let legacyNoticeDone = false;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
  * 提示词库目录。
  *
- * `DSH_PROMPT_MANAGER_CATALOG` 可以覆盖 —— **给测试用的**。
- * 集成测试要往库里塞几条 fixture，不该因此污染用户真实的提示词库，
- * 也不该反过来要求用户的库里留几条"测试专用"的提示词。
+ * 环境变量可以覆盖它 —— **给测试用的**。集成测试要往库里塞几条 fixture，
+ * 不该因此污染用户真实的提示词库，也不该反过来要求用户的库里留几条
+ * "测试专用"的提示词。
+ *
+ * ⚠️ **两个名字都认**（`EASYMANAGER` 是改名后的新名字）：
+ *    插件从 `dsh-prompt-manager` 改名过来，但**已经按老名字配了环境变量的人
+ *    不该因此静默失效** —— 那种失败不报错，只是「以为配了却没生效」。
  */
 const CATALOG_PATH =
-  process.env.DSH_PROMPT_MANAGER_CATALOG || join(HERE, "prompts", "catalog.json");
+  process.env.DSH_PROMPT_EASYMANAGER_CATALOG ||
+  process.env.DSH_PROMPT_MANAGER_CATALOG ||
+  join(HERE, "prompts", "catalog.json");
 const PROMPTS_DIR = dirname(CATALOG_PATH);
 
 /**
@@ -391,7 +438,8 @@ function prunePresets(alive) {
 // 详见 docs/section-overrides-design.md。
 function readState() {
   try {
-    const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+    // ⚠️ 走 `stateFilePath()` —— 老名字的文件也认（见上面那段说明）。
+const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"));
     const out = {
       global: { enabled: false, presetId: null },
       assignments: {},
@@ -578,7 +626,8 @@ function writeState(state) {
           : onDisk.presets,
       updatedAt: new Date().toISOString(),
     };
-    writeFileSync(STATE_FILE, JSON.stringify(merged, null, 2), "utf8");
+    // ⚠️ 写**一律写新名字** —— 这样读一次就迁过来了，老文件留着不动。
+writeFileSync(stateFilePath(), JSON.stringify(merged, null, 2), "utf8");
   } catch {
     /* 持久化失败不影响本次会话内的效果 */
   }

@@ -1,6 +1,6 @@
-// dsh-prompt-manager · 系统提示词段落改写（包内 chunk）
+// dsh-prompt-easymanager · 系统提示词段落改写（包内 chunk）
 //
-// 由 client.editor.js 用 require.async 拉起；必须注册成 id "dsh-prompt-manager"
+// 由 client.editor.js 用 require.async 拉起；必须注册成 id "dsh-prompt-easymanager"
 // + chunk 文件名，否则宿主报「loaded without registering」。
 //
 // ⚠️ 改完必须重启 dsh —— chunk 的 rev 跟着 client.js 的 mtime 走。改完跑
@@ -15,7 +15,7 @@
 //    地方错位。这一步只搬**渲染**。
 
 window.__ModuleLoader__.load({
-  id: "dsh-prompt-manager",
+  id: "dsh-prompt-easymanager",
   chunk: "client.editor.sections.js",
   factory: (require) => {
     var module = { exports: {} };

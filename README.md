@@ -1,4 +1,4 @@
-# 个人提示词 · dsh-prompt-manager
+# 个人提示词 · dsh-prompt-easymanager
 
 为 DeepSeek Harness 的**每个会话**挂载任意几条系统提示词，并直接看到**模型实际收到的**最终结果。
 
@@ -22,28 +22,63 @@ dsh 的系统提示词是很多段拼起来的：persona、AGENTS.md、技能、
 
 ## 安装
 
-把插件目录放到任意位置，然后在 profile 的依赖里指向它：
+推荐用 DSH 自带的插件命令，从 npm 装：
 
-```json
-"dsh-prompt-manager": "file:<插件目录的绝对路径>"
+```powershell
+dsh plugin --profile web add dsh-prompt-easymanager
 ```
 
-例如 `file:D:/tools/dsh-prompt-manager`（Windows 用正斜杠）。
+装完**重启 DSH Web**。
 
-**想改源码即刻生效，就把 `node_modules/dsh-prompt-manager` 做成指向源码目录的
+升级：
+
+```powershell
+dsh plugin --profile web update dsh-prompt-easymanager
+```
+
+> 名字里那个 `web` 是 profile 名，按你自己的来（`dsh profile list` 能看到）。
+
+### 从源码装（想改代码时用这个）
+
+指向本地目录：
+
+```json
+"dsh-prompt-easymanager": "file:<插件目录的绝对路径>"
+```
+
+例如 `file:D:/tools/dsh-prompt-easymanager`（Windows 用正斜杠）。
+
+**想改源码即刻生效，就把 `node_modules/dsh-prompt-easymanager` 做成指向源码目录的
 junction（符号链接）**，而不是让包管理器拷贝一份：
 
 ```powershell
 $nm   = "$env:USERPROFILE\.dsh\profiles\<profile>\node_modules"   # profile 名按你的来
 $src  = "<插件目录的绝对路径>"
-Remove-Item "$nm\dsh-prompt-manager" -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target $src
+Remove-Item "$nm\dsh-prompt-easymanager" -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Junction -Path "$nm\dsh-prompt-easymanager" -Target $src
 ```
 
 > ⚠️ **再跑一次 `pnpm install` 会把 junction 换成实体拷贝。**
 > 不会丢改动（pnpm 是从源码目录拷的），但之后改源码就不生效了 —— 重跑上面两行。
 
 装完**重启 dsh**。之后凡是改了插件代码，也都要重启 —— 原因见「注意事项」。
+
+---
+
+## 从旧名字升级（v0.3.1 之前装的）
+
+插件原来叫 `dsh-prompt-manager`，**v0.3.1 起改名成 `dsh-prompt-easymanager`**：
+
+```powershell
+dsh plugin --profile web remove dsh-prompt-manager
+dsh plugin --profile web add dsh-prompt-easymanager
+```
+
+**配置不会丢**：状态文件（预设、会话选择、段落改写）会自动从老文件名**读一次**，
+之后写到新名字；老文件留着不动，想退回去还能用。
+
+⚠️ 路由前缀也跟着变了（`/api/prompt-manager/*` → `/api/prompt-easymanager/*`）——
+有脚本直接调接口的话要跟着改。
 
 ---
 
@@ -55,27 +90,14 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target $src
 ### 会话头部
 
 ```
-[●] [写代码 ▾]  [预览]  [↻]
- │     │          │       └─ 重读 catalog.json
- │     │          └─ 展开最终系统提示词
- │     └─ 一个下拉框：这个会话用哪套
+[●] [写代码]  [预览]  [↻]
+ │     │        │       └─ 重读 catalog.json
+ │     │        └─ 展开最终系统提示词
+ │     └─ 一个下拉框：这个会话用哪套（**点一下就生效**，没有「应用」按钮）
  └─ 状态点：灰=未挂 / 绿=自己选过 / 蓝=跟随全局 / 黄=agent 未加载 / 红=通信失败
 ```
 
-点开是**一个预设下拉框**（不是选提示词 tag）：
-
-```
-┌──────────────────────────────────────────────────────────┐
-│ 这个会话用什么                                    [关闭] │
-│ ✓ 跟随全局（写代码）                    全局改了就跟着变 │
-│   系统提示词                  这个会话不挂任何自设提示词 │
-│   写代码                                       自设 2 条 │
-│   系统提示词 · 改                                改 1 段 │
-└──────────────────────────────────────────────────────────┘
-```
-```
-
-**点一下就生效**，没有「应用」按钮。三个状态互不相同：
+点开是一个**预设下拉框**（不是选提示词 tag）。三个状态互不相同：
 
 | 选什么 | 含义 |
 |---|---|
@@ -83,30 +105,24 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target $src
 | **系统提示词** | **显式什么都不挂**（哪怕全局开着也不挂） |
 | **跟随全局** | 用全局那条；全局改了就跟着变 |
 
-> 「系统提示词」和「跟随全局」**不是一回事**：全局开着的时候，
-> 前者一条都不挂，后者吃全局那条。合并成一个的话，你就没法表达
-> 「这个会话别挂全局的」。
+> 「系统提示词」和「跟随全局」**不是一回事**：全局开着时，前者一条都不挂，
+> 后者吃全局那条。合并了就没法表达「这个会话别挂全局的」。
 
-**按钮文字就是这个会话实际用哪条**，按下面三种情况显示：
-
-| 情况 | 显示 |
-|---|---|
-| 预设里有个人提示词 | 预设名 |
-| 只改了系统提示词 | 系统提示词 · 改 |
-| 两样都没改 | 系统提示词 |
-
+**按钮文字就是这个会话实际用哪条**：预设里有个人提示词→预设名；
+只改了系统提示词→`系统提示词 · 改`；两样都没改→`系统提示词`。
 跟着全局来的会加 `·跟随全局`（否则分不清是自己选的还是跟着走的）。
 
 ### 新会话页
 
-还没开会话的那一页，「工作区」「agent 预设」右边也会有一个同样的下拉框。
+还没开会话的那一页，「工作区」「agent 预设」右边也有一个同样的下拉框。
 
-⚠️ 那一页**还没有会话**，所以它改的是**全局那条预设**。
-真按会话存要 dsh 给「会话创建」钩子，而那一行的渲染上下文里连会话 id 都没有。
+⚠️ 两点要知道：
 
-⚠️ 这个下拉框是**渲染后插进去的**（dsh 给那一行只留了两个位置，都被人占了，
-也没有第三个）。好处是**不碰 dsh 的文件、它更新不会覆盖**；
-代价是 dsh 改版可能失效 —— 那时候这个下拉框不出现，**但页面不会坏**。
+- 那一页**还没有会话**，所以它改的是**全局那条预设**（真按会话存要 dsh 给
+  「会话创建」钩子，而那一行的上下文里连会话 id 都没有）。
+- 那个下拉框是**渲染后插进去的**（dsh 给那一行只留了两个位置，都被人占了）。
+  好处是**不碰 dsh 的文件、它更新不会覆盖**；代价是 dsh 改版可能失效 ——
+  那时它不出现，**但页面不会坏**。
 
 ### 设置页
 
@@ -187,7 +203,7 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-manager" -Target $src
 
 **② 状态文件不会自动清理，这是故意的。**
 
-记录存在 `$DSH_HOME/dsh-prompt-manager-state.json`（缺省 `~/.dsh/`），
+记录存在 `$DSH_HOME/dsh-prompt-easymanager-state.json`（缺省 `~/.dsh/`），
 每条约 60 字节 —— 攒到 10,000 个会话也只有约 600 KB，不值得为它冒误删的风险。
 删掉它等于「没有默认、没有指定」，`defaults` 和 `assignments` 都会丢。
 

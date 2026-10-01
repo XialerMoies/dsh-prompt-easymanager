@@ -1,13 +1,13 @@
-// dsh-prompt-manager · 多选面板与会话头部入口（包内 chunk）
+// dsh-prompt-easymanager · 多选面板与会话头部入口（包内 chunk）
 //
 // 由 client.js 用 require.async("./client.picker.js") 拉起；必须注册成
-// id "dsh-prompt-manager" + chunk 文件名，否则宿主报「loaded without registering」。
+// id "dsh-prompt-easymanager" + chunk 文件名，否则宿主报「loaded without registering」。
 //
 // ⚠️ 改完必须重启 dsh —— chunk 的 rev 跟着 client.js 的 mtime 走，
 //    浏览器会拿旧 rev 请求，文件对不上就是 404，表现为设置页整片空白。
 
 window.__ModuleLoader__.load({
-  id: "dsh-prompt-manager",
+  id: "dsh-prompt-easymanager",
   chunk: "client.picker.js",
   factory: (require) => {
     var module = { exports: {} };
@@ -488,7 +488,7 @@ window.__ModuleLoader__.load({
             //    （真机上踩过：点预设一直 400，界面上毫无提示。）
             var m = (e && e.message) || String(e);
             try {
-              console.warn("[dsh-prompt-manager] 切换预设失败：" + m + "；请求体=" + JSON.stringify(body));
+              console.warn("[dsh-prompt-easymanager] 切换预设失败：" + m + "；请求体=" + JSON.stringify(body));
             } catch {
               /* 没有 console 就算了 */
             }
@@ -537,7 +537,7 @@ window.__ModuleLoader__.load({
             }
             var box = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
             console.info(
-              "[dsh-prompt-manager] hero 框位置：父 " +
+              "[dsh-prompt-easymanager] hero 框位置：父 " +
                 (parent ? (parent.tagName || "?").toLowerCase() : "?") +
                 "." +
                 (parent && parent.className ? String(parent.className).split(/\s+/)[0] : "?") +

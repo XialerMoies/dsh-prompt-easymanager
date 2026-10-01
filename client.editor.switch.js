@@ -1,7 +1,7 @@
-// dsh-prompt-manager · 总开关 + 「?」图标（包内 chunk）
+// dsh-prompt-easymanager · 总开关 + 「?」图标（包内 chunk）
 //
 // 由 client.editor.js 用 require.async("./client.editor.switch.js") 拉起；
-// 必须注册成 id "dsh-prompt-manager" + chunk 文件名，否则宿主报
+// 必须注册成 id "dsh-prompt-easymanager" + chunk 文件名，否则宿主报
 // 「loaded without registering」。
 //
 // ⚠️ 改完必须重启 dsh —— chunk 的 rev 跟着 client.js 的 mtime 走，
@@ -15,7 +15,7 @@
 //     三处都要用它 —— 跟开关一起搬出来，由宿主把它交回给编辑器那一份用。
 
 window.__ModuleLoader__.load({
-  id: "dsh-prompt-manager",
+  id: "dsh-prompt-easymanager",
   chunk: "client.editor.switch.js",
   factory: (require) => {
     var module = { exports: {} };

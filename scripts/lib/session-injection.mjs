@@ -274,7 +274,7 @@ export function createSessionInjector({
    *
    *   用标记解耦之后：照样带 `scope`（段落完整），只是监听器放行（文本未被改）。
    */
-  const READ_ORIGINAL = Symbol("dsh-prompt-manager.read-original");
+  const READ_ORIGINAL = Symbol("dsh-prompt-easymanager.read-original");
 
   /**
    * 本插件注入的段落用的段名前缀。

@@ -402,8 +402,8 @@ const { mod, id, sandbox } = loadFactory(shims);
 
 // ── 1. 模块契约 ─────────────────────────────────────────────────────────────
 {
-  ok(id === "dsh-prompt-manager", "模块 id");
-  ok(mod.name === "dsh-prompt-manager", "导出 name");
+  ok(id === "dsh-prompt-easymanager", "模块 id");
+  ok(mod.name === "dsh-prompt-easymanager", "导出 name");
   ok(Array.isArray(mod.inject) && mod.inject.includes("slots"), "导出 inject 含 slots");
   ok(typeof mod.apply === "function", "导出 apply");
 }
@@ -569,7 +569,7 @@ const regs = [];
 // ── 3. factory 必须**同步**交出 exports ────────────────────────────────────
 // 这一条是补的：宿主曾经在 factory 里 `useChunk(loadHelpers)` 等一个 chunk，
 // factory 于是抛出一个 pending Promise，`module.exports` 永远返回不了 ——
-// 真机上报的是 `dsh-prompt-manager: import failed: [object Promise]`。
+// 真机上报的是 `dsh-prompt-easymanager: import failed: [object Promise]`。
 // 影子层当时既不管 hooks 规则、也不查返回值，所以测试全绿。
 {
   ok(typeof mod.then !== "function", "factory 同步返回了 exports（不是 Promise）");
@@ -677,15 +677,15 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Componen
 }
 ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
 ok(
-  sandbox.loadedChunks.includes("dsh-prompt-manager/client.picker.js"),
+  sandbox.loadedChunks.includes("dsh-prompt-easymanager/client.picker.js"),
   "会话头部入口按需拉起了 picker chunk",
 );
 ok(
-  sandbox.loadedChunks.includes("dsh-prompt-manager/client.preview.js"),
+  sandbox.loadedChunks.includes("dsh-prompt-easymanager/client.preview.js"),
   "预览 chunk 跟面板**一起**拉起（点预览那一刻才炸是这条链最容易断的地方）",
 );
-const modPicker = sandbox.cache.get("dsh-prompt-manager/client.picker.js");
-const modEditor = sandbox.cache.get("dsh-prompt-manager/client.editor.js");
+const modPicker = sandbox.cache.get("dsh-prompt-easymanager/client.picker.js");
+const modEditor = sandbox.cache.get("dsh-prompt-easymanager/client.editor.js");
 ok(!!modPicker, "拿得到 picker chunk 模块");
 ok(!!modEditor, "拿得到 editor chunk 模块");
 
@@ -903,7 +903,7 @@ eq(strict.missing, [], "chunk 要的样式常量宿主一个没漏（漏一个�
 //     而测试是同步渲染，等不到 effect 里的异步，总开关整块会不出现）。
 //    这里照宿主的做法把 props 喂进去，否则测出来的「总开关不见了」跟真机无关。
 sandbox.preload("client.editor.switch.js");
-const modSwitch = sandbox.cache.get("dsh-prompt-manager/client.editor.switch.js");
+const modSwitch = sandbox.cache.get("dsh-prompt-easymanager/client.editor.switch.js");
 ok(!!modSwitch, "拿得到 switch chunk 模块");
 const switchBox = modSwitch.create(strict.api);
 ok(typeof switchBox.MasterSwitch === "function", "switch chunk 导出了 MasterSwitch");
@@ -911,21 +911,21 @@ ok(typeof switchBox.helpIcon === "function", "switch chunk 导出了 helpIcon");
 
 // 「系统提示词段落改写」那一块同理 —— 也是宿主递进来的。
 sandbox.preload("client.editor.sections.js");
-const modSections = sandbox.cache.get("dsh-prompt-manager/client.editor.sections.js");
+const modSections = sandbox.cache.get("dsh-prompt-easymanager/client.editor.sections.js");
 ok(!!modSections, "拿得到 sections chunk 模块");
 const sectionsBox = modSections.create(strict.api);
 ok(typeof sectionsBox.SectionsBlock === "function", "sections chunk 导出了 SectionsBlock");
 
 // 「提示词组合 + 预设」那一块同理。
 sandbox.preload("client.editor.combo.js");
-const modCombo = sandbox.cache.get("dsh-prompt-manager/client.editor.combo.js");
+const modCombo = sandbox.cache.get("dsh-prompt-easymanager/client.editor.combo.js");
 ok(!!modCombo, "拿得到 combo chunk 模块");
 const comboBox = modCombo.create(strict.api);
 ok(typeof comboBox.ComboBlock === "function", "combo chunk 导出了 ComboBlock");
 
 // 「个人提示词库」那一块同理。
 sandbox.preload("client.editor.library.js");
-const modLibrary = sandbox.cache.get("dsh-prompt-manager/client.editor.library.js");
+const modLibrary = sandbox.cache.get("dsh-prompt-easymanager/client.editor.library.js");
 ok(!!modLibrary, "拿得到 library chunk 模块");
 const libraryBox = modLibrary.create(strict.api);
 ok(typeof libraryBox.LibraryBlock === "function", "library chunk 导出了 LibraryBlock");
@@ -941,7 +941,7 @@ const EDITOR_PROPS = {
 // 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
 // （点预览那一刻才炸是这条链最容易断的地方，见 client.js 里那段注释）。
 sandbox.preload("client.preview.js");
-const modPreview = sandbox.cache.get("dsh-prompt-manager/client.preview.js");
+const modPreview = sandbox.cache.get("dsh-prompt-easymanager/client.preview.js");
 ok(!!modPreview, "拿得到 preview chunk 模块");
 const previewBox = modPreview.create(strict.api);
 ok(typeof previewBox.PreviewPanel === "function", "create(api) 造出了 PreviewPanel");

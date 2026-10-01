@@ -14,7 +14,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PKG = "dsh-prompt-manager";
+const PKG = "dsh-prompt-easymanager";
 /** 包根目录：这个文件在 scripts/lib/ 下，往上两级。 */
 const PKG_DIR = join(HERE, "..", "..");
 
@@ -182,7 +182,7 @@ export function createClientSandbox(shims, opts = {}) {
       // ⚠️ factory 是**同步**的：它必须直接交出 exports。
       //    在里面「等 chunk」（也就是 throw 一个 pending Promise）的话，
       //    真机上 DSH 拿到的是「没有导出」，宿主界面报
-      //      dsh-prompt-manager: import failed: [object Promise]
+      //      dsh-prompt-easymanager: import failed: [object Promise]
       //    这一条以前没查，结果这个 bug 一路发到了真机。
       if (mod !== null && typeof mod === "object" && typeof mod.then === "function") {
         throw new Error(

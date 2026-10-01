@@ -98,7 +98,7 @@ lib/index.js:634  this.fetchRoutes.set(route.path, registered);
 
 ```js
 window.__ModuleLoader__.load({
-  id: "dsh-prompt-manager",
+  id: "dsh-prompt-easymanager",
   factory: (require) => {
     var module = { exports: {} };
     // …
@@ -111,7 +111,7 @@ window.__ModuleLoader__.load({
 宿主的界面报：
 
 ```
-dsh-prompt-manager: import failed: [object Promise]
+dsh-prompt-easymanager: import failed: [object Promise]
 ```
 
 同理，**factory 里不许调 hooks**（`useState` 在渲染之外会抛 `Invalid hook call`）。
@@ -167,5 +167,5 @@ const pruned = injector.pruneMissing();   // 剔掉幽灵 id，并重挂受影�
 ## 部署：`file:` 依赖会被 pnpm 拷贝
 
 profile 设了 `nodeLinker: hoisted` 时，**再跑一次 `pnpm install` 会把
-`node_modules/dsh-prompt-manager` 从 junction 换成实体拷贝** —— 之后改源码不生效。
+`node_modules/dsh-prompt-easymanager` 从 junction 换成实体拷贝** —— 之后改源码不生效。
 （不会丢改动，pnpm 是从源码目录拷的。）重建 junction 的命令在 README 的「安装」。

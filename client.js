@@ -1,4 +1,4 @@
-// 个人提示词 (dsh-prompt-manager) · 客户端宿主
+// 个人提示词 (dsh-prompt-easymanager) · 客户端宿主
 //
 // 这个文件只做三件事：注册两个槽位、渲染会话头部那一个按钮、按需拉下面的 chunk。
 //
@@ -105,7 +105,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
     // loader 是缓存的键，每次渲染都新建的话缓存永远 miss —— 组件会一直加载不完。
     //
     // require.async 收的是相对说明符（"./client.xxx.js"），**不是**注册键
-    // "dsh-prompt-manager/client.xxx.js" —— 那个是 importChunk 自己拼的。
+    // "dsh-prompt-easymanager/client.xxx.js" —— 那个是 importChunk 自己拼的。
     var loadPicker = function () { return req.async("./client.picker.js"); };
     var loadPreview = function () { return req.async("./client.preview.js"); };
     var loadEditor = function () { return req.async("./client.editor.js"); };
@@ -219,7 +219,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
     }
 
     window.__ModuleLoader__.load({
-      id: "dsh-prompt-manager",
+      id: "dsh-prompt-easymanager",
       factory: (require) => {
         var module = { exports: {} };
         var exports = module.exports;
@@ -1381,7 +1381,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             if (state === lastState) return;
             lastState = state;
             try {
-              console.info("[dsh-prompt-manager] hero 下拉框：" + msg);
+              console.info("[dsh-prompt-easymanager] hero 下拉框：" + msg);
             } catch {
               /* 没有 console 就算了 */
             }
@@ -1458,7 +1458,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           patchHeroPreset();
         }
 
-        exports.name = "dsh-prompt-manager";
+        exports.name = "dsh-prompt-easymanager";
         exports.inject = inject;
         exports.apply = apply;
         exports.ROUTES = {
@@ -1473,6 +1473,6 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
       },
     });
   } catch (err) {
-    console.error("[AI Client Sandbox] dsh-prompt-manager runtime error:", err);
+    console.error("[AI Client Sandbox] dsh-prompt-easymanager runtime error:", err);
   }
 })();

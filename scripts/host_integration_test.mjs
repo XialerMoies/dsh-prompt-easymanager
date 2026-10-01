@@ -54,7 +54,7 @@ const PLUGIN_VERSION = JSON.parse(
 //      · 数组形式的 `assignments[sid]` → 自动存成一条「（旧配置）…」预设
 //    4e 那一节专门验这个迁移。
 writeFileSync(
-  join(DSH_HOME, "dsh-prompt-manager-state.json"),
+  join(DSH_HOME, "dsh-prompt-easymanager-state.json"),
   JSON.stringify(
     { version: 1, assignments: {}, defaults: ["none"], sectionOverrides: {} },
     null,
@@ -265,7 +265,7 @@ const S = "session-live-0001";
 
 // ── 1. 导出面 ───────────────────────────────────────────────────────────────
 {
-  eq(name, "dsh-prompt-manager", "插件 name");
+  eq(name, "dsh-prompt-easymanager", "插件 name");
   ok(inject.includes("systemPrompt"), "inject 含 systemPrompt");
   ok(inject.includes("connection"), "inject 含 connection");
   ok(inject.includes("agents"), "inject 含 agents");
@@ -443,7 +443,7 @@ let P2 = "";
 
 // ── 5. 状态已落盘 ───────────────────────────────────────────────────────────
 {
-  const f = join(DSH_HOME, "dsh-prompt-manager-state.json");
+  const f = join(DSH_HOME, "dsh-prompt-easymanager-state.json");
   ok(existsSync(f), "状态文件已写入 DSH_HOME");
   const parsed = JSON.parse(readFileSync(f, "utf8"));
   // ⚠️ 会话此刻是「显式什么都不挂」（见 8 那一节）—— 所以值就是 null。
@@ -978,7 +978,7 @@ const TMP_ID = "zz-test-only";
   apply(ctx4);
   const t = ctx4.__registered.tools[0];
   const out = t.execute();
-  eq(out.plugin, "dsh-prompt-manager", "工具回报 plugin id");
+  eq(out.plugin, "dsh-prompt-easymanager", "工具回报 plugin id");
   eq(out.name, "个人提示词", "工具回报中文名");
   // ⚠️ 从 package.json 读，别硬编码 —— 这个断言因为「忘了跟着改」红过三次
   //    （v0.10.2 / v0.11.1 各一次，重排版本号又一次）。版本号本来就有三处要同步，
@@ -1104,9 +1104,9 @@ const TMP_ID = "zz-test-only";
   apply(ctx3);
 
   // 先手工塞一份覆盖进状态文件，再走一次会触发 saveState 的接口
-  const before = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+  const before = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
   writeFileSync(
-    join(DSH_HOME, "dsh-prompt-manager-state.json"),
+    join(DSH_HOME, "dsh-prompt-easymanager-state.json"),
     JSON.stringify(
       {
         ...before,
@@ -1130,7 +1130,7 @@ const TMP_ID = "zz-test-only";
   // 走一次「重载目录」——它内部会调 pruneMissing + 写状态
   await call(ctx3, RELOAD_PATH, { method: "POST", body: {} });
 
-  const after = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+  const after = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
   ok(after.sectionOverrides !== undefined, "**重载之后 sectionOverrides 还在**");
   ok(
     after.sectionOverrides?.["harness:identity"]?.text === "我的身份",
@@ -1241,7 +1241,7 @@ const TMP_ID = "zz-test-only";
   eq(s1.status, 200, "写会话层改写 → 200");
 
   // 落盘检查：两层各存各的
-  const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+  const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
   eq(disk.sectionOverrides["harness:identity"].text, "全局身份", "全局层还是原来那条");
   eq(
     disk.sessionSectionOverrides["session-A"]["harness:identity"].text,
@@ -1265,7 +1265,7 @@ const TMP_ID = "zz-test-only";
   eq(r1.status, 200, "还原会话层 → 200");
   const a2 = await call(ctx7, SECTIONS_PATH, { search: "session=session-A" });
   eq(a2.json.effectiveOverrides["harness:identity"].text, "全局身份", "**还原会话层后回落到全局那条**");
-  const disk2 = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+  const disk2 = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
   ok(
     disk2.sessionSectionOverrides["session-A"] === undefined,
     "空掉的会话层不留占位（文件里不堆空对象）",
@@ -1285,7 +1285,7 @@ const TMP_ID = "zz-test-only";
     body: { name: "tool:bash", action: "disable" },
   });
   eq(dflt.status, 200, "不带 scope → 200");
-  const disk3 = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+  const disk3 = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
   ok(disk3.sectionOverrides["tool:bash"] !== undefined, "**不带 scope 时写进全局层**（向后兼容）");
   ok(
     disk3.sessionSectionOverrides["session-C"] === undefined,
@@ -1609,7 +1609,7 @@ const TMP_ID = "zz-test-only";
 
   // ── 落盘：新模型存的是 global.*，不再有顶层 enabled / defaults ──────────
   {
-    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-manager-state.json"), "utf8"));
+    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
     eq(disk.global.enabled, true, "开关持久化在 global.enabled");
     eq(
       Object.prototype.hasOwnProperty.call(disk, "enabled"),
@@ -1717,7 +1717,7 @@ rmSync(DSH_HOME, { recursive: true, force: true });
 //    取舍写在这儿：迁移是**保住配置**，不是替用户决定要不要开。
 //    `enabled` 照原位保留（关着就还是关着），预设建出来挂在那儿。
 {
-  const stateFile = join(DSH_HOME, "dsh-prompt-manager-state.json");
+  const stateFile = join(DSH_HOME, "dsh-prompt-easymanager-state.json");
   // ⚠️ 那时候文件可能**还不存在**（前面几节把盘清了）—— 直接 readFileSync 会炸。
   const existed = existsSync(stateFile);
   const backup = existed ? readFileSync(stateFile, "utf8") : null;

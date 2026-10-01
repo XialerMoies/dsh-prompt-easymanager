@@ -59,7 +59,7 @@ const readme = readFileSync(at("README.md"), "utf8");
 
 // ── 2b. 面向用户的地方不暴露作者环境 ────────────────────────────────────────
 //
-// README 里写过 `file:E:/ai-talk/杂谈/dsh-prompt-manager`，例子里还出现过
+// README 里写过 `file:E:/ai-talk/杂谈/dsh-prompt-easymanager`，例子里还出现过
 // 作者自己那条提示词的名字 —— 用户既看不懂，也不需要知道。
 {
   // 只查**会给用户看**的东西：README、docs/ 顶层的两份。

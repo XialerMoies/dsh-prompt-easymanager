@@ -27,6 +27,68 @@
 
 ---
 
+## v0.3.1 — 改名 dsh-prompt-easymanager（为发 npm）
+
+**改名的原因**：npm 上的 \`dsh-prompt-manager\` 已经被别人占了
+（SaiSenBox 的另一个实现，2026-08-15 首发，跟这个插件**没有关系**）。
+不换名字就没法发 npm。
+
+### 改了哪些地方
+
+这个字符串同时是**好几种身份**，所以不是「全局替换」那么简单 —— 扫出 82 处：
+
+| 身份 | 改法 |
+|---|---|
+| npm 包名 / DSH 插件 id / cordis 注册名 | 全改 |
+| **chunk 注册 id**（\`__ModuleLoader__.load({id})\`） | 全改（8 个文件） |
+| URL 路由前缀 | 全改（\`/api/prompt-manager/*\` → \`/api/prompt-easymanager/*\`） |
+| 状态文件名 | 改，**但要兼容读老文件**（见下） |
+| 环境变量 | **新名字也认，老名字继续认** |
+| CHANGELOG 里的历史 | **不改** —— 那是事实 |
+
+⚠️ **chunk 注册 id 漏一个就加载不到**：DSH 解析包内 chunk 靠
+「包名 + 文件名」（\`dsh-prompt-easymanager/client.picker.js\`），
+所以 \`client.js\` 和每个 \`client.*.js\` 里的 id 必须字字一致。
+
+### 兼容读老状态文件（不然老用户配置全丢）
+
+状态文件名跟着包名变了：
+
+    ~/.dsh/dsh-prompt-manager-state.json      → 老
+    ~/.dsh/dsh-prompt-easymanager-state.json  → 新
+
+只认新名字的话，升级后**读不到自己那份配置**，打开插件一片空白
+（跟 v0.3.0 那个「开关关着就丢配置」是同一类后果）。
+
+策略：**新名字优先；新文件不在而老文件在 → 读老的**。
+写的时候一律写新名字，所以读一次就迁过来了；**老文件留着不动** ——
+万一新版有问题，退回去还能用。
+
+### 环境变量也留了旧名
+
+    DSH_PROMPT_EASYMANAGER_CATALOG    ← 新
+    DSH_PROMPT_MANAGER_CATALOG        ← 老，继续认
+
+已经按老名字配了的人**不该因此静默失效** —— 那种失败不报错，
+只是「以为配了却没生效」，最难查。
+
+### 顺手补的包元数据（要发 npm 就得像个正经包）
+
+    author / repository / homepage / bugs / keywords / engines / publishConfig
+    \`pack:check\` 脚本
+    \`dsh.repo\` 从 \`local/dsh-prompt-easymanager\` 改成真的仓库地址（原来是过时的）
+
+\`engines\` 写的是 \`^22.19.0 || >=24.0.0\` —— 跟另一个实现对齐，
+免得装到不支持的 Node 上再出怪问题。
+
+### 升级方法
+
+    dsh plugin --profile web remove dsh-prompt-manager
+    dsh plugin --profile web add dsh-prompt-easymanager
+
+---
+
+
 ## v0.3.0 — 预设成为「唯一载体」；会话页换成预设下拉框
 
 这一版是**加功能**（所以进中位），也是改动最大的一版 —— 数据模型换了。
