@@ -400,6 +400,14 @@ function readState() {
       presets: {},
     };
     out.presets = normalizePresets(parsed?.presets);
+    // ⚠️ **顺序要紧**：先让 `migrateLegacyState` 把老 `defaults[]` 变成一条预设，
+    //    再让 `normalizeGlobal` 去匹配那条预设、把 `global.presetId` 指上。
+    //
+    //    反过来的话 `matchPreset` 在**空预设表**里找不到东西，
+    //    `presetId` 就是 null —— 用户老 `defaults` 里那几条**静默消失**。
+    //    （演练真实状态文件时发现的：`defaults:["my-prompt-1"]` + 开关关着，
+    //      迁移后什么都没剩下。）
+    migrateLegacyState(out, parsed);
     out.global = normalizeGlobal(parsed?.global, {
       // ⚠️ 按老版本的语义传：**不写 `enabled` = 开着**（`parsed?.enabled !== false`）。
       //    传 `parsed?.enabled` 的话，「没有这个字段」会变成 undefined → 关掉，
@@ -409,7 +417,6 @@ function readState() {
       sectionOverrides: parsed?.sectionOverrides,
       presets: out.presets,
     });
-    migrateLegacyState(out, parsed);
     if (parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object") {
       out.sectionOverrides = normalizeOverrides(parsed.sectionOverrides);
     }
@@ -492,6 +499,34 @@ function migrateLegacyState(out, parsed) {
       out.assignments[sid] = null;
     } else if (typeof value === "string" && value && value !== NONE_SENTINEL) {
       out.assignments[sid] = value;
+    }
+  }
+
+  // ── 老的全局 `defaults[]` ──────────────────────────────────────────────
+  //
+  // ⚠️ 这一段是**演练真实状态文件之后补的**。原来只迁 `assignments`，
+  //    而 `normalizeGlobal` 只会在**已有的预设表**里找匹配 —— 用户的
+  //    `presets: {}` 是空的，于是 `defaults: ["my-prompt-1"]` 被**静默丢掉**。
+  //
+  //    这里先把它变成一条预设，`normalizeGlobal`（在 readState 里**稍后**调用）
+  //    就能匹配到、把 `global.presetId` 指上。
+  const defs = (Array.isArray(parsed?.defaults) ? parsed.defaults : []).filter(
+    (x) => typeof x === "string" && x && x !== NONE_SENTINEL,
+  );
+  if (defs.length > 0) {
+    const secs =
+      parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object"
+        ? normalizeOverrides(parsed.sectionOverrides)
+        : {};
+    // ⚠️ 先在已有预设里找内容一模一样的（幂等）—— 第二次读盘不能又长一条。
+    const same = matchPreset({ prompts: defs, sections: secs }, out.presets);
+    if (!same) {
+      const name = `${MIGRATED} 全局 ${defs.slice(0, 3).join("、")}`;
+      const byName = Object.entries(out.presets).find(([, p]) => p.name === name);
+      if (!byName) {
+        const id = presetId(name, Object.keys(out.presets));
+        out.presets[id] = capturePreset({ name, prompts: defs, sections: secs });
+      }
     }
   }
 }

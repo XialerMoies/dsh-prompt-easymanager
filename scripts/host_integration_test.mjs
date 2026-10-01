@@ -5,7 +5,7 @@
 // ⚠️ DSH_HOME 必须在**导入 index.js 之前**设置 —— 状态目录是模块顶层的 const。
 //    这里用临时目录隔离，绝不碰用户真实的 ~/.dsh。
 
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { createSuite } from "./lib/test-harness.mjs";
 
 const { ok, eq, done } = createSuite("宿主集成测试");
@@ -1706,5 +1706,74 @@ const TMP_ID = "zz-test-only";
   }
 }
 rmSync(DSH_HOME, { recursive: true, force: true });
+
+
+// ── 4f. 老数据迁移：**开关关着 + 老 defaults 里有东西** ──────────────────
+//
+// ⚠️ 这条是**演练真实状态文件**逼出来的。原来是 `if (enabled && …)`，
+//    开关关着的用户 `defaults` 里那几条会被**静默丢掉** ——
+//    而种子里是 `defaults: ["none"]`（会被过滤掉），所以原来的测试测不到。
+//
+//    取舍写在这儿：迁移是**保住配置**，不是替用户决定要不要开。
+//    `enabled` 照原位保留（关着就还是关着），预设建出来挂在那儿。
+{
+  const stateFile = join(DSH_HOME, "dsh-prompt-manager-state.json");
+  // ⚠️ 那时候文件可能**还不存在**（前面几节把盘清了）—— 直接 readFileSync 会炸。
+  const existed = existsSync(stateFile);
+  const backup = existed ? readFileSync(stateFile, "utf8") : null;
+  try {
+    // ⚠️ **这节的目录可能已经被前面几节清掉了** —— 写之前先建回来，
+    //    不然 ENOENT（这节的 dump 探针就踩过这个）。
+    mkdirSync(DSH_HOME, { recursive: true });
+    // 造一份「老版本 + 开关关着 + defaults 有货」的状态
+    writeFileSync(
+      stateFile,
+      JSON.stringify(
+        {
+          version: 1,
+          assignments: {},
+          defaults: ["format-contract"],
+          sectionOverrides: {},
+          enabled: false,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const st = await call(ctx, STATE_PATH, { method: "GET" });
+    eq(st.status, 200, "迁移后 /state 能读");
+
+    const j = st.json || {};
+    const presets = j.presets || {};
+    const ids = Object.keys(presets);
+    ok(ids.length >= 1, "**老 defaults 变成了一条预设**（开关关着也迁）：" + JSON.stringify(ids));
+
+    // 认出来的那条要真的装着那个 prompt id
+    const found = ids.find((k) => (presets[k].prompts || []).indexOf("format-contract") >= 0);
+    ok(!!found, "**那条预设想里装着老的 prompt id**（不是空壳）");
+
+    // ⚠️ 关键：**开关照原位关着**。迁移不该替用户把开关打开 ——
+    //    那会让本来不注入的会话突然开始注入。
+    eq(j.global && j.global.enabled, false, "**开关照原位关着**（迁移不替用户做决定）");
+    eq(
+      j.global && j.global.presetId,
+      found,
+      "**global.presetId 指上那条预设**（这样用户一打开开关就能用）",
+    );
+
+    // 幂等：再读一遍不该多长预设
+    const st2 = await call(ctx, STATE_PATH, { method: "GET" });
+    eq(
+      Object.keys((st2.json || {}).presets || {}).length,
+      ids.length,
+      "**幂等**：再读一遍不会又长一条预设",
+    );
+  } finally {
+    if (existed) writeFileSync(stateFile, backup, "utf8");
+    else if (existsSync(stateFile)) unlinkSync(stateFile);
+  }
+}
 
 done();

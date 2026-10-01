@@ -303,7 +303,14 @@ export function normalizeGlobal(raw, legacy = {}) {
   // 老数据：没有 `global` 这个键（那时候是「开关 + defaults[]」两个独立的东西）
   if (!raw || typeof raw !== "object") {
     out.enabled = legacy.switchEnabled === true;
-    if (out.enabled && legacy.presets && typeof legacy.presets === "object") {
+    // ⚠️ **不管开着还是关着都要迁** —— 这里原来是 `if (out.enabled && ...)`，
+    //    那样「开关关着但 defaults 里有东西」的用户升级后**配置凭空没了**
+    //    （演练真实状态文件时发现的）。
+    //
+    //    取舍：迁移是**保住配置**，不是替用户决定要不要开。
+    //    `enabled` 照原位保留（关着就还是关着），预设建出来挂在那儿 ——
+    //    用户打开开关就能用，不打开也不影响。
+    if (legacy.presets && typeof legacy.presets === "object") {
       const found = matchPreset(
         { prompts: legacy.defaults, sections: legacy.sectionOverrides },
         legacy.presets,
