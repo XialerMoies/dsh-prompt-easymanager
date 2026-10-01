@@ -296,6 +296,29 @@ function collectTitles(node, out = []) {
 }
 
 /** 深度优先找第一个满足条件的元素（找不到返回 null）。 */
+/**
+ * 从源码里抠出 `var NAME = { ... };` 那一整块（**按花括号配平**）。
+ *
+ * ⚠️ 别用 `/var X = \{[\s\S]*?\n {4,10}\};/` 那种偷懒写法 ——
+ *    缩进对不上时它会**跨过对象边界**吃到后面一个对象（踩过：
+ *    抽 `MENU_LABEL` 结果吃到了带 `borderBottom` 的 `PANEL_HEAD`，判据假红）。
+ */
+function objectSourceOf(src, name) {
+  const at = src.indexOf("var " + name + " = {");
+  if (at < 0) return null;
+  let d = 0;
+  let started = false;
+  for (let k = at; k < src.length; k++) {
+    if (src[k] === "{") {
+      d++;
+      started = true;
+    } else if (src[k] === "}") {
+      d--;
+      if (started && d === 0) return src.slice(at, k + 1);
+    }
+  }
+  return null;
+}
 function findEl(node, pred) {
   if (node === null || node === undefined || typeof node !== "object") return null;
   if (node.props && pred(node)) return node;
@@ -1150,6 +1173,79 @@ const renderEditor = (props = {}) =>
       over,
     );
 
+  // ══ 菜单项有 hover 反馈 + 分隔线是 hairline ═══════════════════════════
+  //
+  // ⚠️ 这两条都是「照原生」时才发现的：
+  //
+  //    ① 原生 `.item:hover { background: var(--dsw-alias-interactive-bg-hover) }`
+  //       —— 内联样式写不了 `:hover`，**得自己跟一个 state 手动做**。
+  //       漏了的话列表像坏死的：划过去一点反馈都没有。
+  //    ② 原生的 `.separator` / `.footer` 都是 **.5px** 的 hairline，
+  //       我原来几处写的是 `1px`，比原生粗一倍。
+  {
+    const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
+    // ⚠️ **数够不够**，不是「有没有」——
+    //    两个面板（会话页 / 新会话页）各有选项，所以至少各 2 处。
+    //    第一版只判「有没有」，摘掉一个面板的 hover 照样绿（注入验证发现的）。
+    const hoverIn = [...picker.matchAll(/onMouseEnter/g)].length;
+    const hoverOut = [...picker.matchAll(/onMouseLeave/g)].length;
+    ok(
+      hoverIn >= 2 && hoverOut >= 2,
+      `**两个面板的菜单项都有 hover 反馈**（onMouseEnter ${hoverIn} 处 / onMouseLeave ${hoverOut} 处，各要 ≥2）`,
+    );
+    ok(
+      /hoverId/.test(picker) && /setHoverId/.test(picker),
+      "hover 用的是 state（hoverId / setHoverId）",
+    );
+    ok(
+      [...picker.matchAll(/MENU_ITEM_HOVER/g)].length >= 2,
+      "两个面板都用 **MENU_ITEM_HOVER**（照原生 .item:hover）",
+    );
+    // 分隔线：源码里不该再出现 1px 的主题色边框
+    const thick = [...picker.matchAll(/"1px solid var\(--dsw-alias-border-l2/g)].length;
+    eq(thick, 0, '**分隔线不许是 1px**（原生的 separator / footer 是 .5px hairline）');
+  }
+  // ══ 菜单项用**原生尺寸** ═══════════════════════════════════════════════
+  //
+  // ⚠️ 用户原话：「选项颜色不搭原生的，建议复用原生的」。
+  //
+  //    我原来用的是 `ROW`（4px 间距的小胶囊）+ `CARD_TITLE`（14px/600 粗体），
+  //    而原生菜单项（dsh-client-ui-primitives 的 Menu.module.css `.item`）是：
+  //
+  //        min-height 34px / padding 6px 8px / radius --dsw-radius-md
+  //        font-size 13px / line-height 20px / color --dsw-alias-label-primary
+  //
+  //    渲染测试测不出「像不像原生」，所以把这几条静态钉住。
+  {
+    const host = readFileSync(join(HERE, "..", "client.js"), "utf8");
+    const m = objectSourceOf(host, "MENU_ITEM");
+    ok(!!m, "能定位到 MENU_ITEM");
+    const one = m;
+    if (one) {
+      ok(/minHeight: "34px"/.test(one), "菜单项 **min-height 34px**（照原生 .item）");
+      ok(/padding: "6px 8px"/.test(one), "菜单项 **padding 6px 8px**（照原生 .item）");
+      ok(/borderRadius: "var\(--dsw-radius-md/.test(one), "菜单项圆角用 --dsw-radius-md");
+      ok(/fontSize: "13px"/.test(one), "菜单项 **13px**（不是原来那个 14px/600 粗体）");
+      ok(/color: "var\(--dsw-alias-label-primary/.test(one), "菜单项文字色用 --dsw-alias-label-primary");
+    }
+    // 卡片内边距：没有它项会紧贴边缘（照原生 .list 的 padding: 4px）
+    const pSrc = objectSourceOf(host, "PANEL");
+    ok(!!pSrc && /padding: "4px"/.test(pSrc), "**面板有 4px 内边距**（照原生 .list；没有它项会紧贴边缘）");
+    // 头不许自带分隔线（那是「选项紧贴分隔线」的来源）
+    const hSrc = objectSourceOf(host, "MENU_LABEL");
+    ok(!!hSrc, "能定位到 MENU_LABEL（原生 .label 那一行灰字）");
+    // ⚠️ 判据是「真有 border 属性」—— `/border/i` 会把 `borderRadius` 也算进去（踩过）。
+    if (hSrc) {
+      const borderProps = [...hSrc.matchAll(/\b(border|borderTop|borderBottom|borderLeft|borderRight)\s*:/g)].map(
+        (x) => x[1],
+      );
+      eq(
+        borderProps,
+        [],
+        "**标题行没有分隔线**（原生菜单的标题就是一行灰字）",
+      );
+    }
+  }
   // ══ 卡片头的**结构**：两段竖排 + 动作成组 ═══════════════════════════════
   //
   // ⚠️ 真机上出的两次问题**都是布局结构**问题 —— 文字被挤成竖排、

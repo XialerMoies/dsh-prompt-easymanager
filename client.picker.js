@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
       var MONO = api.style.MONO;
       var MONO_TAIL = api.style.MONO_TAIL;
       var WARN = api.style.WARN;
+      var MENU_ITEM_HOVER = api.style.MENU_ITEM_HOVER;
       var ADVISE = api.style.ADVISE;
       var MUTED = api.style.MUTED;
       var HEADING = api.style.HEADING;
@@ -47,8 +48,6 @@ window.__ModuleLoader__.load({
       var ROW = api.style.ROW;
       var CARD_HEADING = api.style.CARD_HEADING;
       var CARD_TITLE = api.style.CARD_TITLE;
-      var ROW_ACTIVE = api.style.ROW_ACTIVE;
-      var ROW_MARK = api.style.ROW_MARK;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
       var DETAIL_BTN = api.style.DETAIL_BTN;
@@ -58,8 +57,15 @@ window.__ModuleLoader__.load({
       var BTN = api.style.BTN;
       var BTN_BUSY = api.style.BTN_BUSY;
       var BTN_PRIMARY = api.style.BTN_PRIMARY;
-      var PANEL_HEAD = api.style.PANEL_HEAD;
       var PANEL_BODY = api.style.PANEL_BODY;
+      var MENU_LABEL = api.style.MENU_LABEL;
+      var MENU_LABEL_ROW = api.style.MENU_LABEL_ROW;
+      var MENU_ITEM = api.style.MENU_ITEM;
+      var MENU_ITEM_ON = api.style.MENU_ITEM_ON;
+      var MENU_MARK = api.style.MENU_MARK;
+      var MENU_TEXT = api.style.MENU_TEXT;
+      var MENU_HINT = api.style.MENU_HINT;
+      var MENU_SEP = api.style.MENU_SEP;
       var PANEL_FOOT = api.style.PANEL_FOOT;
       var BTN_ERR = api.style.BTN_ERR;
       var MSG_ERR = api.style.MSG_ERR;
@@ -119,6 +125,12 @@ window.__ModuleLoader__.load({
         var errSt = react.useState(null);
         var err = errSt[0];
         var setErr = errSt[1];
+        // ⚠️ **鼠标划过去要高亮** —— 原生菜单是 `.item:hover`，而内联样式
+        //    写不了 `:hover`，所以自己跟一个 state 手动做。
+        //    少了它列表像坏死的：划过去一点反馈都没有。
+        var hovSt = react.useState("");
+        var hoverId = hovSt[0];
+        var setHoverId = hovSt[1];
         // ⚠️ 面板**自己拉一份 /presets?session=** —— 因为：
         //    · /state 里那份预设表没有 label（会话页要按 label 显示）
         //    · 「这个会话自己选了哪条」只有 /presets 的 session.presetId 说清了
@@ -186,19 +198,18 @@ window.__ModuleLoader__.load({
         // ── ────────────────────────────────────────────────────────
         // 「当前实际用哪条」（宿主算好的，面板不自己猜）
         // ──────────────────────────────────────────────────────────
-        var head = react.createElement(
-          "div",
-          { key: "h", style: PANEL_HEAD },
-          [
-            react.createElement("span", { key: "t", style: CARD_TITLE }, "这个会话用什么"),
-            react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-            react.createElement(
-              "button",
-              { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: onClose },
-              "关闭",
-            ),
-          ],
-        );
+        // ⚠️ 头用 **MENU_LABEL_ROW**（照原生菜单的 `.label`），不是 PANEL_HEAD。
+        //    PANEL_HEAD 自带 `borderBottom` —— 那条分隔线加上「项没有内边距」，
+        //    就成了用户报的「选项紧贴分隔线」。原生菜单的标题是**一小行灰字**，
+        //    没有分隔线。
+        var head = react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
+          react.createElement("span", { key: "t", style: MENU_LABEL }, "这个会话用什么"),
+          react.createElement(
+            "button",
+            { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: onClose },
+            "关闭",
+          ),
+        ]);
         rows.push(head);
 
         if (err) {
@@ -209,7 +220,9 @@ window.__ModuleLoader__.load({
 
         // ── 选项 ────────────────────────────────────────────────────
         for (var i = 0; i < presets.length; i++) {
-          rows.push(renderOption(presets[i], props));
+          // ⚠️ 单独把 hover 传进去 —— 直接传 props 的话 renderOption 里
+          //    拿不到 hoverId（它在闭包里，不在 props 上）。
+          rows.push(renderOption(presets[i], { hoverId: hoverId, setHoverId: setHoverId }));
         }
 
         if (presets.length === 0) {
@@ -354,8 +367,21 @@ window.__ModuleLoader__.load({
             key: "o-" + o.kind + "-" + (o.id || ""),
             type: "button",
             className: "pm-btn",
-            style: Object.assign({}, ROW, o.active ? ROW_ACTIVE : null),
+            // ⚠️ 照原生 `.item` / `.selectedFill` —— 选中**只加填充**，
+            //    不换字号不换粗细（原生菜单就是这样：勾是唯一的标记）。
+            //    划过去也要高亮（原生是 `.item:hover`）。
+            style: o.active
+              ? MENU_ITEM_ON
+              : props.hoverId === o.kind + (o.id || "")
+                ? MENU_ITEM_HOVER
+                : MENU_ITEM,
             "aria-current": o.active ? "true" : undefined,
+            onMouseEnter: function () {
+              props.setHoverId(o.kind + (o.id || ""));
+            },
+            onMouseLeave: function () {
+              props.setHoverId("");
+            },
             onClick: function () {
               if (o.active) {
                 props.onClose && props.onClose();
@@ -365,9 +391,13 @@ window.__ModuleLoader__.load({
             },
           },
           [
-            react.createElement("span", { key: "g", style: ROW_MARK }, o.active ? "✓" : ""),
-            react.createElement("span", { key: "l", style: CARD_TITLE }, o.label),
-            o.sub ? react.createElement("span", { key: "s", style: MUTED }, o.sub) : null,
+            // 勾那一列：照原生 `.itemIcon`（14×14，固定宽，没有勾也占位）
+            react.createElement("span", { key: "g", style: MENU_MARK }, o.active ? "✓" : ""),
+            // 主文字：照原生 `.itemLabel`
+            react.createElement("span", { key: "l", style: MENU_TEXT }, o.label),
+            // 副文字：照原生 `.shortcut` —— 它自己 `margin-inline-start: auto` 靠右，
+            // 所以**不用再塞一个弹簧**（原来那样会撑出空洞）
+            o.sub ? react.createElement("span", { key: "s", style: MENU_HINT }, o.sub) : null,
           ],
         );
       }
@@ -484,6 +514,10 @@ window.__ModuleLoader__.load({
         var errSt = react.useState(null);
         var err = errSt[0];
         var setErr = errSt[1];
+        // ⚠️ 同 PresetDropdown：内联样式写不了 `:hover`，自己跟一个 state。
+        var hovSt = react.useState("");
+        var hoverId = hovSt[0];
+        var setHoverId = hovSt[1];
 
         function pick(o) {
           setErr(null);
@@ -514,19 +548,14 @@ window.__ModuleLoader__.load({
         var g = (d && d.global) || {};
         var list = d && Array.isArray(d.presets) ? d.presets : [];
         var rows = [
-          react.createElement(
-            "div",
-            { key: "h", style: PANEL_HEAD },
-            [
-              react.createElement("span", { key: "t", style: CARD_TITLE }, "新会话用哪套"),
-              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-              react.createElement(
-                "button",
-                { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: props.onClose },
-                "关闭",
-              ),
-            ],
-          ),
+          react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
+            react.createElement("span", { key: "t", style: MENU_LABEL }, "新会话用哪套"),
+            react.createElement(
+              "button",
+              { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: props.onClose },
+              "关闭",
+            ),
+          ]),
         ];
         if (err) rows.push(react.createElement("div", { key: "e", style: MSG_ERR }, err));
         for (var i = 0; i < list.length; i++) {
@@ -540,8 +569,18 @@ window.__ModuleLoader__.load({
                 key: "o-" + p.id,
                 type: "button",
                 className: "pm-btn",
-                style: Object.assign({}, ROW, active ? ROW_ACTIVE : null),
+                style: active
+                  ? MENU_ITEM_ON
+                  : hoverId === "p" + p.id
+                    ? MENU_ITEM_HOVER
+                    : MENU_ITEM,
                 "aria-current": active ? "true" : undefined,
+                onMouseEnter: function () {
+                  setHoverId("p" + p.id);
+                },
+                onMouseLeave: function () {
+                  setHoverId("");
+                },
                 onClick: (function (oo, isActive) {
                   return function () {
                     if (isActive) {
@@ -553,9 +592,9 @@ window.__ModuleLoader__.load({
                 })(p, active),
               },
               [
-                react.createElement("span", { key: "g", style: ROW_MARK }, active ? "✓" : ""),
-                react.createElement("span", { key: "l", style: CARD_TITLE }, p.label || p.name),
-                p.summary ? react.createElement("span", { key: "s", style: MUTED }, p.summary) : null,
+                react.createElement("span", { key: "g", style: MENU_MARK }, active ? "✓" : ""),
+                react.createElement("span", { key: "l", style: MENU_TEXT }, p.label || p.name),
+                p.summary ? react.createElement("span", { key: "s", style: MENU_HINT }, p.summary) : null,
               ],
             ),
           );

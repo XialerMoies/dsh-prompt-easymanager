@@ -241,7 +241,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           gap: "4px",
           padding: "2px 6px",
           borderRadius: "5px",
-          border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
+          border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
           background: "transparent",
           color: "inherit",
           fontFamily: "inherit",
@@ -376,17 +376,114 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
   background: "var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, rgba(128,128,128,.14)))",
   backdropFilter: "var(--dsw-menu-backdrop-filter, none)",
           color: "var(--dsw-alias-label-primary, rgba(128,128,128,.95))",
-          border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
+          border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
           borderRadius: "8px",
           maxWidth: "860px",
           width: "100%",
           maxHeight: "80vh",
+          // ⚠️ 照原生 `.list` —— **卡片内边距 4px**。
+          //    没有它的话项会**紧贴面板边缘和标题那条线**（用户报的「选项紧贴分隔线」）。
+          padding: "4px",
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 12px 40px rgba(0,0,0,.28)",
           fontFamily: "inherit",
           fontSize: "12px",
         };
+
+  /**
+   * 面板里的**标题行** —— 照原生菜单的 `.label`。
+   *
+   *  ⚠️ 原来我自己画了一个「带下边框的头 + 关闭按钮」，那是**另一套视觉语言**：
+   *     原生菜单的标题是**一小行灰字**，跟项同样的左右内边距，**没有分隔线**。
+   *     画了分隔线之后，项又紧贴那条线 → 用户看到的「位置混乱」。
+   */
+  var MENU_LABEL = {
+    padding: "6px 8px",
+    fontSize: "11px",
+    lineHeight: "15px",
+    color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
+    fontWeight: 600,
+  };
+
+  /** 标题行的右侧（放「关闭」之类的小按钮）：同一行、靠右、不撑高。 */
+  var MENU_LABEL_ROW = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "6px",
+    padding: "6px 8px",
+  };
+
+  /**
+   * 菜单项 —— 照原生 `.item`。
+   *
+   *     min-height 34px / padding 6px 8px / radius --dsw-radius-md
+   *     font-size 13px / line-height 20px / color --dsw-alias-label-primary
+   */
+  var MENU_ITEM = {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    width: "100%",
+    minHeight: "34px",
+    padding: "6px 8px",
+    border: "none",
+    borderRadius: "var(--dsw-radius-md, 8px)",
+    background: "transparent",
+    cursor: "pointer",
+    fontSize: "13px",
+    lineHeight: "20px",
+    color: "var(--dsw-alias-label-primary, rgba(128,128,128,.95))",
+    textAlign: "left",
+    fontFamily: "inherit",
+  };
+
+  /** 勾那一列 —— 照原生 `.itemIcon`（14×14，用 menu-icon 那个色）。 */
+  var MENU_MARK = {
+    display: "inline-flex",
+    flex: "none",
+    width: "14px",
+    height: "14px",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "var(--dsw-alias-menu-icon, rgba(128,128,128,.9))",
+  };
+
+  /** 项的主文字 —— 照原生 `.itemLabel`（占满、省略号）。 */
+  var MENU_TEXT = {
+    flex: "1 1 auto",
+    minWidth: "0",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+
+  /** 项的副文字 —— 照原生 `.shortcut`（靠右、更淡更小）。 */
+  var MENU_HINT = {
+    flex: "none",
+    marginInlineStart: "auto",
+    color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
+    fontSize: "11px",
+    lineHeight: "16px",
+  };
+
+  /** 划过去的高亮 —— 照原生 `.item:hover`（跟选中用的是同一个填充）。 */
+  var MENU_ITEM_HOVER = Object.assign({}, MENU_ITEM, {
+    background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12))",
+  });
+
+  /** 选中态 —— 照原生 `.selectedFill`（**就是 hover 那个填充**，不是另造一个色）。 */
+  var MENU_ITEM_ON = Object.assign({}, MENU_ITEM, {
+    background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12))",
+  });
+
+  /** 分隔线 —— 照原生 `.separator`（.5px、左右缩 2px）。 */
+  var MENU_SEP = {
+    height: ".5px",
+    margin: "3px 2px",
+    background: "var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+  };
         var PANEL_SM = Object.assign({}, PANEL, { maxWidth: "560px" });
         var PANEL_HEAD = {
           display: "flex",
@@ -394,7 +491,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           justifyContent: "space-between",
           gap: "8px",
           padding: "10px 12px",
-          borderBottom: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+          borderBottom: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         };
         var PANEL_BODY = { padding: "10px 12px", overflow: "auto", flex: "1 1 auto" };
         var PANEL_FOOT = {
@@ -403,7 +500,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           justifyContent: "space-between",
           gap: "8px",
           padding: "10px 12px",
-          borderTop: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+          borderTop: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
           flexWrap: "wrap",
         };
 
@@ -652,7 +749,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
       var HEADING = {
         margin: "14px 0 6px",
         paddingBottom: "4px",
-        borderBottom: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+        borderBottom: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         fontWeight: "bold",
         opacity: 0.9,
       };
@@ -701,7 +798,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         gap: "8px",
         padding: "7px 9px",
         borderRadius: "6px",
-        border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         marginBottom: "6px",
         cursor: "pointer",
       };
@@ -740,7 +837,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         whiteSpace: "nowrap",
       };
       var SEC = {
-        border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
         borderRadius: "6px",
         padding: "8px 10px",
         marginBottom: "8px",
@@ -819,7 +916,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         lineHeight: "20px",
       };
       var SUMSUM = {
-        border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
+        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
         borderRadius: "6px",
         padding: "8px 10px",
         marginBottom: "4px",
@@ -852,7 +949,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
       alignItems: "center",
       gap: "4px",
       padding: "1px 8px",
-      border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
+      border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
       borderRadius: "999px",
       cursor: "pointer",
       fontSize: "12px",
@@ -897,6 +994,15 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             CARD_NOTICE: CARD_NOTICE,
             OVERLAY: OVERLAY,
             PANEL: PANEL,
+            MENU_LABEL: MENU_LABEL,
+            MENU_LABEL_ROW: MENU_LABEL_ROW,
+            MENU_ITEM: MENU_ITEM,
+            MENU_ITEM_ON: MENU_ITEM_ON,
+            MENU_ITEM_HOVER: MENU_ITEM_HOVER,
+            MENU_MARK: MENU_MARK,
+            MENU_TEXT: MENU_TEXT,
+            MENU_HINT: MENU_HINT,
+            MENU_SEP: MENU_SEP,
             PANEL_SM: PANEL_SM,
             PANEL_HEAD: PANEL_HEAD,
             PANEL_BODY: PANEL_BODY,
