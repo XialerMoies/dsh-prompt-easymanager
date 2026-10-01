@@ -101,7 +101,13 @@ window.__ModuleLoader__.load({
         color: "var(--dsw-alias-label-primary, inherit)",
         display: "flex",
         flexDirection: "column",
-        gap: "14px",
+        // ⚠️ 12px —— 跟 dsh 其它内容页一致（模型页 / 智能体预设页的 `.section`
+        //    都是 `gap:12px`）。
+        //
+        // ⚠️⚠️ **宿主里还有一份同名常量，而且会被这份覆盖** ——
+        //    改间距时两处都要改（踩过：只改了宿主那份，页面纹丝不动，
+        //    「功能之间」还是 14px）。测试里有一条断言专门盯这个值。
+        gap: "12px",
       };
       var CARDS_GRID = {
         display: "grid",
@@ -2448,37 +2454,67 @@ window.__ModuleLoader__.load({
         // ⚠️ `header` 已经并进 personal 块了（见上面那段说明），这里**只拼 body**。
         //    原来写成 `[header].concat(body)` —— 那样个人提示词的标题会出现两次。
         //
-        // 页头（标题 + 一句话说明）放**最前**，跟 dsh 其它设置页同一套：
-        // 插件页是
-        //     <h2 className={css.heading}>{t("title")}</h2>
-        //     <p  className={css.intro}>{t("intro")}</p>
-        // 对应 CSS：heading = `margin:0;font-size:18px;font-weight:600`，
-        //           intro   = `color:label-tertiary;margin:0;font-size:13px`，
-        // 外层 section 是 `max-width:760px; flex-direction:column; gap:12px`
-        // —— 我们的 SECTION 已经是 760px + column + gap，所以照抄这两个字号就行。
-        return react.createElement("div", { style: SECTION }, [PAGE_HEAD].concat(body));
+        // ── 页头 + 间距 ────────────────────────────────────────────────────
+        //
+        // 页头（标题 + 一句话说明）放**最前**，跟 dsh 其它设置页同一套。
+        // 参照物是模型页（`ModelsSection`）：
+        //
+        //     <div className={css.section}>        // max-width:720px; column; gap:12px
+        //       <h2 className={css.title}>…</h2>   // margin:0; 16px/500
+        //       <p  className={css.intro}>…</p>    // margin:0; 14px
+        //       <ul className={css.rows}>…</ul>    // margin:12px 0 0
+        //     </div>
+        //
+        // 于是两档距离的**具体数值**是：
+        //   · **功能 ↔ 功能** = 父级 gap = **12px**；
+        //   · **页头 ↔ 第一个功能** = gap + 内容块自带的 margin-top = **24px**。
+        // 这就是「页头离功能远一点、功能之间近一点」的来源 ——
+        // 不是拍脑袋定的，是照抄参考页。
+        // 第一个功能块外面套一层只负责 margin 的 div。
+        // ⚠️ 不用 `react.cloneElement`（测试的 react 替身里没有它，真机才需要那种写法）；
+        //    而且这里也不需要克隆 —— 包一层更直白，也不改原块的 key。
+        var spaced = body.slice();
+        if (spaced.length > 0) {
+          spaced[0] = react.createElement(
+            "div",
+            { key: "gap-before-first", style: { marginTop: "12px" } },
+            spaced[0],
+          );
+        }
+        return react.createElement("div", { style: SECTION }, [PAGE_HEAD].concat(spaced));
       }
 
-      var PAGE_HEAD = react.createElement("div", null, [
-        react.createElement(
-          "h2",
-          { key: "t", style: { margin: "0", fontSize: "18px", fontWeight: "600" } },
-          "提示词管理",
-        ),
-        react.createElement(
-          "p",
-          {
-            key: "i",
-            style: {
-              margin: "6px 0 0",
-              fontSize: "13px",
-              lineHeight: "20px",
-              color: "var(--dsw-alias-label-tertiary, inherit)",
+      /**
+       * 页头：标题 + 一句话说明。
+       *
+       * 字号照抄参考页：模型页 title 是 16/500、插件页 heading 是 18/600 ——
+       * 我们按插件页（原来就住在那一页里）。说明用 label-tertiary + 13px。
+       * 标题和说明之间 4px：比「页头↔功能」那 24px 近得多，读起来是一块。
+       */
+      var PAGE_HEAD = react.createElement(
+        "div",
+        { style: { display: "flex", flexDirection: "column", gap: "4px" } },
+        [
+          react.createElement(
+            "h2",
+            { key: "t", style: { margin: "0", fontSize: "18px", fontWeight: "600" } },
+            "提示词管理",
+          ),
+          react.createElement(
+            "p",
+            {
+              key: "i",
+              style: {
+                margin: "0",
+                fontSize: "13px",
+                lineHeight: "20px",
+                color: "var(--dsw-alias-label-tertiary, inherit)",
+              },
             },
-          },
-          "给每个会话挑一套提示词：选哪几条生效、存成预设随时切换，也能改写 dsh 的原生段落。",
-        ),
-      ]);
+            "给每个会话挑一套提示词：选哪几条生效、存成预设随时切换，也能改写 dsh 的原生段落。",
+          ),
+        ],
+      );
 
       // ── 注入一小段样式表 ──────────────────────────────────────────────────
       // 内联 style 做不了 `:hover` / `:focus-visible`，而这两样正是原生卡片的关键手感。

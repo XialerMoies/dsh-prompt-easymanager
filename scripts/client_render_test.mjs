@@ -1214,6 +1214,57 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
       const first = rootKids[0];
       const firstHasH2 = !!findEl(first, (n) => n.type === "h2");
       ok(firstHasH2, "**页头在页面最前面**（根的第一个子元素）");
+
+      // ── 两档间距，数值照抄参考页（模型页 ModelsSection）────────────────
+      //
+      //      .section { gap:12px }          ← 所有直接子元素之间
+      //      .rows    { margin:12px 0 0 }   ← 内容块自己再带 12px
+      //
+      //   于是：**功能 ↔ 功能 = 12px**，**页头 ↔ 第一个功能 = 24px**。
+      //   用户要的就是「页头离功能远一点、功能之间近一点」—— 这两条把它钉住。
+      {
+        const S = (el.props && el.props.style) || {};
+        eq(S.gap, "12px", "**功能之间 12px**（父级 gap，跟参考页一致）");
+        // ⚠️ `SECTION` 在**两处**各写了一份（client.js 的宿主 + client.editor.js），
+        //    后者覆盖前者。只改一处的话页面纹丝不动 —— 踩过。
+        //    这条断言读两个源文件，把两份钉成同一个值。
+        {
+          const hostSrc = readFileSync(join(HERE, "..", "client.js"), "utf8");
+          const chunkSrc = readFileSync(join(HERE, "..", "client.editor.js"), "utf8");
+          const gapOf = (src, label) => {
+            const i = src.indexOf("var SECTION = {");
+            if (i < 0) return `(${label} 里没找到 SECTION)`;
+            // 取到这个对象结束为止（`};`），中间可能有注释
+            const rest = src.slice(i);
+            const end = rest.indexOf("\n      };");
+            const seg = end > 0 ? rest.slice(0, end) : rest.slice(0, 2000);
+            const m = seg.match(/gap:\s*"([^"]+)"/);
+            return m ? m[1] : `(${label} 里没找到 gap)`;
+          };
+          const hostGap = gapOf(hostSrc, "client.js");
+          const chunkGap = gapOf(chunkSrc, "client.editor.js");
+          eq(
+            chunkGap,
+            hostGap,
+            "**两份 SECTION 的 gap 一致**（只改一处的话另一处会盖掉它）",
+          );
+        }
+        const second = rootKids[1];
+        ok(!!second, "有第一个功能块");
+        if (second) {
+          const st = (second.props && second.props.style) || {};
+          eq(
+            st.marginTop,
+            "12px",
+            "**页头 ↔ 第一个功能 = gap12 + margin12 = 24px**（内容块自带 margin）",
+          );
+        }
+        // 页头内部：标题和说明之间要近得多（4px），否则读起来是两块
+        const headKids = (first && first.children) || [];
+        eq(headKids.length, 2, "页头是「标题 + 说明」两行");
+        const hst = (first.props && first.props.style) || {};
+        eq(hst.gap, "4px", "**标题和说明之间 4px**（比 24px 近得多，读起来是一块）");
+      }
     }
     ok(text.includes("个人提示词"), "标题在");
     ok(text.includes("2 条"), "显示条数");

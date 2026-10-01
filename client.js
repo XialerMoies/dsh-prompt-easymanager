@@ -730,7 +730,10 @@
         color: "var(--dsw-alias-label-primary, inherit)",
         display: "flex",
         flexDirection: "column",
-        gap: "14px",
+        // ⚠️ 12px —— 跟 dsh 其它内容页**一致**（模型页 / 智能体预设页的 `.section`
+        //    都是 `flex-direction:column;gap:12px`）。
+        //    原来是 14px：数值自己拍的，比参考页松，一眼看得出不是一家。
+        gap: "12px",
       };
       var SEC_OURS = Object.assign({}, SEC, { borderColor: "rgba(16,185,129,.7)" });
       var SELECT_SM = {
