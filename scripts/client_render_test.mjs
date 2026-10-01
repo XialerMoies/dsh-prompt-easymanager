@@ -1409,28 +1409,63 @@ const renderEditor = (props = {}) =>
 //       只能静态钉住「点选之后做了哪几件事」。
 {
   const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
-  // ⚠️ 切的是 **PresetDropdown 自己那一整块**。
-  //    原来切 `pickOption` → `HeroPresetChip`，但这两个函数在文件里
-  //    **顺序是反的**，切出来是空段 —— 三条断言全假红。
-  //    （教训：切片范围也要先验证，别想当然。）
-  const seg = picker.slice(
-    picker.indexOf("function PresetDropdown"),
-    picker.indexOf("function HeroPresetPanel"),
-  );
-  ok(seg.length > 200, "能定位到 PresetDropdown 那一整块（实际 " + seg.length + " 字符）");
+
+  /** 抠出一个函数的源码（按花括号配平 —— 别用 indexOf 切片，函数顺序不是想当然的）。 */
+  function fnOf(src, name) {
+    const at = src.indexOf("function " + name + "(");
+    if (at < 0) return null;
+    let d = 0;
+    let started = false;
+    for (let k = at; k < src.length; k++) {
+      if (src[k] === "{") {
+        d++;
+        started = true;
+      } else if (src[k] === "}") {
+        d--;
+        if (started && d === 0) return src.slice(at, k + 1);
+      }
+    }
+    return null;
+  }
+
+  // ⚠️ 原来切的是 `PresetDropdown` → `HeroPresetPanel` —— 那是**猜顺序**，
+  //    第一次就猜错了（那两个函数在文件里顺序是反的，切出空段、三条假红）。
+  //    改成按花括号配平抠，**不依赖顺序**。
+  const seg = fnOf(picker, "PresetDropdown");
+  const po = fnOf(picker, "pickOption");
+  ok(!!seg && seg.length > 200, "抠得出 PresetDropdown（实际 " + (seg ? seg.length : 0) + " 字符）");
+  ok(!!po, "抠得出 pickOption");
+
+  // ── 核心：**两个面板要一样** ──────────────────────────────────────────
+  //
+  // ⚠️ 用户报的：「初始会话页的都有切换实时效果，怎么已有上下文的会话页就没有，
+  //    不能复用呢？」
+  //
+  //    对 —— 我一开始把 `setTick` / 自动关写进了**模块级的 `pickOption`**，
+  //    而 `tick` / `setTick` / `onClose` 都是**面板闭包里的**，
+  //    那个函数根本看不到 → `ReferenceError` → 被里面的 catch 吞掉
+  //    → **一直是坏的而没人知道**。
+  //
+  //    现在改成：`pickOption` 只负责「发请求 + 通知外面重读 /state」，
+  //    剩下的（刷新自己那份、关面板）由**面板通过 onDone 回调**做。
   ok(
-    /setTick\(tick \+ 1\)/.test(seg),
+    /onDone/i.test(po || ""),
+    "**pickOption 把「点完了」交给回调**（它看不到面板闭包里的东西）",
+  );
+  ok(
+    !/^\s*setTick\(/m.test((po || "").replace(/^\s*\/\/.*$/gm, "")),
+    "**pickOption 里不许直接调 setTick**（`tick` 不在它的作用域里 → ReferenceError）",
+  );
+  ok(/onDone: function/.test(seg || ""), "**面板提供了 onDone 回调**");
+  ok(
+    /setTick\(tick \+ 1\)/.test(seg || ""),
     "**点选之后 +1 刷新计数器**（不带的话面板的 extras 不刷新，勾停在旧那条）",
   );
   ok(
-    /props\.onClose/.test(seg),
-    "**点选之后自动关面板**（用户要的是「点一下就生效」，留着浮窗反而像没生效）",
+    /if \(onClose\) onClose\(\)/.test(seg || ""),
+    "**点选之后自动关面板**（跟新会话页一样 —— 用户要的是「点一下就生效」）",
   );
   ok(/\[sessionId, msg, tick\]/.test(picker), "effect 依赖里有 tick（不然计数器白加）");
-  ok(
-    /onApplied && props\.onApplied\(\);[\s\S]{0,200}setTick/.test(seg),
-    "顺序：先让外面重读 /state，再让面板重读 /presets",
-  );
 }
 //
 // ⚠️ 用户贴的菜单（开关关着）：

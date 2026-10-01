@@ -242,7 +242,22 @@ window.__ModuleLoader__.load({
           rows.push(
             renderOption(
               presets[i],
-              Object.assign({}, props, { hoverId: hoverId, setHoverId: setHoverId }),
+              Object.assign({}, props, {
+                hoverId: hoverId,
+                setHoverId: setHoverId,
+                // ⚠️ **面板自己包好的「点完了」回调** ——
+                //    这三件事都得在**面板的闭包**里做，模块级的 `pickOption`
+                //    看不到 `tick` / `setTick` / `onClose`。
+                //
+                //    （踩过：我把 setTick 写进了 pickOption，ReferenceError 被
+                //      里面的 catch 吞了 —— 表现就是「切了但要关掉浮窗才看到」。）
+                onDone: function () {
+                  setTick(tick + 1);
+                  // ⚠️ 选完自动关 —— 用户要的是「点一下就生效」，
+                  //    留着浮窗反而让人以为没生效。
+                  if (onClose) onClose();
+                },
+              }),
             ),
           );
         }
@@ -452,6 +467,16 @@ window.__ModuleLoader__.load({
           })
           .then(function () {
             props.onApplied && props.onApplied();
+            // ⚠️ **点完之后的三件事由调用方（面板）做** ——
+            //    刷新它自己那份 /presets、关掉面板。
+            //
+            //    ⚠️ 踩过：我一开始把这两件事写在这里，而 `setTick` / `onClose`
+            //    是**面板闭包里的**，这个模块级函数根本看不到 ——
+            //    `setTick(tick + 1)` 直接 ReferenceError，而下面的 catch
+            //    把错误吞了（「失败不影响功能」），于是**一直是坏的而没人知道**。
+            //
+            //    所以改成**回调**：谁调谁负责。
+            if (props.onDone) props.onDone();
             return null;
           })
           .catch(function (e) {
