@@ -1358,6 +1358,83 @@ const renderEditor = (props = {}) =>
   }
 
 
+// ── 5ab. 复现问题3：**点「系统提示词」/ 别的预设能不能切过去** ──────────────
+//
+// ⚠️ 用户贴的菜单（开关关着）：
+//
+//       这个会话用什么   关闭
+//       跟随全局（测试t-1）
+//       系统提示词
+//       ✓ 测试t-1
+//
+//    「测试t-1」被勾着 —— 点它只关面板（对的）。但点**其他两项**要能切。
+{
+  function mkState() {
+    return {
+      assignments: { s1: "测试t-1" },
+      global: { enabled: false, presetId: "测试t-1" },
+      presets: {
+        "测试t-1": { name: "测试t-1", prompts: ["P1"], sections: {} },
+        "测试t-2": { name: "测试t-2", prompts: ["P2"], sections: {} },
+      },
+      prompts: [{ id: "P1", name: "甲", mode: "append", order: 100, tokens: 10 }],
+      diag: { routeRegistered: true, sessions: [] },
+    };
+  }
+  const presetsResp = {
+    presets: [
+      { id: "测试t-1", name: "测试t-1", label: "测试t-1", prompts: ["P1"], sections: {} },
+      { id: "测试t-2", name: "测试t-2", label: "测试t-2", prompts: ["P2"], sections: {} },
+    ],
+    global: { enabled: false, presetId: "测试t-1" },
+    session: { sessionId: "s1", presetId: "测试t-1" },
+    effective: { id: "测试t-1", preset: null, source: "session" },
+  };
+
+  function tap(labelPart) {
+    const posts = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => {
+      if (init && init.method === "POST") posts.push({ url: String(url), body: init.body });
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(String(url).includes("/presets") ? presetsResp : mkState()),
+      });
+    };
+    shims.setStates([mkState(), false, null, null, true, null]);
+    const el = renderPicker({ sessionId: "s1" });
+    const btns = [];
+    findEl(el, (n) => {
+      if (n.type === "button" && flattenText(n).join(" ").includes(labelPart)) btns.push(n);
+      return false;
+    });
+    if (btns[0]) btns[0].props.onClick();
+    globalThis.fetch = realFetch;
+    return { posts: posts, found: btns.length };
+  }
+
+  {
+    const r = tap("系统提示词");
+    ok(r.found > 0, "找得到「系统提示词」那一项");
+    eq(r.posts.length, 1, "点「系统提示词」发了一次请求");
+    eq(
+      JSON.parse((r.posts[0] && r.posts[0].body) || "{}").presetId,
+      null,
+      "**带的是 presetId: null**（显式什么都不挂）",
+    );
+  }
+  {
+    const r = tap("测试t-2");
+    ok(r.found > 0, "找得到「测试t-2」那一项");
+    eq(r.posts.length, 1, "点「测试t-2」发了一次请求");
+    eq(
+      JSON.parse((r.posts[0] && r.posts[0].body) || "{}").presetId,
+      "测试t-2",
+      "**带的是 presetId: 测试t-2**",
+    );
+  }
+}
+
 // ── 5aa. **开关关掉时会话页能不能切预设** ──────────────────────────────────
 //
 // ⚠️ 用户报的：「已有上下文的会话页的预设选择默认是测试t-1，**不能点击切换其他**」，

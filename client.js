@@ -1243,32 +1243,53 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           var HOST_ATTR = "data-pm-hero-preset";
 
           /**
-           * 找「工作区 / agent 预设」那个**紧包着两个触发器的容器**。
+           * 找「工作区 / agent 预设」那一行。
            *
-           * ⚠️ 不靠 CSS module 的哈希 class（会变），靠**结构**。但结构判据要**够紧**：
+           * ── dsh 里的真实结构（查过源码，ConversationRoot）──────────────────
            *
-           *    第一版取的是 `btn.parentElement.parentElement` —— 走太高，
-           *    落到了「包住整块输入区（含卡片）」的外层容器上，于是控件被插到
-           *    **输入框下面另起一行**（真机上出过，截图能看见）。
+           *     const heroWorkspaceRow = <div className={css.heroWorkspaceRow}>
+           *       <WorkspaceChip …/>                          ← 工作区那个胶囊
+           *       {renderSlot("conversation.hero.workspace")}  ← 已被 ui-workspace 占
+           *       {renderSlot("conversation.hero.agentPreset")}← 已被 ui-agent-preset 占
+           *     </div>
+           *     // .heroWorkspaceRow { display:flex; gap:2px; padding:0 16px 0 20px }
            *
-           *    现在从触发器往上走，**取第一个「同时含两个触发器」的祖先**，
-           *    并且要求那两个触发器**是它的后代里仅有的两个** —— 再往上走就会多出来，
-           *    所以这个祖先就是那一行本身。
+           * 所以那一行**恰好 3 个孩子**，第 1 个是工作区胶囊。
+           *
+           * ── 踩过的两次 ─────────────────────────────────────────────────────
+           *
+           *   ① `btn.parentElement.parentElement` —— 走太高，落到「包住整块输入区」
+           *      的外层容器上 → 控件被插到**输入框下面另起一行**。
+           *   ② 按 `button[aria-haspopup='menu']` 全局找前两个 —— **不稳**：
+           *      dsh 里编辑器本体（contenteditable 那个 div）**也带**
+           *      `aria-haspopup="menu"`，而且它在 `heroWorkspaceRow` **后面**。
+           *      一旦顺序或数量变了，取到的就不是那一行里的东西。
+           *
+           * 现在改成**从工作区胶囊往上走**：取第一个「孩子数正好 3 且孩子里有
+           * 带 aria-haspopup 的」祖先 —— 那就是这一行。
            */
           function rowOf() {
             try {
-              var btns = document.querySelectorAll("button[aria-haspopup='menu']");
-              if (btns.length < 2) return null;
-              // 拿前两个触发器：它们是「工作区」和「agent 预设」
-              var a = btns[0];
-              var b = btns[1];
-              var el = a.parentElement;
-              for (var up = 0; el && up < 6; up++) {
-                var el2 = el;
-                var inside = el2.querySelectorAll("button[aria-haspopup='menu']");
-                if (inside.length === 2 && el2.contains(b)) return el2;
-                if (inside.length > 2) return null; // 走过头了，说明判据不对
-                el = el.parentElement;
+              // 工作区胶囊：那一行的第一个孩子，带 aria-haspopup
+              var chips = document.querySelectorAll("[aria-haspopup='menu']");
+              for (var i = 0; i < chips.length; i++) {
+                var el = chips[i].parentElement;
+                // 往上最多走 6 层找那一行
+                for (var up = 0; el && up < 6; up++) {
+                  var kids = el.children ? el.children.length : 0;
+                  if (kids === 3) {
+                    // 确认「三个孩子里至少两个是控件（带 aria-haspopup 或是个按钮）」
+                    var ctrl = 0;
+                    for (var k = 0; k < el.children.length; k++) {
+                      var c = el.children[k];
+                      if (!c || !c.getAttribute) continue;
+                      if (c.getAttribute("aria-haspopup") || c.tagName === "BUTTON") ctrl++;
+                    }
+                    // ⚠️ 这一行**不该**已经有我们的东西（apply 里也查过，双保险）
+                    if (ctrl >= 1 && !el.querySelector("[" + HOST_ATTR + "]")) return el;
+                  }
+                  el = el.parentElement;
+                }
               }
             } catch {
               /* 结构变了就算了 */
@@ -1276,22 +1297,81 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             return null;
           }
 
+          /**
+           * 把「找到/没找到」说清楚 —— 打一行紧凑的诊断。
+           *
+           * ⚠️ 为什么要这个：DOM 补丁靠结构匹配，而**结构只有真机上才有**。
+           *    没有它的时候每次失效都只能靠猜（已经猜过两轮）。
+           *    现在失败时从控制台能一眼看出「匹配到了什么、为什么没插」。
+           */
+          function describe(el) {
+            try {
+              if (!el) return "(null)";
+              var tag = el.tagName ? el.tagName.toLowerCase() : "?";
+              var cls = (el.className || "").toString().split(/\s+/).slice(0, 2).join(".");
+              var kids = el.children ? el.children.length : 0;
+              var parts = [];
+              for (var k = 0; k < kids && k < 5; k++) {
+                var c = el.children[k];
+                parts.push(
+                  (c.tagName || "?").toLowerCase() +
+                    (c.getAttribute && c.getAttribute("aria-haspopup") ? "[menu]" : ""),
+                );
+              }
+              return tag + (cls ? "." + cls : "") + " kids=" + kids + " [" + parts.join(", ") + "]";
+            } catch {
+              return "(描述失败)";
+            }
+          }
+
           function apply() {
             try {
               if (document.querySelector("[" + HOST_ATTR + "]")) return true; // 已经插过
               var row = rowOf();
-              if (!row) return false;
+              if (!row) {
+                // ⚠️ 失败时**说清楚看到了什么** —— 这个补丁靠结构匹配，
+                //    而结构只有真机上有。没有这行日志，失效时只能靠猜。
+                logOnce("rowOf 没找到目标行；带 aria-haspopup 的元素有 " +
+                  document.querySelectorAll("[aria-haspopup='menu']").length +
+                  " 个，第一个的父链：" + describeChain(
+                    document.querySelector("[aria-haspopup='menu']"),
+                  ));
+                return false;
+              }
               var box = document.createElement("span");
               box.setAttribute(HOST_ATTR, "1");
               box.style.display = "inline-flex";
               box.style.alignItems = "center";
               row.appendChild(box);
+              logOnce("已插入，目标行：" + describe(row) + " 的父：" + describe(row.parentElement));
               mountHeroPicker(box);
               return true;
             } catch {
               /* 补丁失败不影响功能 */
             }
             return false;
+          }
+
+          /** 把一个元素往上三层描述一遍（帮助判断「插到哪儿了」）。 */
+          function describeChain(el) {
+            var out = [];
+            for (var k = 0; el && k < 4; k++) {
+              out.push(describe(el));
+              el = el.parentElement;
+            }
+            return out.join("  ↑  ");
+          }
+
+          /** 只打一次日志，免得 MutationObserver 刷屏。 */
+          var logged = false;
+          function logOnce(msg) {
+            if (logged) return;
+            logged = true;
+            try {
+              console.info("[dsh-prompt-manager] hero 下拉框：" + msg);
+            } catch {
+              /* 没有 console 就算了 */
+            }
           }
 
           apply();

@@ -507,7 +507,9 @@ window.__ModuleLoader__.load({
                   setOpen(true);
                 },
               },
-              label + " ▾",
+              // ⚠️ **不带 ▾** —— 那是原生 `<select>` 的视觉语言，而这一行里
+              //    工作区 / 模式那两个也都是**没有箭头**的（用户指出过）。
+              label,
             ),
             open
               ? react.createElement(HeroPresetPanel, {
@@ -523,11 +525,19 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 新会话页的面板：**只列全局能用的选项**。
+       * 新会话页的面板。
        *
-       * ⚠️ 跟会话页那个面板的区别：这边**没有**「跟随全局」和「系统提示词」
-       *    那两个选项 —— 它们是**按会话**的状态，而这里还没有会话。
-       *    硬塞进来的话用户会以为「给这个新会话选了原生」，其实改的是全局。
+       * ⚠️ **跟会话页那个面板的区别**：
+       *      · 没有「跟随全局」—— 这里就是全局本身，自己跟随自己没有意义
+       *      · 有「系统提示词」—— 但它在这里的含义是「**回到原生**」
+       *        （全局不指任何预设），而不是会话页那个「这个会话什么都不挂」
+       *
+       * ⚠️ 用户报过「只有预设选择没有原生提示词选择，选择预设后无法回退到原生」
+       *    —— 就是缺了这一项。
+       *
+       * ⚠️ 宿主 `/global` 有条规则：`enabled === true && !presetId` → 400
+       *    （「要开启全局注入，得先选一个预设」）。所以回退到原生是
+       *    **`presetId: null` + `enabled: false`** —— 两个一起传。
        */
       function HeroPresetPanel(props) {
         var errSt = react.useState(null);
@@ -538,14 +548,20 @@ window.__ModuleLoader__.load({
         var hoverId = hovSt[0];
         var setHoverId = hovSt[1];
 
+        /** @param o 选项；`o.id === null` 表示**回到原生**。 */
         function pick(o) {
           setErr(null);
+          var toNative = o.id === null;
           return fetch(ROUTE_GLOBAL, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            // ⚠️ 顺带把全局注入打开 —— 用户定的规则是「要开就得先选预设」，
-            //    反过来「选了预设」也就是要开的意思。
-            body: JSON.stringify({ presetId: o.id, enabled: true }),
+            // ⚠️ 选预设 = 顺带把全局注入打开（用户定的规则是「要开就得先选预设」，
+            //    反过来「选了预设」也就是要开的意思）。
+            // ⚠️ 回原生 = `presetId: null` **且** `enabled: false` ——
+            //    只传 null 会被宿主按「开了却没选预设」挡掉（400）。
+            body: JSON.stringify(
+              toNative ? { presetId: null, enabled: false } : { presetId: o.id, enabled: true },
+            ),
           })
             .then(function (r) {
               return r.json().then(function (j) {
@@ -577,6 +593,50 @@ window.__ModuleLoader__.load({
           ]),
         ];
         if (err) rows.push(react.createElement("div", { key: "e", style: MSG_ERR }, err));
+
+        // ── ① 回到原生 ────────────────────────────────────────────────────
+        //
+        // ⚠️ 这一项**必须有** —— 用户报的「只有预设选择没有原生提示词选择，
+        //    选择预设后无法回退到原生」就是它缺了。
+        //
+        //    当前项判据：全局**没**指任何预设（`presetId` 为空）——
+        //    那正是「新会话不挂任何自设提示词」的状态。
+        var nativeOn = !g.presetId;
+        rows.push(
+          react.createElement(
+            "button",
+            {
+              key: "o-native",
+              type: "button",
+              className: "pm-btn",
+              style: nativeOn
+                ? MENU_ITEM_ON
+                : hoverId === "native"
+                  ? MENU_ITEM_HOVER
+                  : MENU_ITEM,
+              "aria-current": nativeOn ? "true" : undefined,
+              onMouseEnter: function () {
+                setHoverId("native");
+              },
+              onMouseLeave: function () {
+                setHoverId("");
+              },
+              onClick: function () {
+                if (nativeOn) {
+                  props.onClose && props.onClose();
+                  return;
+                }
+                pick({ id: null, label: "系统提示词" });
+              },
+            },
+            [
+              react.createElement("span", { key: "g", style: MENU_MARK }, nativeOn ? "✓" : ""),
+              react.createElement("span", { key: "l", style: MENU_TEXT }, "系统提示词"),
+              react.createElement("span", { key: "s", style: MENU_HINT }, "不挂任何自设提示词"),
+            ],
+          ),
+        );
+
         for (var i = 0; i < list.length; i++) {
           var p = list[i];
           if (!p) continue;
