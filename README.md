@@ -1,6 +1,6 @@
-# 个人提示词 · dsh-prompt-easymanager
+# DSH提示词管理 · dsh-prompt-easymanager
 
-为 DeepSeek Harness 的**每个会话**挂载任意几条系统提示词，并直接看到**模型实际收到的**最终结果。
+可以自行选择全局范围/单独会话中增加个人提示词或修改系统提示词进行工作。
 
 ---
 
