@@ -1456,6 +1456,11 @@ const renderEditor = (props = {}) =>
     ok(r.found > 0, "找得到「系统提示词」那一项");
     eq(r.posts.length, 1, "点「系统提示词」发了一次请求");
     eq(
+      JSON.parse((r.posts[0] && r.posts[0].body) || "{}").sessionId,
+      "s1",
+      "**带着 sessionId**（丢了的话后端 400，点了没反应）",
+    );
+    eq(
       JSON.parse((r.posts[0] && r.posts[0].body) || "{}").presetId,
       null,
       "**带的是 presetId: null**（显式什么都不挂）",
@@ -1465,6 +1470,11 @@ const renderEditor = (props = {}) =>
     const r = tap("测试t-2");
     ok(r.found > 0, "找得到「测试t-2」那一项");
     eq(r.posts.length, 1, "点「测试t-2」发了一次请求");
+    eq(
+      JSON.parse((r.posts[0] && r.posts[0].body) || "{}").sessionId,
+      "s1",
+      "**带着 sessionId**（丢了的话后端 400，点了没反应）",
+    );
     eq(
       JSON.parse((r.posts[0] && r.posts[0].body) || "{}").presetId,
       "测试t-2",
@@ -1534,6 +1544,14 @@ const renderEditor = (props = {}) =>
   if (t2[0]) t2[0].props.onClick();
 
   eq(posts.length, 1, "**点「测试t-2」真的发了一次请求**（不能只关面板）");
+    // ⚠️ **sessionId 必须带上** —— 丢过：`renderOption` 只收到了 hover
+    //    两个字段（不是完整 props），于是 `props.sessionId` 是 undefined，
+    //    后端回 400「缺少 sessionId」，表现是**点了没反应**。
+    eq(
+      JSON.parse((posts[0] && posts[0].body) || "{}").sessionId,
+      "s1",
+      "**请求体里带着 sessionId**（丢了的话后端 400，点了没反应）",
+    );
   eq(JSON.parse((posts[0] && posts[0].body) || "{}").presetId, "测试t-2", "带的是「测试t-2」");
 
   globalThis.fetch = realFetch;

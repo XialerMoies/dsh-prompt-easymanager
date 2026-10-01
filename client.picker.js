@@ -220,9 +220,19 @@ window.__ModuleLoader__.load({
 
         // ── 选项 ────────────────────────────────────────────────────
         for (var i = 0; i < presets.length; i++) {
-          // ⚠️ 单独把 hover 传进去 —— 直接传 props 的话 renderOption 里
-          //    拿不到 hoverId（它在闭包里，不在 props 上）。
-          rows.push(renderOption(presets[i], { hoverId: hoverId, setHoverId: setHoverId }));
+          // ⚠️ **必须把完整的 props 合进去，不能只传 hover** ——
+          //    曾经写成 `renderOption(presets[i], { hoverId, setHoverId })`，
+          //    结果 renderOption 里 `props.sessionId` 是 undefined，
+          //    点下去发出去的请求**没有 sessionId** → 后端 400「缺少 sessionId」
+          //    → 表现就是**点了没反应**（真机上踩了很久才定位到）。
+          //
+          //    hover 那两个在闭包里、不在 props 上，所以得手动合进去。
+          rows.push(
+            renderOption(
+              presets[i],
+              Object.assign({}, props, { hoverId: hoverId, setHoverId: setHoverId }),
+            ),
+          );
         }
 
         if (presets.length === 0) {
