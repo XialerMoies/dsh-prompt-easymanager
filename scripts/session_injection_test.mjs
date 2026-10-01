@@ -194,7 +194,7 @@ const S = "session-aaaa-1111";
   );
   const r = inj.assign(S, ["old-replace"]);
   eq(r.ok, false, "挂一个已删除的模式 → 被拒");
-  eq(r.outcome, "unknown-prompt", "结论是 unknown-prompt");
+  eq(r.outcome, "unknown-prompt", "挂一条**已被删掉**的提示词 → 结论是 unknown-prompt");
   eq(h.sections.length, 0, "被拒时一个 section 都不挂");
 }
 
@@ -220,8 +220,8 @@ const S = "session-aaaa-1111";
   inj.seedAgents([h.agent]);
   const r = inj.assign(S, ["a", "根本不存在", "b"]);
   eq(r.ok, false, "含未知 id 时整组被拒");
-  eq(r.outcome, "unknown-prompt", "结论是 unknown-prompt");
-  ok(r.error.includes("根本不存在"), "错误里点名了未知 id");
+  eq(r.outcome, "unknown-prompt", "一组里**混进**未知 id → 结论是 unknown-prompt");
+  ok(r.error.includes("根本不存在"), "混进未知 id 时，错误里点名了它");
   eq(h.sections.length, 0, "被拒时不挂任何一条");
 }
 
@@ -264,7 +264,7 @@ const S = "session-aaaa-1111";
   // 未知 id 不能进默认（否则每个新会话都记一条「挂不上」）
   const bad = inj.setDefaults(["b", "根本不存在的 id"]);
   eq(bad.ok, false, "含未知 id 的默认被拒");
-  ok(bad.error.includes("根本不存在的 id"), "错误里点名了未知 id");
+  ok(bad.error.includes("根本不存在的 id"), "**默认**里放未知 id 时，错误里点名了它");
   eq(inj.getDefaults(), ["b", "c"], "被拒后默认不变");
 }
 

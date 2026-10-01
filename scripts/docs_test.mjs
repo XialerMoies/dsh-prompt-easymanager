@@ -351,4 +351,55 @@ const readme = readFileSync(at("README.md"), "utf8");
   ok(existsSync(promptsDir), "prompts 目录本身还在");
 }
 
+
+// ── 断言描述不许在同一个文件里重复 ──────────────────────────────────────
+//
+// ⚠️ 描述是断言失败时**唯一的定位信息**。同名两条的话，红了一条你不知道是哪个 ——
+//    实测 host_integration_test.mjs 里有 4 条都叫「非法 action → 400」或
+//    「坏 JSON → 400」，但它们在**三个不同路由**里（编辑器 / 段落 / 预设）。
+//    那些描述是从别的用例抄过来的，一红就得靠行号猜。
+//
+//    只查「文件内」重复，**不跨文件** —— 跨文件同名大多是合理的：同一个不变量
+//    在不同场景各验一遍（比如 `h.sections.length === 1` 出现在 5 个状态流里）。
+{
+  // ⚠️ 测试**在 scripts/ 里**，不在包根 —— 第一版写成 `at("")`（包根），
+  //    于是 filter 出 0 个文件、循环一次都没进，断言恒过 —— **守卫是空的**，
+  //    而且从「通过数不变」才看出来（加了 10 条断言，数字一个没涨）。
+  //    所以下面第一条先确认「扫到的文件数正常」，免得目录再写错时又静默失效。
+  const tested = readdirSync(at("scripts")).filter((x) => x.endsWith("_test.mjs"));
+  ok(tested.length >= 10, `扫到 ${tested.length} 个测试文件（少于 10 个说明目录写错了）`);
+  for (const file of tested) {
+    const src = readFileSync(at("scripts", file), "utf8");
+    const lines = src.split("\n");
+
+    // ⚠️ 判据试了**四种**写法，记一下免得再绕：
+    //    ① 「字符串后紧跟 `)`」→ 一行多个字符串时中间的也被算成描述
+    //       （`eq(readFileSync(join(pd,"new1.md"),"utf8"), "正文甲", "文件内容正确")`
+    //         里的 "new1.md" / "utf8" 被误判）；
+    //    ② 「行首不是 ok/eq/ne 就全当实参」→ 描述本身也是 eq 的实参，全被排掉，
+    //       循环恒空、守卫是空的（注入验证时才发现）；
+    //    ③ 「取行内最后一个字符串」→ 表达式的最后一个字面量**未必是描述**：
+    //       `ok(false, "渲染不炸: " + label + " —— 抛了 " + e.message)` 的最后
+    //       一个字符串是 `" —— 抛了 "`，于是三条不同的断言被当成同一个描述。
+    //    ④ **最终：取整行去掉缩进和结尾分号**。描述是拼出来的也能区分，而且
+    //       `collectByClass(el, "pm-head")` 这种行首不是 helper 的天然不算。
+    //       代价是「同一行写法不同但语义相同」不算重复 —— 那是可接受的漏报。
+    const asDesc = new Map();
+    for (const [n, line] of lines.entries()) {
+      if (!/^\s*(?:ok|eq|ne)\(/.test(line)) continue;
+      const key = line.trim().replace(/;$/, "");
+      if (key.length < 12) continue;
+      if (!asDesc.has(key)) asDesc.set(key, []);
+      asDesc.get(key).push(n + 1);
+    }
+
+    const dups = [...asDesc.entries()].filter(([, v]) => v.length > 1);
+    eq(
+      dups.map(([d, v]) => d + "@" + v.join(",")).join(" | "),
+      "",
+      `**${file} 里断言描述不重复**（重了就看不出红的是哪一条）`,
+    );
+  }
+}
+
 done();

@@ -1242,7 +1242,7 @@ const renderEditor = (props = {}) =>
       renderPicker({ sessionId: "s1" });
       ok(true, "渲染不炸: " + label);
     } catch (e) {
-      ok(false, "渲染不炸: " + label + " —— 抛了 " + e.message);
+        ok(false, "卡片渲染不炸: " + label + " —— 抛了 " + e.message);
     }
   }
 }
@@ -1428,7 +1428,7 @@ const renderEditor = (props = {}) =>
     ok(text.includes("安全审查"), "没有内置分类表时，用条目自带分类名");
     ok(text.includes("人设甲"), "条目照常显示");
   } catch (e) {
-    ok(false, "缺 categories 字段时不抛异常 —— 抛了 " + e.message);
+    ok(false, "**个人提示词那块**缺 categories 字段时不抛异常 —— 抛了 " + e.message);
   }
 }
 
@@ -1794,7 +1794,7 @@ const renderEditor = (props = {}) =>
     ok(values.includes("甲的正文"), "表单里带出现有正文（在 textarea 的 value 里）");
     ok(values.includes("甲"), "名称预填");
     ok(values.includes("a"), "id 预填");
-    ok(text.includes("保存"), "有保存按钮");
+    ok(text.includes("保存"), "**编辑表单**里有保存按钮");
     ok(text.includes("取消"), "有取消按钮");
     ok(text.includes("保存到 prompts/a.md"), "提示保存位置");
     ok(text.includes("约 4 字符"), "显示正文长度");
@@ -1844,7 +1844,7 @@ const renderEditor = (props = {}) =>
       "新建时提示保存目标路径（用当前 id）",
     );
   } catch (e) {
-    ok(false, "新建表单不抛异常 —— 抛了 " + e.message);
+    ok(false, "**单独渲染表单**不抛异常 —— 抛了 " + e.message);
   }
 }
 
@@ -1864,7 +1864,7 @@ const renderEditor = (props = {}) =>
       renderEditor({});
       ok(true, "编辑器边界不炸: " + label);
     } catch (e) {
-      ok(false, "编辑器边界不炸: " + label + " —— 抛了 " + e.message);
+        ok(false, "编辑器遇到边界数据不炸: " + label + " —— 抛了 " + e.message);
     }
   }
 }
@@ -1915,7 +1915,7 @@ const renderEditor = (props = {}) =>
       renderEditor({});
       ok(true, "defaults 边界不炸: " + label);
     } catch (e) {
-      ok(false, "defaults 边界不炸: " + label + " —— 抛了 " + e.message);
+        ok(false, "defaults 遇到边界数据不炸: " + label + " —— 抛了 " + e.message);
     }
   }
 }
@@ -2152,7 +2152,7 @@ const renderEditor = (props = {}) =>
     ok(vals.includes("identity"), "新建表单里分类是 identity");
     ok(vals.includes("20") || text3.includes("order 20"), "带出身份类的建议 order 20");
   } catch (e) {
-    ok(false, "新建表单不抛异常 —— 抛了 " + e.message);
+    ok(false, "**编辑器**渲染新建表单不抛异常 —— 抛了 " + e.message);
   }
 
   // ── 边界：没有 categories 字段（老宿主）也要能渲染 ──
@@ -2165,7 +2165,7 @@ const renderEditor = (props = {}) =>
     ok(text4.includes("身份"), "没有内置分类表时，用条目自带的分类名当标题");
     ok(text4.includes("自定义分类"), "并标为自定义");
   } catch (e) {
-    ok(false, "缺 categories 字段时不抛异常 —— 抛了 " + e.message);
+    ok(false, "**提示词组合那块**缺 categories 字段时不抛异常 —— 抛了 " + e.message);
   }
 }
 
@@ -2721,7 +2721,7 @@ function makeSectionsData(over = {}) {
   // 勾选就是在改这套。
   ok(text.includes("写代码"), "**标题就是当前预设名**（匹配到预设时）");
   ok(text.includes("✎"), "预设名旁边有改名图标");
-  ok(text.includes("保存"), "有保存按钮");
+    ok(text.includes("保存"), "**预设卡片**里有保存按钮");
   ok(!text.includes("未保存的配置"), "匹配到预设时不显示「未保存的配置」占位");
 
   // 下拉框：选项是各条预设，选中项 = 当前匹配的那条

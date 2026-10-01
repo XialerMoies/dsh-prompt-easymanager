@@ -180,7 +180,7 @@ window.__ModuleLoader__.load({
         var enabledDraft = enSt[0];
         var setEnabledDraft = enSt[1];
         // 被**手动折起来**的类别卡片（存 `"cat:<分类id>"`，空 = 全都展开）。
-        // 见 renderGroupCard 里那段说明：默认开，折叠是显式动作。
+        // 见 client.editor.library.js 的 renderGroupCard：默认开，折叠是显式动作。
         // ⚠️ 新钩子加在末尾 —— 测试按索引塞状态，插在中间会打乱既有断言。
         var catSt = react.useState([]);
         var closedCats = catSt[0];
@@ -653,22 +653,11 @@ window.__ModuleLoader__.load({
           );
 
 
-          // ⚠️ 标题行和卡片必须**在同一个 body 项里**。
-          //
-          //    `SECTION` 是 `display:flex; gap:14px` 的列 —— body 里每一项之间
-          //    都隔 14px。原来把 header 和卡片拆成两个 body 项，等于**标题行
-          //    和卡片之间硬隔了 14px，还各自和上下邻居等距**，看着就像标题是
-          //    独立的一条、跟卡片没关系。
-          //    系统提示词那块（renderSections）从来就是一个块，标题和卡片挨着
-          //    （间距 10px）—— 个人提示词现在对齐它。
-          // ⚠️ 标题行和卡片必须**在同一个 body 项里**。
-          //
-          //    `SECTION` 是 `display:flex; gap:14px` 的列 —— body 里每一项之间
-          //    都隔 14px。原来把 header 和卡片拆成两个 body 项，等于**标题行
-          //    和卡片之间硬隔了 14px，还各自和上下邻居等距**，看着就像标题是
-          //    独立的一条、跟卡片没关系。
-          //    系统提示词那块（renderSections）从来就是一个块，标题和卡片挨着
-          //    （间距 10px）—— 个人提示词现在对齐它。
+          // ⚠️ 标题行和卡片**必须是一整块**（LibraryBlock 内部保证）：`SECTION`
+          //    是 `gap:12px` 的列，body 里两项之间就隔 12px —— 拆成两项会让标题
+          //    和卡片之间硬隔 12px、还各自和上下邻居等距，看着像标题跟卡片没关系。
+          //    （原来这里有 8 行注释讲这件事，写了两遍，引用的 header / cards /
+          //     renderSections 都已经搬进 chunk —— 删掉换成这一句。）
           body.push(
             /**
              * 「个人提示词」整块 —— 渲染在 client.editor.library.js 里。

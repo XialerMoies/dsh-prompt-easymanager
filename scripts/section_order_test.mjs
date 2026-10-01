@@ -242,12 +242,15 @@ const nativeList = Object.entries(NATIVE).sort((a, b) => a[1] - b[1]);
   );
 }
 
-// ══ 6. 分类之间也不许重复 ═════════════════════════════════════════════════
-{
-  const orders = CATEGORIES.map((c) => c.order);
-  eq(new Set(orders).size, orders.length, "五个分类的建议 order 互不相同");
-  ok(orders.every((o) => Number.isInteger(o)), "建议 order 都是整数");
-}
+// ══ 6.（已删）分类之间「建议 order 互不相同」 ═════════════════════════════
+//
+// 那一条**不在这里** —— prompt_library_test.mjs 已经验过
+// `new Set(CATEGORIES.map(c => c.order)).size === CATEGORIES.length`。
+// 同一判据、同一输入，两处各写一遍只是让失败时多一个误导性的位置。
+//
+// 而且本节原本想守的东西（别撞车）由上面**第 3 节**守着，那一条更强：
+// 逐个验「分类的 order 不等于**任何原生段落**的 order」—— 原生 order 本身唯一，
+// 所以唯一性由它蕴含。
 
 // ══ 7. 撞车时排序会真的乱掉 —— 留个可执行的证据 ═══════════════════════════
 {

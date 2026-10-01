@@ -400,7 +400,7 @@ ok(
     method: "POST",
     body: { sessionId: S, promptIds: ["根本没有这条"] },
   });
-  eq(r.status, 400, "未知 id → 400");
+  eq(r.status, 400, "**分配**未知 id → 400");
   eq(r.json.outcome, "unknown-prompt", "结论是 unknown-prompt");
   ok(r.json.error.includes("根本没有这条"), "错误里点名了它");
   eq(r.json.ok, false, "回报 ok: false");
@@ -469,7 +469,7 @@ ok(
     method: "POST",
     body: { sessionId: S, promptIds: ["不存在的提示词"] },
   });
-  eq(unknown.status, 400, "未知 id → 400");
+  eq(unknown.status, 400, "**默认**里放未知 id → 400");
   ok(unknown.json.error.includes("没有"), "未知 id 的错误可读");
   eq(
     (await call(ctx, ASSIGN_PATH, { method: "POST", body: { sessionId: "", promptIds: [] } })).status,
@@ -640,7 +640,7 @@ const TMP_ID = "zz-test-only";
 {
   // 非法 action
   const bad = await call(ctx, EDIT_PATH, { method: "POST", body: { action: "乱写" } });
-  eq(bad.status, 400, "非法 action → 400");
+  eq(bad.status, 400, "**编辑器**路由：非法 action → 400");
   ok(bad.json.error.includes("upsert"), "错误里说明了合法取值");
   eq(
     (await call(ctx, EDIT_PATH, { method: "POST", body: {} })).status,
@@ -862,7 +862,7 @@ const TMP_ID = "zz-test-only";
   eq(noName.status, 400, "缺 name → 400");
 
   const badAction = await call(ctx2, SECTIONS_PATH, { method: "POST", body: { name: "a", action: "乱写" } });
-  eq(badAction.status, 400, "非法 action → 400");
+  eq(badAction.status, 400, "**段落**路由：非法 action → 400");
   ok(String(badAction.json.error).includes("replace"), "错误里列出合法取值");
 
   const noText = await call(ctx2, SECTIONS_PATH, { method: "POST", body: { name: "a", action: "replace" } });
@@ -879,7 +879,7 @@ const TMP_ID = "zz-test-only";
   // 坏 JSON
   const route = ctx2.__route(SECTIONS_PATH);
   const badJson = await route(new Request("http://localhost" + SECTIONS_PATH, { method: "POST", body: "{不是 JSON" }));
-  eq(badJson.status, 400, "坏 JSON → 400");
+  eq(badJson.status, 400, "**段落**路由：坏 JSON → 400");
 }
 
 // ══ 31. **写分配不能把段落覆盖抹掉** ═══════════════════════════════════════
@@ -1215,7 +1215,7 @@ const TMP_ID = "zz-test-only";
   const noName = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "save", scope: "global" } });
   eq(noName.status, 400, "存预设缺名字 → 400");
   const badAction = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "乱写" } });
-  eq(badAction.status, 400, "非法 action → 400");
+  eq(badAction.status, 400, "**预设**路由：非法 action → 400");
   const noPreset = await call(ctx8, PRESETS_PATH, { method: "POST", body: { action: "apply", id: "不存在" } });
   eq(noPreset.status, 404, "应用不存在的预设 → 404");
   ok(Array.isArray(noPreset.json.known), "404 时列出已有的预设名，方便排查");
