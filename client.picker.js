@@ -432,8 +432,16 @@ window.__ModuleLoader__.load({
             props.onApplied && props.onApplied();
             return null;
           })
-          .catch(function () {
-            /* 失败时不动面板，让用户重试 */
+          .catch(function (e) {
+            // ⚠️ **失败要说出来** —— 原来是「失败时不动面板，让用户重试」，
+            //    结果是点了没反应、控制台一个 400，谁都不知道为什么。
+            //    （真机上踩过：点预设一直 400，界面上毫无提示。）
+            var m = (e && e.message) || String(e);
+            try {
+              console.warn("[dsh-prompt-manager] 切换预设失败：" + m + "；请求体=" + JSON.stringify(body));
+            } catch {
+              /* 没有 console 就算了 */
+            }
           });
       }
       /**

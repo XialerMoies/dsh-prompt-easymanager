@@ -1245,48 +1245,48 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           /**
            * 找「工作区 / agent 预设」那一行。
            *
-           * ── dsh 里的真实结构（查过源码，ConversationRoot）──────────────────
+           * ── dsh 里的真实结构（查过源码）──────────────────────────────────
            *
-           *     const heroWorkspaceRow = <div className={css.heroWorkspaceRow}>
-           *       <WorkspaceChip …/>                          ← 工作区那个胶囊
-           *       {renderSlot("conversation.hero.workspace")}  ← 已被 ui-workspace 占
-           *       {renderSlot("conversation.hero.agentPreset")}← 已被 ui-agent-preset 占
+           *     <div class="heroWorkspaceRow">          ← 一行，3 个孩子
+           *       <WorkspaceChip/>                        工作区胶囊
+           *       {renderSlot("conversation.hero.workspace")}
+           *       {renderSlot("conversation.hero.agentPreset")}
            *     </div>
-           *     // .heroWorkspaceRow { display:flex; gap:2px; padding:0 16px 0 20px }
            *
-           * 所以那一行**恰好 3 个孩子**，第 1 个是工作区胶囊。
+           *     agent 预设那个座位是 **`<button aria-haspopup="menu">`**
+           *     （`AgentPresetSeat` 的 `menuAnchor`）。
            *
-           * ── 踩过的两次 ─────────────────────────────────────────────────────
+           * ── 踩过的三次 ───────────────────────────────────────────────────
            *
            *   ① `btn.parentElement.parentElement` —— 走太高，落到「包住整块输入区」
            *      的外层容器上 → 控件被插到**输入框下面另起一行**。
-           *   ② 按 `button[aria-haspopup='menu']` 全局找前两个 —— **不稳**：
-           *      dsh 里编辑器本体（contenteditable 那个 div）**也带**
-           *      `aria-haspopup="menu"`，而且它在 `heroWorkspaceRow` **后面**。
-           *      一旦顺序或数量变了，取到的就不是那一行里的东西。
+           *   ② 只认 `[aria-haspopup='menu']`（精确值）—— 真机上**返回 0 个**
+           *      （控制台诊断确认）。而且我把日志设成「只打一次」，
+           *      所以只看到那一次失败的样子，误以为是属性不存在。
+           *   ③ 编辑器本体（contenteditable 那个 div）**也带** `aria-haspopup`，
+           *      所以不能取「第一个匹配」—— 得从 **button** 里挑。
            *
-           * 现在改成**从工作区胶囊往上走**：取第一个「孩子数正好 3 且孩子里有
-           * 带 aria-haspopup 的」祖先 —— 那就是这一行。
+           * ⚠️ 判据故意**放宽**到「孩子数 2–4、里面至少 2 个 button」——
+           *    写死「正好 3 个孩子」的话，dsh 以后加一个就失效。
            */
+          /** 试过几次（诊断用）。⚠️ 必须声明在 apply **之前** ——
+           *  `var` 会提升，但值是 undefined，`tries++` 就成了 NaN。 */
+          var tries = 0;
+
           function rowOf() {
             try {
-              // 工作区胶囊：那一行的第一个孩子，带 aria-haspopup
-              var chips = document.querySelectorAll("[aria-haspopup='menu']");
+              var chips = document.querySelectorAll("button[aria-haspopup]");
               for (var i = 0; i < chips.length; i++) {
                 var el = chips[i].parentElement;
-                // 往上最多走 6 层找那一行
-                for (var up = 0; el && up < 6; up++) {
+                for (var up = 0; el && up < 8; up++) {
                   var kids = el.children ? el.children.length : 0;
-                  if (kids === 3) {
-                    // 确认「三个孩子里至少两个是控件（带 aria-haspopup 或是个按钮）」
+                  if (kids >= 2 && kids <= 4) {
                     var ctrl = 0;
                     for (var k = 0; k < el.children.length; k++) {
                       var c = el.children[k];
-                      if (!c || !c.getAttribute) continue;
-                      if (c.getAttribute("aria-haspopup") || c.tagName === "BUTTON") ctrl++;
+                      if (c && c.tagName === "BUTTON") ctrl++;
                     }
-                    // ⚠️ 这一行**不该**已经有我们的东西（apply 里也查过，双保险）
-                    if (ctrl >= 1 && !el.querySelector("[" + HOST_ATTR + "]")) return el;
+                    if (ctrl >= 2 && !el.querySelector("[" + HOST_ATTR + "]")) return el;
                   }
                   el = el.parentElement;
                 }
@@ -1325,17 +1325,24 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           }
 
           function apply() {
+            tries++;
             try {
               if (document.querySelector("[" + HOST_ATTR + "]")) return true; // 已经插过
               var row = rowOf();
               if (!row) {
                 // ⚠️ 失败时**说清楚看到了什么** —— 这个补丁靠结构匹配，
                 //    而结构只有真机上有。没有这行日志，失效时只能靠猜。
-                logOnce("rowOf 没找到目标行；带 aria-haspopup 的元素有 " +
-                  document.querySelectorAll("[aria-haspopup='menu']").length +
-                  " 个，第一个的父链：" + describeChain(
-                    document.querySelector("[aria-haspopup='menu']"),
-                  ));
+                //    （上一版「只打一次」害了自己：第一次是「还没渲染」，
+                //      之后成功了也不打，于是我只看到失败那次的样子。）
+                note(
+                  "没找到目标行（第 " + tries + " 次尝试）；" +
+                    "button[aria-haspopup] 有 " +
+                    document.querySelectorAll("button[aria-haspopup]").length +
+                    " 个，[aria-haspopup] 全体有 " +
+                    document.querySelectorAll("[aria-haspopup]").length +
+                    " 个；第一个 button 的父链：" +
+                    describeChain(document.querySelector("button[aria-haspopup]")),
+                );
                 return false;
               }
               var box = document.createElement("span");
@@ -1343,7 +1350,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
               box.style.display = "inline-flex";
               box.style.alignItems = "center";
               row.appendChild(box);
-              logOnce("已插入，目标行：" + describe(row) + " 的父：" + describe(row.parentElement));
+              note("已插入（第 " + tries + " 次尝试），目标行：" + describe(row) + "；它的父：" + describe(row.parentElement));
               mountHeroPicker(box);
               return true;
             } catch {
@@ -1352,21 +1359,32 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             return false;
           }
 
-          /** 把一个元素往上三层描述一遍（帮助判断「插到哪儿了」）。 */
+          /** 把一个元素往上四层描述一遍（帮助判断「插到哪儿了」）。 */
           function describeChain(el) {
             var out = [];
             for (var k = 0; el && k < 4; k++) {
               out.push(describe(el));
               el = el.parentElement;
             }
-            return out.join("  ↑  ");
+            return out.join("  ↑  ") || "(null)";
           }
 
-          /** 只打一次日志，免得 MutationObserver 刷屏。 */
-          var logged = false;
-          function logOnce(msg) {
-            if (logged) return;
-            logged = true;
+          /**
+           * 诊断输出。
+           *
+           * ⚠️ **只在「状态变了」的时候打**：
+           *      第一次失败打一条
+           *      成功打一条（**一定会打**，哪怕前面失败过很多次）
+           *      之后不再重复（MutationObserver 会刷屏）
+           *
+           *    上一版是「总共只打一次」，结果只留下最早那次失败 ——
+           *    而那次是「页面还没渲染完」，完全误导。
+           */
+          var lastState = "";
+          function note(msg) {
+            var state = msg.indexOf("已插入") === 0 ? "ok" : "fail";
+            if (state === lastState) return;
+            lastState = state;
             try {
               console.info("[dsh-prompt-manager] hero 下拉框：" + msg);
             } catch {
