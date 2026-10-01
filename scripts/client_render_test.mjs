@@ -27,6 +27,14 @@ const CLIENT = join(HERE, "..", "client.js");
 
 
 // ── 影子层 ──────────────────────────────────────────────────────────────────
+/**
+ * 最近一次「宿主调用 PromptEditor 时给的 props」。
+ *
+ * ⚠️ 影子层的 createElement 会直接调用函数组件，所以树里没有 PromptEditor 元素；
+ *    要验「宿主有没有把拆出去的 chunk 递进来」只能在这一层截（见 createElement）。
+ */
+let seenEditorProps = {};
+
 function makeShims() {
   let stateIndex = 0;
   let stateOverrides = [];
@@ -54,6 +62,14 @@ function makeShims() {
       // ⚠️ 必须真的调用函数组件 —— 否则子组件（如 PreviewPanel）永远不会被
       //    执行，测试会"通过"却什么都没测到。（影子层第一版就犯了这个错。）
       if (typeof type === "function") {
+        // 记下「宿主调用 PromptEditor 时给了什么 props」。
+        //
+        // ⚠️ 为什么非得记这一笔：影子层的 createElement 会**直接调用**函数组件，
+        //    所以渲染出来的树里**没有** PromptEditor 元素 —— 想验「宿主有没有把
+        //    switch chunk 的两样递进来」，只能在这里截。而这件事别的断言都测不到：
+        //    测试是**自己**造 props 喂给 PromptEditor 的，宿主漏传照样全绿，
+        //    真机上却是总开关那一块静静消失。
+        if (type.name === "PromptEditor") seenEditorProps = { ...(props || {}) };
         const wasInRender = inRender;
         inRender = true;
         try {
@@ -595,6 +611,25 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Componen
       `设置页根元素是可渲染的类型（实际 ${t === undefined ? "undefined ← 就是 #130" : typeof t}）`,
     );
     ok(countElements(editorEl) > 3, "设置页渲染出了内容（不是空壳）");
+
+    // ⚠️⚠️ **宿主到底有没有把 switch chunk 的两样递给编辑器。**
+    //
+    //    别的断言都测不出这件事：测试是**自己**造 EDITOR_PROPS 喂给 PromptEditor 的，
+    //    所以「宿主忘了递」在那些断言里照样全绿 —— 而真机上表现是总开关那一块
+    //    静静消失（两头都以为对方有，谁都不报错）。
+    //    这里验的是**宿主调用 PromptEditor 时给它的 props**。
+    //
+    //    ⚠️ 不能在渲染出来的树里找 PromptEditor 元素 —— 影子层的 createElement
+    //       会**直接调用**函数组件，所以树里只剩它返回的 div，元素本身没了。
+    //       改成记录「调用时的 props」（下面的 seenEditorProps）。
+    if (process.env.PM_DEBUG) {
+      console.log("[SLOT] 调用 PromptEditor 时收到的 props = " + Object.keys(seenEditorProps).join(","));
+    }
+    ok(
+      typeof seenEditorProps.MasterSwitch === "function",
+      "**宿主把 MasterSwitch 递给了编辑器**（漏了就是总开关静默消失）",
+    );
+    ok(typeof seenEditorProps.helpIcon === "function", "**宿主把 helpIcon 递给了编辑器**");
   }
 }
 ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
@@ -632,6 +667,18 @@ ok(typeof Picker === "function", "create(api) 造出了 PromptPicker");
 ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
 eq(strict.missing, [], "chunk 要的样式常量宿主一个没漏（漏一个界面就空白）");
 
+// ⚠️ 总开关 + 「?」图标已经拆进 client.editor.switch.js，**由宿主递进 PromptEditor**
+//    （不是编辑器自己拉 —— 那样两边各一份缓存、还要各自处理加载态，
+//     而测试是同步渲染，等不到 effect 里的异步，总开关整块会不出现）。
+//    这里照宿主的做法把 props 喂进去，否则测出来的「总开关不见了」跟真机无关。
+sandbox.preload("client.editor.switch.js");
+const modSwitch = sandbox.cache.get("dsh-prompt-manager/client.editor.switch.js");
+ok(!!modSwitch, "拿得到 switch chunk 模块");
+const switchBox = modSwitch.create(strict.api);
+ok(typeof switchBox.MasterSwitch === "function", "switch chunk 导出了 MasterSwitch");
+ok(typeof switchBox.helpIcon === "function", "switch chunk 导出了 helpIcon");
+const EDITOR_PROPS = { MasterSwitch: switchBox.MasterSwitch, helpIcon: switchBox.helpIcon };
+
 // 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
 // （点预览那一刻才炸是这条链最容易断的地方，见 client.js 里那段注释）。
 sandbox.preload("client.preview.js");
@@ -656,8 +703,36 @@ ok(typeof previewBox.PreviewPanel === "function", "create(api) 造出了 Preview
 /** 渲染 Picker —— 走影子层「按真 React 语义」那条路（同一实例、可重试）。 */
 const renderPicker = (props) =>
   shims.render(Picker, Object.assign({ PreviewPanel: previewBox.PreviewPanel }, props));
-/** 渲染 Editor。 */
-const renderEditor = (props = {}) => shims.render(Editor, props);
+/** 渲染 Editor。默认带上宿主会递的那两个 props（总开关组件 + 「?」图标）。 */
+const renderEditor = (props = {}) =>
+  shims.render(Editor, Object.assign({}, EDITOR_PROPS, props));
+
+// ── 3e. 拆出去的「总开关 + ?图标」两个方向都要验 ──────────────────────────
+//
+// 拆包最容易出的错是**两头都以为对方有**：编辑器把渲染删了、宿主忘了接，
+// 结果是那一块静静消失，没人报错。所以两个方向都断言：
+//   · 源码里确实搬走了（编辑器里不该再有开关的标记 / 实现）；
+//   · 渲染出来确实还在（总开关的文案出现在页面上）。
+{
+  const edSrc = readFileSync(join(HERE, "..", "client.editor.js"), "utf8");
+  const swSrc = readFileSync(join(HERE, "..", "client.editor.switch.js"), "utf8");
+
+  // 方向一：搬走了
+  for (const gone of ["NATIVE_SWITCH", "NATIVE_THUMB", "SWITCH_FALLBACK", "THUMB_FALLBACK"]) {
+    ok(!edSrc.includes(gone), `编辑器里不再有 ${gone}（已搬进 switch chunk）`);
+  }
+  ok(!/function renderHelpIcon\(/.test(edSrc), "编辑器里不再有 renderHelpIcon 的实现");
+  ok(/function renderHelpIcon\(/.test(swSrc), "switch chunk 里有 renderHelpIcon");
+  ok(/function MasterSwitch\(props\)/.test(swSrc), "switch chunk 里 MasterSwitch 收 props");
+  // 方向一之二：编辑器**只靠 props 拿**，不再自己 require.async 拉一份
+  // （自己拉会两边各一份缓存 + 各自的加载态，而测试是同步渲染、等不到异步）
+  ok(!/loadSwitch|useSwitchChunk/.test(edSrc), "编辑器不再自己拉 switch chunk（改由宿主递 props）");
+  ok(/props && props\.MasterSwitch/.test(edSrc), "编辑器从 props 取 MasterSwitch");
+  ok(/props && props\.helpIcon/.test(edSrc), "编辑器从 props 取 helpIcon");
+
+  // 方向二（渲染出来还在）见下面「总开关」那一节 —— 那里状态才设齐，
+  // 放在这儿渲染出来的是「读取中…」，断言会假红。
+}
 
 // ── 3d. 「按索引塞状态」这件事必须有个护栏 ─────────────────────────────────
 //
@@ -670,7 +745,7 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
 // 顺带被迫检查所有按索引塞状态的地方。
 {
   const src = readFileSync(join(HERE, "..", "client.editor.js"), "utf8");
-  const start = src.indexOf("function PromptEditor() {");
+  const start = src.indexOf("function PromptEditor(");
   ok(start > 0, "找得到 PromptEditor");
   if (start > 0) {
     const rest = src.slice(start);
@@ -2659,6 +2734,13 @@ function makeSectionsData(over = {}) {
   // ⚠️ 它管的是**注入这件事本身**，不是「用不用我的配置」——
   //    名字和说明都得照这个说，否则用户会以为关掉只是「不注入默认那几条」。
   ok(text.includes("提示词全局注入"), "**开关叫「提示词全局注入」**（管的是注不注入，不是用不用配置）");
+  // ⚠️ 这一条同时是**拆包**的回归：总开关的渲染已经搬进 client.editor.switch.js，
+  //    由宿主当 props 递给编辑器。搬走之后最容易出的错是「两头都以为对方有」——
+  //    那一块静静消失，谁都不报错。所以这里确认它**仍然渲染在编辑器里**。
+  ok(
+    !!findEl(el, (n) => n.props && n.props.role === "switch"),
+    "**role=switch 的控件仍在编辑器里**（搬进 switch chunk 后仍被渲染出来）",
+  );
   ok(text.includes("开 · 新会话自动挂默认"), "开启时说明作用范围（说的是「默认」这一层）");
   const swTip = collectTitles(el).find((t) => t.includes("提示词注入的总开关")) || "";
   ok(swTip !== "", "**总开关的说明挂在 title 上**（不占常驻行）");

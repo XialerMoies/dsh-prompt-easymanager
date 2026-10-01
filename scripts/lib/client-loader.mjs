@@ -9,7 +9,7 @@
 //   宿主写的名字对不对，只有在**照搬那条规则**的加载器下才测得出来。
 //   所以这里刻意复刻 DSH 的算法，而不是简单地 require 一下文件。
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -242,11 +242,21 @@ export function strictApi(api) {
  * 只扫宿主的话这类断言会「全绿但什么都没扫到」，比没有还糟。
  */
 export function clientSource() {
-  const files = [
-    "client.js",
-    "client.picker.js",
-    "client.preview.js",
-    "client.editor.js",
-  ];
+  // ⚠️ **自动发现**，不要手写列表。
+  //
+  //    原来是写死的四个文件名 —— 加一个 chunk（比如 client.editor.switch.js）
+  //    就会漏扫，而那些断言的表现是「全绿但什么都没扫到」，正是这段注释
+  //    自己警告过的那种失败。列表和文件事实写两遍，迟早漏一处。
+  //
+  //    规则跟 dsh 的一致：包根下匹配 `client.*.js` 的本地 chunk。
+  const files = readdirSync(PKG_DIR)
+    // ⚠️ 是 `client.*\.js`，**不是** `client\..*\.js`。
+    //    后者要求 client 后面还有一个字面点，于是连 client.js 都匹配不到
+    //    （`client` 后面直接就是 `.js`）—— 试了两次才对。
+    .filter((f) => /^client.*\.js$/.test(f))
+    .sort();
+  if (!files.includes("client.js")) {
+    throw new Error("clientSource: 包根下找不到 client.js —— PKG_DIR 指错了吗？");
+  }
   return files.map((f) => readFileSync(join(PKG_DIR, f), "utf8")).join("\n");
 }

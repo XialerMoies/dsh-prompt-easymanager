@@ -13,7 +13,10 @@ window.__ModuleLoader__.load({
     var module = { exports: {} };
     var exports = module.exports;
     var react = require("react");
-    var reactDom = require("react-dom");
+    // ⚠️ 这里原来还 require 了 "react-dom"，但本文件从头到尾没用过它
+    //    （用 createPortal 的预览弹窗在 client.preview.js 里）。
+    //    顺手删掉 —— chunk 的依赖越少越好。
+
 
     /**
      * 宿主调用入口，把「注册期就存在、chunk 等不到」的东西注入进来。
@@ -331,7 +334,7 @@ window.__ModuleLoader__.load({
         lineHeight: "20px",
       };
 
-      function PromptEditor() {
+      function PromptEditor(props) {
         var listSt = react.useState(null);
         var list = listSt[0];
         var setList = listSt[1];
@@ -1090,146 +1093,22 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * 总开关（胶囊）—— **用 dsh 自己的开关**。
+         * 总开关那一块 —— 组件在 client.editor.switch.js 里。
          *
-         * ⚠️ 这是「一键回到原生」的出口：关掉 = 不注入自设提示词、不改写原生段落，
-         *    等价于原生 dsh。但**配置全留着** —— 拨回来就原样恢复，所以装配时清空的
-         *    是自己注入的段落，不是配置。
+         * 这里只负责把宿主给的 api 交给它、把「当前开没开」递进去。
          *
-         * ── 为什么用原生类名，而不是自己写内联样式 ──────────────────────────
-         *
-         * dsh 的开关是一段编译过的 CSS module（`_switch_15ung_5` / `_thumb_15ung_33`），
-         * 它在**全局样式表**里（web-frontend/dist/assets/index-*.css，由 index.html
-         * 直接引入），不是某个包的私有注入 —— 所以插件能直接借。
-         *
-         * 借它的好处是自动跟着主题走：
-         *     background:var(--dsw-alias-border-l3) / [aria-checked=true]→var(--dsw-alias-brand-primary)
-         *     thumb 用 transform:translate(16px)，transition .12s
-         *     自带 :disabled（opacity .5）和 :focus-visible 焦点环
-         *
-         * ⚠️⚠️ **凡是原生 css 已经管了的属性，内联里一个都不能写。**
-         *    踩过两次：
-         *      1) 内联 `background:"#fff"` 把 thumb 的主题令牌顶掉了 ——
-         *         深色模式下滑块本该是**深色**（开启态的 brand-primary 在深色下偏亮，
-         *         滑块要反过来才看得清），结果一直是白的。
-         *      2) 内联 `transform` 覆盖了 `[aria-checked=true] .thumb{translate(16px)}`
-         *         —— 值恰好一样所以没露馅，但原生那条规则已经失效了。
-         *    内联样式**永远赢** class，所以只留「原生不管」的兜底几何。
-         *
-         * 那个哈希是**内容派生**的，dsh 升级改了开关的 css 就会变。所以兜底留下的
-         * 是「形状」而不是「配色」：类名一旦失效，至少还是个圆角胶囊、不会退回方按钮；
-         * 颜色交给原生 —— 宁可失效时朴素，也不要**在好的时候是错的**。
-         */
-        var NATIVE_SWITCH = "_switch_15ung_5";
-        var NATIVE_THUMB = "_thumb_15ung_33";
-        // 只兜形状和布局：原生 css 失效时才起作用，生效时被 class 覆盖（值相同）
-        var SWITCH_FALLBACK = {
-          position: "relative",
-          display: "inline-block",
-          flex: "0 0 auto",
-          boxSizing: "border-box",
-          width: "36px",
-          height: "20px",
-          padding: "2px",
-          border: "0",
-          borderRadius: "999px",
-          cursor: "pointer",
-        };
-        // ⚠️ 这里**没有** background、**没有** transform —— 见上面那段。
-        var THUMB_FALLBACK = {
-          display: "block",
-          width: "16px",
-          height: "16px",
-          borderRadius: "50%",
-        };
-        /**
-         * 开关本体：形状兜底 + 仅当原生类名失效时才需要的一点颜色。
-         *
-         * background 用**原生同一套令牌**，这样即使写到内联也还是跟着主题走；
-         * 原生类名生效时它和 class 里的值一致，不会打架。
-         */
-        function switchStyle(on) {
-          return Object.assign({}, SWITCH_FALLBACK, {
-            background: on
-              ? "var(--dsw-alias-brand-primary)"
-              : "var(--dsw-alias-border-l3)",
-          });
-        }
-        /**
-         * 滑块：**只有形状兜底，没有颜色、没有 transform**。
-         *
-         * 背景交给原生的 `var(--dsw-alias-label-primary-foreground)` ——
-         * 那个令牌在浅色下是白、深色下是**深色**（开启态的 brand-primary 在深色下
-         * 偏亮，滑块得反过来）。写死白色就是深色模式下看起来不对的原因。
-         * 位移交给原生的 `[aria-checked=true] .thumb{transform:translate(16px)}`。
-         */
-        function thumbStyle() {
-          return THUMB_FALLBACK;
-        }
-
-        /**
-         * 提示词全局注入开关。
-         *
-         * ⚠️ 语义（用户定的）：**它管的是「默认」那一层。**
-         *    开启 → 每个新会话都自动挂「新会话默认」里那几条。
-         *    关闭 → 不再往每个会话都塞默认；但**会话页自己选的照旧注入**，
-         *          段落改写也照旧生效（改原生段落跟注不注入是两件事）。
-         *
-         *    名字和说明都得照这个说 —— 写成「全部停用」就过头了，
-         *    写「使用我的提示词配置」又太含糊（听起来像另有个配置开关）。
-         *
-         * 说明收进 title（不占常驻行）：这段是「怎么回事」，不是「现在什么状态」。
+         * ⚠️ **状态仍留在本组件**（enabledDraft / toggleEnabled）—— 拨开关会牵动
+         *    load()，而且测试是按 hook 下标塞状态的，把状态搬走会让所有按索引
+         *    塞状态的地方错位。所以这一步只搬**渲染**。
          */
         function renderMasterSwitch() {
-          var on = enabledDraft !== false;
-          var busy = enabledDraft === null;
-          var help =
-            "提示词注入的总开关，管的是「默认」那一层。\n\n" +
-            "开启：每个新会话都自动挂「新会话默认」里那几条。\n" +
-            "关闭：不再往每个会话都塞默认 —— 但你在会话页自己选过的提示词照旧注入，" +
-            "段落改写也照旧生效。\n\n" +
-            "你的配置都留着，开回来就恢复。";
-          return react.createElement(
-            "div",
-            { style: Object.assign({}, CARD, { padding: "12px 14px", marginBottom: "12px" }) },
-            [
-              react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: "10px" } }, [
-                // 结构照抄原生：button[role=switch][aria-checked] + span(thumb)。
-                // 视觉状态由 aria-checked 驱动，所以别再往里塞自己的 display 样式。
-                react.createElement(
-                  "button",
-                  {
-                    key: "sw",
-                    type: "button",
-                    role: "switch",
-                    "aria-checked": on,
-                    "aria-label": "提示词全局注入",
-                    className: NATIVE_SWITCH,
-                    title: help,
-                    disabled: busy,
-                    onClick: function () {
-                      toggleEnabled(!on);
-                    },
-                    style: switchStyle(on),
-                  },
-                  react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle() }),
-                ),
-                react.createElement(
-                  "span",
-                  { key: "t", style: { fontSize: "13px", fontWeight: 600 } },
-                  "提示词全局注入",
-                ),
-                renderHelpIcon(help),
-                react.createElement(
-                  "span",
-                  { key: "st", style: HEADING_COUNT },
-                  // 「开 · 所有会话都注入」—— 说的是**默认这一层的作用范围**，
-                  // 不是「禁止/允许注入」。措辞别写成全停。
-                  on ? "开 · 新会话自动挂默认" : "关 · 只在会话页自己选的还注入",
-                ),
-              ]),
-            ],
-          );
+          var C = props && props.MasterSwitch;
+          if (!C) return null;
+          return react.createElement(C, {
+            enabled: enabledDraft,
+            busy: enabledDraft === null,
+            onToggle: toggleEnabled,
+          });
         }
 
         /**
@@ -1508,60 +1387,19 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * 一个「?」图标，说明挂在 title 上（悬停出原生提示，也能点、能聚焦）。
+         * 「?」图标。
          *
-         * 为什么不用一小段灰字：
-         *   这两段说明（段落是干什么的 + 改的是哪一层）以前是两行常驻灰字，
-         *   压在标题下面，每一眼都要读一遍。挪进 title 之后，需要的时候才有。
+         * ⚠️ 它归 client.editor.switch.js（跟总开关一起搬出去了），但本文件里
+         *    三处要用 —— 所以这里**优先用宿主递进来的**（props.helpIcon），
+         *    没有就先用 switch chunk 自己的那一份。
          *
-         * ⚠️ 用 `title` 而不是自己写弹层：原生提示不用管点击外部关闭、
-         *    不用管层级（z-index）、不用管 Esc，也不会被设置页的滚动容器裁掉。
-         *    dsh 自己的图标提示也是这么给的。
+         *    为什么要兜底：宿主那边是异步等两个 chunk 都到了才渲染本组件的，
+         *    但**测试**里是直接造本组件、不过宿主 —— 只认 props 的话会直接抛
+         *    「props.helpIcon is not a function」。宁可少一个图标，也不要整块崩。
          */
-        function renderHelpIcon(text) {
-          return react.createElement(
-            "span",
-            {
-              key: "help",
-              title: text,
-              "aria-label": text,
-              tabIndex: 0,
-              style: {
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flex: "none",
-                width: "14px",
-                height: "14px",
-                color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
-                cursor: "help",
-              },
-            },
-            react.createElement(
-              "svg",
-              { width: "14", height: "14", viewBox: "0 0 16 16", "aria-hidden": "true" },
-              react.createElement("circle", {
-                cx: "8",
-                cy: "8",
-                r: "6.6",
-                fill: "none",
-                stroke: "currentColor",
-                strokeWidth: "1.3",
-              }),
-              react.createElement(
-                "text",
-                {
-                  x: "8",
-                  y: "11.4",
-                  textAnchor: "middle",
-                  fontSize: "9",
-                  fontWeight: "700",
-                  fill: "currentColor",
-                },
-                "?",
-              ),
-            ),
-          );
+        function helpIcon(text) {
+          var fn = props && props.helpIcon;
+          return fn ? fn(text) : null;
         }
 
         /** 「系统提示词」整块。 */
@@ -1574,8 +1412,8 @@ window.__ModuleLoader__.load({
             { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
             [
               react.createElement("span", { key: "n", style: HEADING_TITLE }, "系统提示词"),
-              // 两段说明并成一个「?」—— 详见 renderHelpIcon
-              renderHelpIcon(
+              // 两段说明并成一个「?」—— 详见 client.editor.switch.js
+              helpIcon(
                 "这些是 dsh 自己往系统提示词里放的段落。可以逐段改写或关掉，也能还原。" +
                   "官方以后新增段落会自动出现在这里，改过的会标出来 —— 你的改动不会被官方更新顶掉。" +
                   "\n\n" +
