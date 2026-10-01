@@ -334,6 +334,13 @@ window.__ModuleLoader__.load({
           {
             style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
               flexDirection: "row",
+              // ⚠️ **必须允许换行** —— `CARD_MAIN_ROW` 是 `flex-wrap: nowrap`，
+              //    而这一行现在装着：开关 + 标题 + 铅笔 + 下拉 + 保存 + 删除 + 刷新。
+              //    不许换行的话，空间不够时**所有项一起被压扁**：标题会被挤到
+              //    只剩一个字宽 → **「提示词全局注入」竖排成一行一个字**
+              //    （真机截图里就是这个）。
+              //    允许换行之后，挤不下就整块掉到下一行，谁都不会被压成竖条。
+              flexWrap: "wrap",
               minHeight: "0",
               padding: "10px 14px",
               gap: "8px",
