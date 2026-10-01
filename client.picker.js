@@ -460,6 +460,50 @@ window.__ModuleLoader__.load({
         var open = openSt[0];
         var setOpen = openSt[1];
 
+        /**
+         * 挂载后往控制台说一句「我在哪儿」。
+         *
+         * ⚠️ 为什么要这个：这个控件是**渲染后插进去的**（dsh 那一行没有第三个
+         *    槽位），所以「插到哪儿了」只有真机上才知道。前面为这个位置
+         *    已经返工三轮，每轮都靠猜。现在让它自己说 —— 一次说清。
+         *
+         *    只在浏览器里跑（`typeof document`），测试环境里没有真实 DOM。
+         */
+        react.useEffect(function () {
+          try {
+            if (typeof document === "undefined") return undefined;
+            var el = document.querySelector("[data-pm-hero-preset]");
+            if (!el) return undefined;
+            var parent = el.parentElement;
+            var kids = parent ? parent.children.length : 0;
+            var who = [];
+            for (var k = 0; k < kids && k < 6; k++) {
+              var c = parent.children[k];
+              who.push(
+                (c.tagName || "?").toLowerCase() +
+                  (c === el ? "(我)" : "") +
+                  (c.getAttribute && c.getAttribute("aria-haspopup") ? "[menu]" : ""),
+              );
+            }
+            var box = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            console.info(
+              "[dsh-prompt-manager] hero 框位置：父 " +
+                (parent ? (parent.tagName || "?").toLowerCase() : "?") +
+                "." +
+                (parent && parent.className ? String(parent.className).split(/\s+/)[0] : "?") +
+                " 共 " +
+                kids +
+                " 个孩子 [" +
+                who.join(", ") +
+                "]" +
+                (box ? "；我的位置 x=" + Math.round(box.left) + " y=" + Math.round(box.top) : ""),
+            );
+            return undefined;
+          } catch {
+            return undefined;
+          }
+        }, []);
+
         var load = react.useCallback(function () {
           return fetch(ROUTE_PRESETS)
             .then(function (r) { return r.ok ? r.json() : null; })
@@ -1027,7 +1071,9 @@ window.__ModuleLoader__.load({
               "data-prompt-manager": hasErr ? "error" : currentIds.join(",") || "none",
               "data-prompt-source": hasExplicit ? "explicit" : "default",
             },
-            label + " ▾",
+            // ⚠️ **不带 ▾** —— 那是原生 `<select>` 的视觉语言。会话页头部
+            //    跟新会话页那一行都统一成「只有文字」。
+            label,
           ),
           react.createElement(
             "button",

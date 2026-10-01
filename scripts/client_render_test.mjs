@@ -613,9 +613,17 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Componen
     );
     ok(countElements(pickerEl) > 1, "会话头部渲染出的不只是个光壳（有按钮等子元素）");
     const texts = flattenText(pickerEl);
+    // ⚠️ 原来用 `▾` 判「真的渲染了」—— 那个字符**已经去掉**
+    //    （原生 `<select>` 的视觉语言，会话头和新会话页都统一成只有文字）。
+    //    换成 `data-prompt-manager`：它本来就是给程序认的标记，
+    //    比一个装饰字符稳（字符会随样式改）。
     ok(
-      texts.some((x) => x.includes("▾")),
-      "会话头部有那个带 ▾ 的选择按钮（说明 PromptPicker 真的跑起来了，不是空壳）",
+      !!findEl(pickerEl, (n) => n.props && n.props["data-prompt-manager"] !== undefined),
+      "会话头部有那个选择按钮（用 data-prompt-manager 标记判，不是看装饰字符）",
+    );
+    ok(
+      !texts.some((x) => x.includes("▾")),
+      "**入口按钮不带 ▾**（那是 <select> 的语言）",
     );
   }
 
