@@ -92,8 +92,10 @@ window.__ModuleLoader__.load({
       var ROUTE_STATE = api.route.ROUTE_STATE;
       var ROUTE_SECTIONS = api.route.ROUTE_SECTIONS;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
-      var ROUTE_ASSIGN = api.route.ROUTE_ASSIGN;
       var ROUTE_DEFAULTS = api.route.ROUTE_DEFAULTS;
+      // ⚠️ 这里原来还拿了 `ROUTE_ASSIGN`（按会话分配），但设置面板只写全局层，
+      //    所以那份从删掉 sectionScope 起就没人用了 —— 一并删掉。
+      //    会话页的 picker 自己拿自己那份，两边互不影响。
 
       var SECTION = {
         width: "100%",
@@ -380,18 +382,14 @@ window.__ModuleLoader__.load({
         // "session" = 只影响选中的那个会话，**盖住**全局那条
         //
         // ⚠️ 仍然加在**最后**：测试按索引塞状态，插在中间会打乱已有断言。
-        var secScopeSt = react.useState("global");
-        var sectionScope = secScopeSt[0];
-        var setSectionScope = secScopeSt[1];
-        /** scope = session 时用哪个会话 */
-        var secSidSt = react.useState("");
-        var sectionSessionId = secSidSt[0];
-        var setSectionSessionId = secSidSt[1];
         // ── 提示词组合 / 快速预设 ────────────────────────────────────────
         // 同样加在最后。
-        // ⚠️ **作用范围复用 sectionScope / sectionSessionId** —— 「生效列表改哪个
-        //    会话的注入」和「段落改写写到哪个会话」本来就是同一层的意思。
-        //    两处各渲染一个开关，改的是同一份状态。
+        //
+        // ⚠️ 这里原来还有一对 `sectionScope` / `sectionSessionId`（「编辑写进
+        //    哪一层」的开关，global / session）。**两个 setter 从没被调用过** ——
+        //    界面上从来没有这个入口，所以恒为 "global"。已删除：设置面板只编辑
+        //    全局层，会话层走会话页（那边天然带着 sessionId）。
+        //    后端的 `scope: "session"` / `?session=` 能力保留，只是面板不用。
         var preSt = react.useState(null);
         var presetsData = preSt[0];
         var setPresetsData = preSt[1];
@@ -505,10 +503,9 @@ window.__ModuleLoader__.load({
         );
 
         // ── 系统提示词段落：读取 / 改写 / 关掉 / 还原 ────────────────────────
-        var loadSections = react.useCallback(function (scope, sid) {
-          var useScope = scope || "global";
+        var loadSections = react.useCallback(function () {
+          // 只读全局层（不带 ?session=）。会话层由会话页负责。
           var url = ROUTE_SECTIONS;
-          if (useScope === "session" && sid) url += "?session=" + encodeURIComponent(sid);
           return fetch(url, { method: "GET" })
             .then(function (res) {
               if (!res.ok) throw new Error("GET HTTP " + res.status);
@@ -524,16 +521,14 @@ window.__ModuleLoader__.load({
             });
         }, []);
 
-        // 换会话/换层时重新读 —— 两层看到的内容不一样
         react.useEffect(function () {
-          loadSections(sectionScope, sectionSessionId);
-        }, [loadSections, sectionScope, sectionSessionId]);
+          loadSections();
+        }, [loadSections]);
 
         // ── 提示词组合 / 快速预设：读取 ────────────────────────────────────
-        var loadPresets = react.useCallback(function (scope, sid) {
+        var loadPresets = react.useCallback(function () {
+          // 只读全局层（不带 ?session=）。
           var url = ROUTE_PRESETS;
-          var useScope = scope || "global";
-          if (useScope === "session" && sid) url += "?session=" + encodeURIComponent(sid);
           return fetch(url, { method: "GET" })
             .then(function (res) {
               if (!res.ok) throw new Error("GET HTTP " + res.status);
@@ -550,16 +545,14 @@ window.__ModuleLoader__.load({
         }, []);
 
         react.useEffect(function () {
-          loadPresets(sectionScope, sectionSessionId);
-        }, [loadPresets, sectionScope, sectionSessionId]);
+          loadPresets();
+        }, [loadPresets]);
 
         /** 预设类操作：save / apply / delete。完事两边都重读。 */
         var doPreset = react.useCallback(
-          function (payload, scope, sid) {
+          function (payload) {
             setPresetsBusy(true);
             var url = ROUTE_PRESETS;
-            var useScope = scope || "global";
-            if (useScope === "session" && sid) url += "?session=" + encodeURIComponent(sid);
             return fetch(url, {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -582,9 +575,9 @@ window.__ModuleLoader__.load({
                         ? "已改名为「" + (d && d.name) + "」"
                         : "已删除",
                 );
-                // 应用预设会动 defaults / assignments，注入那边也要重读
-                loadPresets(scope, sid);
-                loadSections(scope, sid);
+                // 应用预设会动 defaults，注入那边也要重读
+                loadPresets();
+                loadSections();
                 setErr(null);
                 // ⚠️ 把响应交出去 —— 改名会**换 id**（id 从名字派生），
                 //    调用方要拿新 id 更新「当前选中是哪条」。
@@ -607,19 +600,11 @@ window.__ModuleLoader__.load({
          * **没有另造一套接口**，所以这里改完，会话头那个徽章看到的东西是一致的。
          */
         var setActivePrompts = react.useCallback(
-          function (nextIds, scope, sid) {
+          function (nextIds) {
             setPresetsBusy(true);
-            var useScope = scope || "global";
-            if (useScope === "session" && !sid) {
-              setPresetsBusy(false);
-              flash("先选一个会话");
-              return Promise.resolve();
-            }
-            var url = useScope === "session" ? ROUTE_ASSIGN : ROUTE_DEFAULTS;
-            var body =
-              useScope === "session"
-                ? { sessionId: sid, promptIds: nextIds }
-                : { promptIds: nextIds };
+            // 只写全局层。会话层的分配由会话页负责（那边天然带着 sessionId）。
+            var url = ROUTE_DEFAULTS;
+            var body = { promptIds: nextIds };
             return fetch(url, {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -646,16 +631,12 @@ window.__ModuleLoader__.load({
 
         /** 改一段：action = replace | disable | restore | acknowledge */
         var applySection = react.useCallback(
-          function (name, action, text, scope, sid) {
+          function (name, action, text) {
             setSectionsBusy(true);
-            var useScope = scope || "global";
-            var body = { name: name, action: action, scope: useScope };
+            // 只写全局层。会话层的段落改写由会话页负责（那边天然带着 sessionId）。
+            var body = { name: name, action: action, scope: "global" };
             if (action === "replace") body.text = text;
             var url = ROUTE_SECTIONS;
-            if (useScope === "session") {
-              if (!sid) { setSectionsBusy(false); flash("先选一个会话"); return Promise.resolve(); }
-              url += "?session=" + encodeURIComponent(sid);
-            }
             return fetch(url, {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -790,7 +771,7 @@ window.__ModuleLoader__.load({
                       disabled: sectionsBusy,
                       onClick: function (e) {
                         e.stopPropagation();
-                        applySection(row.name, "acknowledge", sectionScope, sectionSessionId);
+                        applySection(row.name, "acknowledge");
                       },
                     },
                     "知道了",
@@ -840,7 +821,7 @@ window.__ModuleLoader__.load({
                       style: sectionsBusy ? BTN_BUSY : BTN_PRIMARY,
                       disabled: sectionsBusy,
                       onClick: function () {
-                        applySection(row.name, "replace", draft, sectionScope, sectionSessionId).then(function () {
+                        applySection(row.name, "replace", draft).then(function () {
                           setSectionDrafts(function (prev) {
                             var next = Object.assign({}, prev);
                             delete next[row.name];
@@ -905,7 +886,7 @@ window.__ModuleLoader__.load({
                       title: "让这一段完全不出现（注册为空正文，dsh 会丢弃空段落）",
                       onClick: function (e) {
                         e.stopPropagation();
-                        applySection(row.name, "disable", sectionScope, sectionSessionId);
+                        applySection(row.name, "disable");
                       },
                     },
                     "关掉",
@@ -922,7 +903,7 @@ window.__ModuleLoader__.load({
                           title: "删掉你的改动，回到官方当前的文本（官方更新过的话就是新版）",
                           onClick: function (e) {
                             e.stopPropagation();
-                            applySection(row.name, "restore", sectionScope, sectionSessionId);
+                            applySection(row.name, "restore");
                           },
                         },
                         "还原默认",
@@ -1004,10 +985,9 @@ window.__ModuleLoader__.load({
          *    变成三层（踩过：用户问「下拉框和保存不都说是卡片顶部了吗」）。
          */
         function renderPickerBody() {
-          var layer =
-            sectionScope === "session"
-              ? presetsData.layers && presetsData.layers.session
-              : presetsData.layers && presetsData.layers.global;
+          // ⚠️ 只取 global 层。不带 ?session= 时后端**根本不返回** session 层，
+          //    原来那个三元的 session 分支永远取到 undefined（死代码，已删）。
+          var layer = presetsData.layers && presetsData.layers.global;
           var activeIds = (layer && Array.isArray(layer.prompts) ? layer.prompts : []).slice();
 
           var usable = [];
@@ -1067,7 +1047,7 @@ window.__ModuleLoader__.load({
                         var next = on
                           ? activeIds.filter(function (x) { return x !== p.id; })
                           : activeIds.concat([p.id]);
-                        setActivePrompts(next, sectionScope, sectionSessionId);
+                        setActivePrompts(next);
                       },
                     }),
                     // 名字占满剩余宽度。
@@ -1301,8 +1281,7 @@ window.__ModuleLoader__.load({
          *       （他的原话：「下拉框和保存不都说是卡片顶部了吗」）。
          */
         function renderCombo() {
-          var scopeKey = sectionScope === "session" ? "session" : "global";
-          var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
+          var matched = presetsData && presetsData.matched ? presetsData.matched.global : null;
           var list = (presetsData && presetsData.presets) || [];
           var currentId = matched ? matched.id : "";
           var currentName = matched ? matched.name : "未保存的配置";
@@ -1442,7 +1421,7 @@ window.__ModuleLoader__.load({
                   disabled: bus,
                   title: "重新从盘上读一遍",
                   onClick: function () {
-                    loadPresets(sectionScope, sectionSessionId);
+                    loadPresets();
                   },
                 },
                 "↻",
@@ -1482,12 +1461,15 @@ window.__ModuleLoader__.load({
           ]);
         }
 
-        /** 换一套：应用预设（把它的内容写回当前层）。 */
+        /**
+         * 换一套：应用预设（把它的内容写回**全局层**）。
+         *
+         * ⚠️ 不需要传「写到哪一层」—— 应用是**写回预设自己那一层**
+         *    （预设里存着 scope），后端按预设的 scope 决定。面板这边
+         *    只能存全局预设，所以永远写全局层。
+         */
         function applyPreset(id) {
-          var p = ((presetsData && presetsData.presets) || []).filter(function (x) {
-            return x.id === id;
-          })[0];
-          doPreset({ action: "apply", id: id }, p ? p.scope : sectionScope, sectionSessionId);
+          doPreset({ action: "apply", id: id });
         }
 
         /**
@@ -1498,14 +1480,9 @@ window.__ModuleLoader__.load({
          *    覆盖走同一条 save（同名 → presetId 命中同一条）。
          */
         function savePreset() {
-          var scopeKey = sectionScope === "session" ? "session" : "global";
-          var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
+          var matched = presetsData && presetsData.matched ? presetsData.matched.global : null;
           if (matched) {
-            doPreset(
-              { action: "save", name: matched.name, scope: sectionScope },
-              sectionScope,
-              sectionSessionId,
-            );
+            doPreset({ action: "save", name: matched.name, scope: "global" });
             return;
           }
           var name = presetName.trim();
@@ -1515,11 +1492,7 @@ window.__ModuleLoader__.load({
             setRenameDraft("");
             return;
           }
-          doPreset(
-            { action: "save", name: name, scope: sectionScope },
-            sectionScope,
-            sectionSessionId,
-          ).then(function () {
+          doPreset({ action: "save", name: name, scope: "global" }).then(function () {
             setPresetName("");
           });
         }
@@ -1529,14 +1502,9 @@ window.__ModuleLoader__.load({
           var next = renameDraft.trim();
           setRenaming(false);
           if (!next) return;
-          var scopeKey = sectionScope === "session" ? "session" : "global";
-          var matched = presetsData && presetsData.matched ? presetsData.matched[scopeKey] : null;
+          var matched = presetsData && presetsData.matched ? presetsData.matched.global : null;
           if (!matched || matched.name === next) return;
-          doPreset(
-            { action: "rename", id: matched.id, name: next },
-            sectionScope,
-            sectionSessionId,
-          );
+          doPreset({ action: "rename", id: matched.id, name: next });
         }
 
         /**
@@ -1629,7 +1597,7 @@ window.__ModuleLoader__.load({
                   style: sectionsBusy ? BTN_BUSY : BTN,
                   disabled: sectionsBusy,
                   onClick: function () {
-                    loadSections(sectionScope, sectionSessionId);
+                    loadSections();
                   },
                 },
                 "重新读取",

@@ -659,6 +659,56 @@ const renderPicker = (props) =>
 /** 渲染 Editor。 */
 const renderEditor = (props = {}) => shims.render(Editor, props);
 
+// ── 3d. 「按索引塞状态」这件事必须有个护栏 ─────────────────────────────────
+//
+// 测试是靠 `shims.setStates([...])` **按 useState 的下标**塞状态的，
+// 所以**增删任何一个 useState 都会让后面所有下标错位**，而错位不会报错 ——
+// 只会让断言莫名其妙地红（这轮删掉 sectionScope / sectionSessionId 时就中了：
+// presetsData 从 12 变 10、enabledDraft 从 15 变 13，一次红了 10 条）。
+//
+// 这里把 PromptEditor 里 useState 的**数量与顺序**钉住：动了就必须来改这张表，
+// 顺带被迫检查所有按索引塞状态的地方。
+{
+  const src = readFileSync(join(HERE, "..", "client.editor.js"), "utf8");
+  const start = src.indexOf("function PromptEditor() {");
+  ok(start > 0, "找得到 PromptEditor");
+  if (start > 0) {
+    const rest = src.slice(start);
+    // ⚠️ 会多抓到后面别的函数里的 useState —— 用 `react.useCallback` 截断：
+    //    PromptEditor 的状态全部集中在函数体前段，第一个 useCallback
+    //    （setActivePrompts）之后就不属于「状态声明区」了。
+    const cbAt = rest.search(/react\.useCallback/);
+    const head = cbAt > 0 ? rest.slice(0, cbAt) : rest;
+    const headNames = [...head.matchAll(/var\s+(\w+)\s*=\s*react\.useState\(/g)].map((m) => m[1]);
+    const expected = [
+      "listSt",
+      "busySt",
+      "errSt",
+      "editSt",
+      "msgSt",
+      "openSt",
+      "defSt",
+      "defBusySt",
+      "secSt",
+      "secBusySt",
+      "secOpenSt",
+      "secDraftSt",
+      "preSt",
+      "preBusySt",
+      "preNameSt",
+      "enSt",
+      "catSt",
+      "rnSt",
+      "rnDraftSt",
+    ];
+    eq(
+      headNames.join(","),
+      expected.join(","),
+      "**useState 的数量与顺序没变**（变了就必须同步改测试里所有按索引塞状态的地方）",
+    );
+  }
+}
+
 // ── 4. 没有 sessionId 时不渲染 ──────────────────────────────────────────────
 {
   shims.setStates([]);
@@ -2283,8 +2333,15 @@ function makeSectionsData(over = {}) {
 // ── 提示词组合（生效列表）+ 快速预设 ──────────────────────────────────────
 //
 // 编辑器状态顺序（新钩子仍加在末尾）：
-//   ... 12 sectionScope / 13 sectionSessionId
-//   14 presetsData / 15 presetsBusy / 16 presetName / 17 dragOver
+//   0-9   list / busy / err / edit / message / openId / defaultsDraft /
+//         defaultsBusy / sections / sectionsBusy
+//   10-12 openSection / sectionDraft / presetsData
+//   13-16 presetsBusy / presetName / enabledDraft / closedCats
+//   17-18 renaming / renameDraft
+//
+// ⚠️ 原来 12/13 是 `sectionScope` / `sectionSessionId` —— **已删除**
+//    （两个 setter 从没被调用过，界面上也从来没有那个开关）。
+//    所以从那里往后的下标全都**前移了 2**。
 {
   const lib = [
     { id: "none", name: "不注入", mode: "none", category: "other" },
@@ -2307,7 +2364,7 @@ function makeSectionsData(over = {}) {
   const base = [
     { prompts: lib, defaults: [], categories: [], customCategories: [], assignments: { "session-s1": ["P3"] } },
     false, null, null, null, null, [], false,
-    makeSectionsData(), false, null, {}, "global", "",
+    makeSectionsData(), false, null, {},
   ];
 
   shims.setStates([...base, presetData, false, "", null]);
@@ -2560,25 +2617,12 @@ function makeSectionsData(over = {}) {
   text = flattenText(renderEditor({})).join(" ");
   ok(text.includes("还没有预设"), "零预设时给了引导");
 
-  // 会话层：sectionScope = "session"
-  //
-  // ⚠️ 这里原来断言「还没挑会话」那句提示。**删掉了，因为它测的东西不存在**：
-  //    作用范围的选择控件早就没了 —— `setSectionScope` 在整个文件里
-  //    **只有声明、没有被调用过**（查过 HEAD 和更早的提交，都一样），
-  //    所以 `sectionScope` 恒为 "global"，界面上没有切换入口。
-  //    原来那个 span 只是它最后一点残留显示，这轮跟着噪音一起删了。
-  //    下面这条断言保留价值：**会话层状态传进来也不能渲染崩**。
-  shims.setStates([...base, presetData, false, "", null]);
-  const baseSess = [...base];
-  baseSess[12] = "session";
-  baseSess[13] = "";
-  shims.setStates([...baseSess, presetData, false, "", null]);
-  try {
-    text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("提示词组合"), "**sectionScope=session 时照常渲染**（不炸）");
-  } catch (e) {
-    ok(false, "sectionScope=session 时不许炸 —— 抛了 " + e.message);
-  }
+  // ⚠️ 这里原来有一块「sectionScope = "session" 时照常渲染」的用例 ——
+  //    **连同 sectionScope 一起删掉了**：那两个状态（以及它们的 setter）
+  //    从来没被调用过，界面上根本没有作用范围开关，所以「session 态」
+  //    是个到不了的状态。
+  //    设置面板只编辑全局层；会话层由会话页负责（那边天然带着 sessionId）。
+  //    后端 `scope: "session"` / `?session=` 的能力保留，只是面板不用。
 
   // presetsData 为 null（还没读完）不许炸
   shims.setStates([...base, null, false, "", null]);
@@ -2600,7 +2644,7 @@ function makeSectionsData(over = {}) {
   const base = [
     { prompts: [], defaults: [], categories: [], customCategories: [], assignments: {}, enabled: true },
     false, null, null, null, null, [], false,
-    makeSectionsData(), false, null, {}, "global", "",
+    makeSectionsData(), false, null, {},
     { presets: [], layers: { global: { prompts: [], sections: {} }, session: null }, matched: { global: null, session: null }, sessionId: null },
     false, // presetsBusy
     "", // presetName
