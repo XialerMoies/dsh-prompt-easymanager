@@ -19,5 +19,5 @@ name: XialerMoies/dsh-prompt-easymanager
 category: session
 tarball: https://github.com/XialerMoies/dsh-prompt-easymanager/releases/download/v0.3.3/dsh-prompt-easymanager-0.3.3.tgz
 description:
-  en: Rewrites the system prompt itself rather than the conversation — replace or disable any of the 32 native sections, save the combination as a preset, apply one preset per session or globally, and preview the exact prompt the model receives.
-  zh: 改的是系统提示词本身而非对话——可改写或关闭 32 个原生段落，把组合存成预设，按会话或全局挂载，并预览模型实际收到的提示词。
+  en: Edits what the model is told, not what you type — DSH builds its system prompt from 32 named sections, and this replaces or disables any of them, saves the combination as a preset, applies one preset per session or globally, and previews the assembled result.
+  zh: 改的是模型被告知的内容，不是草稿里打的话——DSH 的系统提示词由 32 个具名段落拼成，本插件可改写或关闭其中任意一段、把组合存成预设、按会话或全局挂载，并预览拼装结果。

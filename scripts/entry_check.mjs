@@ -77,45 +77,72 @@ if (tarball) {
 }
 
 // ── 描述里的每个声明，对着代码核 ──────────────────────────────────────
+//
+// ⚠️ **判据要按「声明」写，不要按「措辞」写。**
+//    第一版把断言写成 `/per session or globally/` 这种**具体短语**，
+//    结果描述一改措辞就假红 —— 而那时描述其实完全属实。
+//    正确的做法：先把描述里**声称的能力**列出来，再逐条去代码里找证据。
 console.log("");
 console.log("═══ 描述里的声明 ═══");
 
 const slots = await import(pathToFileURL(path.join(ROOT, "scripts/lib/section-slots.mjs")).href);
 const ov = await import(pathToFileURL(path.join(ROOT, "scripts/lib/section-overrides.mjs")).href);
 const idx = read("index.js");
-const cli = read("client.js");
+const clip = read("client.js");
 
-const m32 = /\b(\d+)\s+native sections\b/i.exec(en);
-ok(!!m32, "en 里写了段落数", m32 ? m32[1] : "（没写）");
-if (m32) {
+/** 从描述里抠出它声称的**段落数**（中英任一版写了就核）。 */
+const claimedNumbers = [];
+for (const [lang, text] of [["en", en], ["zh", zh]]) {
+  for (const m of text.matchAll(/\b(\d+)\s+(?:named\s+)?sections\b/gi)) claimedNumbers.push([lang, Number(m[1])]);
+  for (const m of text.matchAll(/(\d+)\s*个(?:具名)?段落/g)) claimedNumbers.push([lang, Number(m[1])]);
+}
+ok(claimedNumbers.length > 0, "描述里写了段落数", claimedNumbers.map(([l, n]) => l + "=" + n).join(", ") || "（没写）");
+for (const [lang, n] of claimedNumbers) {
   ok(
-    Number(m32[1]) === slots.SECTION_SLOTS.length,
-    "  **段落数对得上代码**",
-    m32[1] + " vs SECTION_SLOTS.length=" + slots.SECTION_SLOTS.length,
+    n === slots.SECTION_SLOTS.length,
+    "  **" + lang + " 里的段落数对得上代码**",
+    n + " vs SECTION_SLOTS.length=" + slots.SECTION_SLOTS.length,
   );
 }
-const m32zh = /(\d+)\s*个原生段落/.exec(zh);
-ok(!!m32zh && m32zh[1] === (m32 ? m32[1] : ""), "中英两版的数字一致", m32zh ? m32zh[1] : "（没写）");
+if (claimedNumbers.length === 2) {
+  ok(claimedNumbers[0][1] === claimedNumbers[1][1], "中英两版的数字一致");
+}
 
-ok(/replace or disable/i.test(en), "en 里写了 replace/disable");
+/** 断言「某能力被声称」—— 中英任一版提到就算声称。 */
+const says = (re) => re.test(en) || re.test(zh);
+
+// ② 改写 / 关闭段落
+ok(says(/replace|disable|rewrite/i) || says(/改写|关闭/), "描述了「改写 / 关闭段落」");
 ok(
   ov.OVERRIDE_ACTIONS.includes("replace") && ov.OVERRIDE_ACTIONS.includes("disable"),
   "  **两个动作代码里都有**",
   JSON.stringify(ov.OVERRIDE_ACTIONS),
 );
 
-ok(/per session or globally/i.test(en), "en 里写了「按会话或全局」");
+// ③ 存成预设
+//
+// ⚠️ 判据不能用 `/preset/` —— 那个词在描述里到处都有（「applies one preset」），
+//    于是「去掉『存成预设』这个声明」这种注入**红不了**（实测过）。
+//    要核的是**「把组合存成预设」这个声明**，所以匹配的得是那个短语。
+ok(says(/as a preset|save[ds]? the combination|存成预设|存为预设/i), "描述了「把组合存成预设」");
+ok(/normalizePresets|capturePreset/.test(idx), "  代码里真的有预设模型");
+
+// ④ 按会话或全局挂载
+ok(says(/per session|session/i) || says(/按会话|会话/), "描述了「按会话」");
 ok(/assignments/.test(idx), "  代码里有 assignments（按会话）");
+ok(says(/global/i) || says(/全局/), "描述了「全局」");
 ok(/global/i.test(idx) && /presetId/.test(idx), "  代码里有 global.presetId（全局）");
 
-ok(/preview/i.test(en), "en 里写了 preview");
+// ⑤ 预览拼装结果
+ok(says(/preview/i) || says(/预览/), "描述了「预览」");
 ok(/assemble/.test(idx), "  代码里真的调 assemble()");
 
-const insertsIntoDraft = /draft\.insert|composer\.insert|insertText/.test(cli);
-ok(!insertsIntoDraft, "**确实不往草稿里塞文字**（「rather than the conversation」这句成立）");
-
-ok(/preset/i.test(en), "en 里写了 preset");
-ok(/normalizePresets|capturePreset/.test(idx), "  代码里真的有预设模型");
+// ⑥ 最要紧的那句差异点：**改的是系统提示词，不是草稿**
+//
+//    这是跟列表里那 13 个「塞文字」的插件唯一的区别，所以必须成立。
+ok(says(/not what you type/i) || says(/不是.*打的话|不是草稿/), "描述了「不是改草稿」这个差异点");
+const insertsIntoDraft = /draft\.insert|composer\.insert|insertText\(/.test(clip);
+ok(!insertsIntoDraft, "  **客户端确实不往草稿里塞文字**（这句声明成立）");
 
 // ── 截图声明 ───────────────────────────────────────────────────────────
 console.log("");
