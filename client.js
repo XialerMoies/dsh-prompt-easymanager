@@ -109,6 +109,8 @@
     var loadEditorSections = function () { return req.async("./client.editor.sections.js"); };
     /** 设置页里的「提示词组合 + 预设」那一块。 */
     var loadEditorCombo = function () { return req.async("./client.editor.combo.js"); };
+    /** 设置页里的「个人提示词库」那一块。 */
+    var loadEditorLibrary = function () { return req.async("./client.editor.library.js"); };
 
     var req = null; // factory 的材料化参数，见下面 factory 开头
     var react = null; // 同上 —— useChunk 在模块级，读不到 factory 里的局部变量
@@ -930,7 +932,8 @@
           var sw = useChunk(loadEditorSwitch);
           var sec = useChunk(loadEditorSections);
           var combo = useChunk(loadEditorCombo);
-          if (!m || !sw || !sec || !combo) return null;
+          var lib = useChunk(loadEditorLibrary);
+          if (!m || !sw || !sec || !combo || !lib) return null;
           // ⚠️ `installStyles` 在 **create() 的返回值**里，不在模块上 ——
           //    chunk 的 module.exports 只有 `{ create }`。
           //
@@ -946,6 +949,7 @@
           var sb = boxOf(sw);
           var cb = boxOf(sec);
           var combob = boxOf(combo);
+          var lb = boxOf(lib);
           // ⚠️ 拆出去的那几块由宿主**当 props 递进去**，而不是让编辑器自己去拉 ——
           //    自己拉会让两边各有一份缓存、还要各自处理加载态。
           return react.createElement(eb.PromptEditor, {
@@ -953,6 +957,7 @@
             helpIcon: sb.helpIcon,
             SectionsBlock: cb.SectionsBlock,
             ComboBlock: combob.ComboBlock,
+            LibraryBlock: lb.LibraryBlock,
           });
         }
 

@@ -638,6 +638,10 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Componen
       typeof seenEditorProps.ComboBlock === "function",
       "**宿主把 ComboBlock 递给了编辑器**（漏了提示词组合那一整块静默消失）",
     );
+    ok(
+      typeof seenEditorProps.LibraryBlock === "function",
+      "**宿主把 LibraryBlock 递给了编辑器**（漏了个人提示词那一整块静默消失）",
+    );
   }
 }
 ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
@@ -700,11 +704,19 @@ ok(!!modCombo, "拿得到 combo chunk 模块");
 const comboBox = modCombo.create(strict.api);
 ok(typeof comboBox.ComboBlock === "function", "combo chunk 导出了 ComboBlock");
 
+// 「个人提示词库」那一块同理。
+sandbox.preload("client.editor.library.js");
+const modLibrary = sandbox.cache.get("dsh-prompt-manager/client.editor.library.js");
+ok(!!modLibrary, "拿得到 library chunk 模块");
+const libraryBox = modLibrary.create(strict.api);
+ok(typeof libraryBox.LibraryBlock === "function", "library chunk 导出了 LibraryBlock");
+
 const EDITOR_PROPS = {
   MasterSwitch: switchBox.MasterSwitch,
   helpIcon: switchBox.helpIcon,
   SectionsBlock: sectionsBox.SectionsBlock,
   ComboBlock: comboBox.ComboBlock,
+  LibraryBlock: libraryBox.LibraryBlock,
 };
 
 // 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
@@ -795,6 +807,47 @@ const renderEditor = (props = {}) =>
   ok(/commitRename\(props\)/.test(comboSrc), "**调用 commitRename 时转发了 props**");
   ok(/renderPickerBody\(props\)/.test(comboSrc), "**调用 renderPickerBody 时转发了 props**");
   ok(/react\.createElement\(props\.ComboBlock/.test(edSrc), "编辑器从 props 取 ComboBlock");
+  // ── 「个人提示词库」那一块（第四个拆出去的）─────────────────────────────
+  const libSrc = readFileSync(join(HERE, "..", "client.editor.library.js"), "utf8");
+  for (const gone of [
+    "suggestedOrderOf",
+    "categoryName",
+    "setCategory",
+    "newPrompt",
+    "field",
+    "renderForm",
+    "toggleOpen",
+    "pillFor",
+    "renderGroupCard",
+    "renderRow",
+  ]) {
+    ok(!new RegExp("function " + gone + "\\(").test(edSrc), `编辑器里不再有 ${gone}（已搬进 library chunk）`);
+  }
+  ok(/function LibraryBlock\(props\)/.test(libSrc), "library chunk 里 LibraryBlock 收 props");
+  ok(/function renderHeader\(props\)/.test(libSrc), "renderHeader 收 props");
+  ok(/function renderCards\(props\)/.test(libSrc), "renderCards 收 props");
+  ok(/function groupByCategory\(props\)/.test(libSrc), "groupByCategory 收 props");
+  ok(/react\.createElement\(props\.LibraryBlock/.test(edSrc), "编辑器从 props 取 LibraryBlock");
+
+  // ⚠️ 两条**具体**的回归（都是实际踩过的，而且都不报错、只是静默出错）：
+  //
+  //   1. 搬 header 时漏了 `return header;` —— 整块标题静默消失，控制台什么都不说；
+  //   2. 批量把自由变量换成 `props.*` 时**误伤了字符串字面量** ——
+  //      `"…保存到 prompts/a.md"` 被改成 `"…保存到 props.prompts/a.md"`，
+  //      也是不报错的。
+  ok(/return header;/.test(libSrc), "**renderHeader 有 return**（漏了标题会静默消失）");
+  ok(
+    !/保存到 props\./.test(libSrc) && !/写到 props\./.test(libSrc),
+    "**字符串字面量没被 props 替换误伤**（保存路径提示里不该出现 props.）",
+  );
+  ok(/保存到 prompts\//.test(libSrc), "保存路径提示还在（\"保存到 prompts/<id>.md\"）");
+
+  // ⚠️ 分组逻辑原来在编辑器里写了**两遍**（一遍永远走不到），搬过来时合成一份。
+  ok(
+    (libSrc.match(/按分类分组显示。组内顺序/g) || []).length === 1,
+    "**分组逻辑只剩一份**（曾经写了两遍）",
+  );
+  ok(!/按分类分组显示。组内顺序/.test(edSrc), "编辑器里不再有那份分组逻辑");
 
   // 方向二（渲染出来还在）见下面「总开关」那一节 —— 那里状态才设齐，
   // 放在这儿渲染出来的是「读取中…」，断言会假红。
