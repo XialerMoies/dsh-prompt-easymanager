@@ -30,7 +30,7 @@ const PLUGIN_VERSION = JSON.parse(
 // 用户把那几条长文删掉之后，测试立刻红了 —— 那是测试设计的问题：
 // 要么污染用户的库，要么测试跟着用户的数据飘。
 //
-// 现在插件支持 `DSH_PROMPT_MANAGER_CATALOG` 覆盖，测试就在临时目录里造自己的库。
+// 现在插件支持 `DSH_PROMPT_EASYMANAGER_CATALOG` 覆盖，测试就在临时目录里造自己的库。
 //
 // ⚠️ **趁加载之前**种一份「老版本写的状态」，用来验升级路径：
 //    老版本随包发过一条哨兵提示词 `{id:"none", name:"不注入"}`，让用户能在库里
@@ -120,7 +120,7 @@ writeFileSync(
   ),
   "utf8",
 );
-process.env.DSH_PROMPT_MANAGER_CATALOG = join(FIXTURE_DIR, "catalog.json");
+process.env.DSH_PROMPT_EASYMANAGER_CATALOG = join(FIXTURE_DIR, "catalog.json");
 
 const {
   apply,
@@ -829,7 +829,7 @@ let P2 = "";
 }
 
 // ── 10c. 编辑器路由：新增 / 更新 / 删除 ────────────────────────────────────
-// ⚠️ 注意：这条路由真的会往插件的 prompts/ 目录里写文件。
+// ⚠️ 注意：这条路由真的会往**库目录**里写文件（测试里是那个临时 fixture 目录）。
 //    测试用的是**真实目录**，所以下面新增的条目都在测试结束时删掉。
 const TMP_ID = "zz-test-only";
 {

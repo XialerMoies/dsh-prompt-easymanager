@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-easymanager",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "给 DeepSeek Harness 用的个人提示词管理器：把「个人提示词 + 系统提示词改动」存成预设，按会话或全局挂载，并能改写、关闭、还原 DSH 的原生段落，还能看清模型实际收到的最终提示词。",
   "type": "module",
   "main": "./index.js",
@@ -43,20 +43,18 @@
     "CHANGELOG.md",
     "docs",
     "LICENSE",
-    "prompts",
     "scripts",
     "assets"
   ],
   "scripts": {
     "harness:check": "node scripts/check-syntax.mjs && node scripts/check-props.mjs",
-    "test": "node scripts/check-props.mjs && node scripts/presets_test.mjs && node scripts/preset_adapter_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs && node scripts/docs_test.mjs",
+    "test": "node scripts/check-props.mjs && node scripts/presets_test.mjs && node scripts/preset_adapter_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/library_migration_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs && node scripts/docs_test.mjs",
     "test:client": "node scripts/client_render_test.mjs",
     "test:docs": "node scripts/docs_test.mjs",
     "test:store": "node scripts/prompt_store_test.mjs",
     "test:props": "node scripts/check-props.mjs",
     "test:adapter": "node scripts/preset_adapter_test.mjs",
     "bump:rev": "node scripts/bump-client-rev.mjs",
-    "pack:release": "node scripts/pack-release.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "publishConfig": {
@@ -66,7 +64,7 @@
   "dsh": {
     "id": "dsh-prompt-easymanager",
     "name": "个人提示词",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "repo": "XialerMoies/dsh-prompt-easymanager",
     "permissions": "系统提示词注入（按会话）, 会话头部选择器, 只读系统提示词预览",
     "bundle": {

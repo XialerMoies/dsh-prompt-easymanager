@@ -3,7 +3,7 @@
 // 为 DSH 的**每个会话**独立选择系统提示词，并提供最终系统提示词的实时预览。
 //
 // 三件事：
-//   1. 提示词库  —— prompts/catalog.json 里的条目，可编辑、可重载
+//   1. 提示词库  —— `$DSH_HOME/prompts/` 里的条目，可编辑、可重载
 //   2. 会话分配  —— 每个会话用哪一条（默认不注入）
 //   3. 预览      —— 直接调 dsh 的 assemble()，把最终系统提示词按 section 列出来
 //
@@ -15,7 +15,14 @@
 //     客户端点击毫无反应且无从排障。
 //   - 诊断信息随 GET 一起返回，失败原因在界面上一眼可见。
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  copyFileSync,
+  readdirSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,10 +48,11 @@ import {
   presetLabel,
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
+import { migrateLibraryOutOfPackage } from "./scripts/lib/library-migration.mjs";
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.1";
+const PLUGIN_VERSION = "0.3.2";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
 export const STATE_PATH = "/api/prompt-manager/state";
@@ -108,22 +116,48 @@ function stateFilePath() {
 let legacyNoticeDone = false;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
 /**
- * 提示词库目录。
+ * 提示词库放**用户目录**，不放包里。
  *
- * 环境变量可以覆盖它 —— **给测试用的**。集成测试要往库里塞几条 fixture，
- * 不该因此污染用户真实的提示词库，也不该反过来要求用户的库里留几条
- * "测试专用"的提示词。
+ * ⚠️ **这是能发 npm 的前提。** 装在 `node_modules` 里的包目录是**可以被覆盖的** ——
+ *    库要是放在包里，用户 `pnpm update` 一次，他攒的提示词**全没了**。
+ *    （本地 `link:` 装法看不出这个问题，因为包里就是源码目录。）
  *
- * ⚠️ **两个名字都认**（`EASYMANAGER` 是改名后的新名字）：
- *    插件从 `dsh-prompt-manager` 改名过来，但**已经按老名字配了环境变量的人
- *    不该因此静默失效** —— 那种失败不报错，只是「以为配了却没生效」。
+ * 位置：`$DSH_HOME/prompts/`（缺省 `~/.dsh/prompts/`），**跟状态文件并排**。
+ *
+ *     ~/.dsh/dsh-prompt-easymanager-state.json   预设、会话选择、段落改写
+ *     ~/.dsh/prompts/catalog.json                库的目录（条目元数据）
+ *     ~/.dsh/prompts/<id>.md                     每条提示词的正文
+ *
+ * 环境变量 `DSH_PROMPT_EASYMANAGER_CATALOG` 可以覆盖（**给测试用的** ——
+ * 集成测试要往库里塞几条 fixture，不该污染用户真实的库）。
  */
+const PROMPTS_DIR =
+  process.env.DSH_PROMPT_EASYMANAGER_CATALOG !== undefined
+    ? dirname(process.env.DSH_PROMPT_EASYMANAGER_CATALOG)
+    : join(STATE_DIR, "prompts");
 const CATALOG_PATH =
-  process.env.DSH_PROMPT_EASYMANAGER_CATALOG ||
-  process.env.DSH_PROMPT_MANAGER_CATALOG ||
-  join(HERE, "prompts", "catalog.json");
-const PROMPTS_DIR = dirname(CATALOG_PATH);
+  process.env.DSH_PROMPT_EASYMANAGER_CATALOG || join(PROMPTS_DIR, "catalog.json");
+
+/**
+ * 库在**包里**时的老位置（v0.3.2 之前）。
+ *
+ * ⚠️ 一次性迁移：老位置有货、新位置没有 → 搬过去。
+ *    判定用「新位置的 catalog 不存在」，所以迁移**只发生一次**，
+ *    之后用户怎么改都不会再被覆盖。
+ *
+ *    ⚠️ 老位置**留着不动**（不是删）—— 万一新版有问题，退回去数据还在。
+ *
+ * 逻辑本身在 `scripts/lib/library-migration.mjs` —— 那里有它的单元测试
+ * （这段有四个「错了就丢数据」的边界，必须被测到）。
+ */
+const LEGACY_IN_PACKAGE_DIR = join(HERE, "prompts");
+const LIBRARY_MIGRATION = migrateLibraryOutOfPackage({
+  legacyDir: LEGACY_IN_PACKAGE_DIR,
+  targetDir: PROMPTS_DIR,
+  targetCatalog: CATALOG_PATH,
+});
 
 /**
  * 老版本内置的那条哨兵提示词的 id。
@@ -132,7 +166,7 @@ const PROMPTS_DIR = dirname(CATALOG_PATH);
  * 但**「一个都不选」本来就是同一个意思**，所以它只是把一件事说成了两件：
  * 库里多一张永远不该被勾的卡片，设置页还得配一张卡片去管它。
  *
- * v0.2.9 起不随包发了（`prompts/catalog.json` 现在是空库）。
+ * v0.2.9 起不随包发了（发布包里没有 prompt 条目）。
  * 这个常量只用来**清理老状态里的悬挂 id** —— 见 readState 里的迁移。
  */
 const NONE_SENTINEL = "none";
@@ -746,7 +780,7 @@ export function apply(ctx) {
   // ── 提示词库 ──────────────────────────────────────────────────────────────
   const library = createPromptLibrary({ catalogPath: CATALOG_PATH, baseDir: PROMPTS_DIR });
   activeLibrary = library;
-  // 编辑器用的写入侧（设置页那个 tab）。只动 prompts/ 目录内的文件。
+  // 编辑器用的写入侧（设置页那个 tab）。只动库目录内的文件（见 PROMPTS_DIR）。
   const store = createPromptStore({ catalogPath: CATALOG_PATH, baseDir: PROMPTS_DIR });
   activeStore = store;
   // ⚠️ **按 ctx 各存一份**（原因见 libraryOf / injectorOf）——

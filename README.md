@@ -65,23 +65,6 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-easymanager" -Target $src
 
 ---
 
-## 从旧名字升级（v0.3.1 之前装的）
-
-插件原来叫 `dsh-prompt-manager`，**v0.3.1 起改名成 `dsh-prompt-easymanager`**：
-
-```powershell
-dsh plugin --profile web remove dsh-prompt-manager
-dsh plugin --profile web add dsh-prompt-easymanager
-```
-
-**配置不会丢**：状态文件（预设、会话选择、段落改写）会自动从老文件名**读一次**，
-之后写到新名字；老文件留着不动，想退回去还能用。
-
-⚠️ 路由前缀也跟着变了（`/api/prompt-manager/*` → `/api/prompt-easymanager/*`）——
-有脚本直接调接口的话要跟着改。
-
----
-
 ## 用法
 
 > `order` 插在哪、什么时候生效、目录格式怎么写 —— 都在
@@ -173,7 +156,7 @@ dsh plugin --profile web add dsh-prompt-easymanager
 
 改完保存**立即重载并重挂所有已分配的会话**，下一步就生效。不用手动重启。
 
-正文一律写进 `prompts/<id>.md`；删条目、或把模式改成「不注入」，正文文件会一并删掉。
+正文一律写进库目录的 `<id>.md`；删条目、或把模式改成「不注入」，正文文件会一并删掉。
 
 ### 预览
 
@@ -201,11 +184,21 @@ dsh plugin --profile web add dsh-prompt-easymanager
 
 （设置页里改提示词**不用**重启，保存即生效。）
 
-**② 状态文件不会自动清理，这是故意的。**
+**② 你的数据都在 `$DSH_HOME` 下，升级不会丢。**
 
-记录存在 `$DSH_HOME/dsh-prompt-easymanager-state.json`（缺省 `~/.dsh/`），
-每条约 60 字节 —— 攒到 10,000 个会话也只有约 600 KB，不值得为它冒误删的风险。
-删掉它等于「没有默认、没有指定」，`defaults` 和 `assignments` 都会丢。
+```
+~/.dsh/dsh-prompt-easymanager-state.json   预设、会话选择、段落改写
+~/.dsh/prompts/catalog.json                提示词库的条目
+~/.dsh/prompts/<id>.md                     每条提示词的正文
+```
+
+⚠️ **库故意放在包外**：装在 `node_modules` 里的包目录会被 `pnpm update` 换掉，
+库要是放在包里，升级一次就没了。
+
+想备份就**整个拷 `~/.dsh/prompts/`**；状态文件也拷上就是完整备份。
+
+状态文件不会自动清理，这是故意的：每条约 60 字节——攒到 10,000 个会话也只有
+约 600 KB，不值得为它冒误删的风险。
 
 **③ 挂的提示词越多，上下文越贵。**
 

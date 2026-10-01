@@ -302,56 +302,6 @@ const readme = readFileSync(at("README.md"), "utf8");
   );
 }
 
-// ── 10. 提示词库不能被当成插件源码提交 ────────────────────────────────────
-//
-// ⚠️ 这条是踩了**两次**才定下来的机制。
-//
-// `prompts/catalog.json` 一直同时扮演两个角色：
-//   · **出厂默认**（随包发布给所有人）
-//   · **用户的运行时库**（在界面上建一条提示词，插件就写进这里）
-// 于是每建一条测试提示词，`git add -A` 就把它提交、再随包发布 ——
-// 别人装完打开会看到一堆不相干的条目。踩过：id=test「测试用」、id=my-prompt-1。
-//
-// 光加「catalog 必须为空」的断言治不了根：那意味着每次建条目都得来删一遍。
-// 现在改成**整块移出仓库**（`prompts/.gitignore` 挡掉 *.json / *.md），
-// 发布由 `npm run pack:release` 临时清空后再打包，所以发布包恒为空库。
-//
-// 这条断言盯的就是那个机制：catalog **不在 git 跟踪里**。
-{
-  const promptsDir = at("prompts");
-  const ignoreFile = at("prompts", ".gitignore");
-  ok(existsSync(ignoreFile), "prompts/.gitignore 在（挡住运行时库）");
-  const ig = readFileSync(ignoreFile, "utf8");
-  // ⚠️ 模式**不带 `prompts/` 前缀** —— 这个文件就在 prompts/ 里，git 当相对路径。
-  //    第一版写成 `prompts/*.json`，于是变成 `prompts/prompts/*.json`、
-  //    永远匹配不上，`git add -A` 又把库加回了暂存区。
-  ok(/^\s*\*\.json\s*$/m.test(ig), "**catalog.json 被忽略**（它是运行时库，不是源码）");
-  ok(/^\s*\*\.md\s*$/m.test(ig), "提示词正文被忽略");
-  ok(!/^\s*prompts\//m.test(ig), "**模式没带 prompts/ 前缀**（带了就永远匹配不上）");
-  ok(
-    ig.includes("pack:release"),
-    "注释里指出了发布路径（`npm run pack:release` 会临时清空再打包）",
-  );
-
-  // 发布脚本必须存在，而且必须用 finally 还原（临时清空是危险操作）
-  const packScript = at("scripts", "pack-release.mjs");
-  ok(existsSync(packScript), "scripts/pack-release.mjs 在");
-  const ps = readFileSync(packScript, "utf8");
-  ok(/\bfinally\b/.test(ps), "**打包脚本用 finally 还原本地库**（中途失败也不能丢数据）");
-  ok(ps.includes("prompts: []"), "打包时把 catalog 写成空库");
-
-  // package.json 里要有那条命令
-  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
-  ok(!!pkg.scripts["pack:release"], "package.json 里有 pack:release");
-  // 而 prompts 目录仍在 files 里 —— 否则发布包缺目录、插件首次写入会失败
-  ok(
-    Array.isArray(pkg.files) && pkg.files.includes("prompts"),
-    "**prompts 目录仍在 files 里**（发布包需要它存在）",
-  );
-  ok(existsSync(promptsDir), "prompts 目录本身还在");
-}
-
-
 // ── 断言描述不许在同一个文件里重复 ──────────────────────────────────────
 //
 // ⚠️ 描述是断言失败时**唯一的定位信息**。同名两条的话，红了一条你不知道是哪个 ——

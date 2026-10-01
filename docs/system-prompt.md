@@ -153,7 +153,7 @@ return {
 
 ## 提示词库格式
 
-文件：`prompts/catalog.json`
+文件：`$DSH_HOME/prompts/catalog.json`（缺省 `~/.dsh/prompts/`）
 
 ```json
 {
