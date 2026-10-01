@@ -8,6 +8,9 @@ legacy/
 # 开发笔记 —— 自用，不给用户看（README 只留介绍/安装/用法/注意事项）
 DEV.md
 
+# 同类插件学到的功能清单 —— 同样是自用，逐条评判用
+优化功能体验.md
+
 # 本地运行时产生的
 *.log
 .dsh-prompt-easymanager-state.json
