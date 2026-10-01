@@ -1396,7 +1396,42 @@ const renderEditor = (props = {}) =>
   }
 
 
-// ── 5ab. 复现问题3：**点「系统提示词」/ 别的预设能不能切过去** ──────────────
+// ── 5ac. 点选之后：**面板要刷新 + 自动关** ────────────────────────────────
+//
+// ⚠️ 用户报的：「能切换了，但切换没有实时切换效果，退出浮窗才能看到」。
+//
+//    根因：面板的选项列表来自它自己那份 /presets?session=（extras），
+//    刷新靠 effect 依赖里的 msg —— 而点选走的是 props.onApplied
+//    （只重读 /state），msg 没变 → effect 不重跑 → 勾还停在旧那条上。
+//    关掉再打开会重建组件，所以「退出浮窗才能看到」。
+//
+//    ⚠️ 这类 bug 渲染测试**测不出来**（节点都在、文案都对），
+//       只能静态钉住「点选之后做了哪几件事」。
+{
+  const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
+  // ⚠️ 切的是 **PresetDropdown 自己那一整块**。
+  //    原来切 `pickOption` → `HeroPresetChip`，但这两个函数在文件里
+  //    **顺序是反的**，切出来是空段 —— 三条断言全假红。
+  //    （教训：切片范围也要先验证，别想当然。）
+  const seg = picker.slice(
+    picker.indexOf("function PresetDropdown"),
+    picker.indexOf("function HeroPresetPanel"),
+  );
+  ok(seg.length > 200, "能定位到 PresetDropdown 那一整块（实际 " + seg.length + " 字符）");
+  ok(
+    /setTick\(tick \+ 1\)/.test(seg),
+    "**点选之后 +1 刷新计数器**（不带的话面板的 extras 不刷新，勾停在旧那条）",
+  );
+  ok(
+    /props\.onClose/.test(seg),
+    "**点选之后自动关面板**（用户要的是「点一下就生效」，留着浮窗反而像没生效）",
+  );
+  ok(/\[sessionId, msg, tick\]/.test(picker), "effect 依赖里有 tick（不然计数器白加）");
+  ok(
+    /onApplied && props\.onApplied\(\);[\s\S]{0,200}setTick/.test(seg),
+    "顺序：先让外面重读 /state，再让面板重读 /presets",
+  );
+}
 //
 // ⚠️ 用户贴的菜单（开关关着）：
 //

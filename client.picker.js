@@ -141,6 +141,14 @@ window.__ModuleLoader__.load({
         var msgSt = react.useState("");
         var msg = msgSt[0];
         var setMsg = msgSt[1];
+        // ⚠️ **刷新计数器** —— 点选成功后 +1，让下面那个 effect 重跑。
+        //
+        //    原来只靠 `msg` 当依赖，而点选走的是 `props.onApplied`
+        //    （外面那个 load，只重读 /state），**msg 没变 → effect 不重跑**，
+        //    于是「切了但勾还停在旧那条上，关掉浮窗再开才对」。
+        var tickSt = react.useState(0);
+        var tick = tickSt[0];
+        var setTick = tickSt[1];
 
         react.useEffect(function () {
           var alive = true;
@@ -154,7 +162,7 @@ window.__ModuleLoader__.load({
           return function () {
             alive = false;
           };
-        }, [sessionId, msg]);
+        }, [sessionId, msg, tick]);
 
         var presets = metaOf(Object.assign({}, props, { extras: extras }));
 
@@ -183,9 +191,13 @@ window.__ModuleLoader__.load({
               });
             })
             .then(function () {
-              setMsg("已切换到「" + o.label + "」");
-              // ⚠️ 重新拉 /presets —— 勾要跟着挪到新选项上，否则用户看不出生效了
+              // ⚠️ 顺序：先让外面重读 /state，再让**面板自己**重读 /presets
+              //    （勾要跟着挪到新选项上），最后**关掉面板**。
               props.onApplied && props.onApplied();
+              setTick(tick + 1);
+              // ⚠️ **选完自动关** —— 用户要的是「点一下就生效」。
+              //    留着浮窗反而让人以为没生效（他就是这么报告的）。
+              if (props.onClose) props.onClose();
               return null;
             })
             .catch(function (e) {
