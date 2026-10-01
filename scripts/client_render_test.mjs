@@ -1150,6 +1150,92 @@ const renderEditor = (props = {}) =>
       over,
     );
 
+  // ══ 卡片头的**结构**：两段竖排 + 动作成组 ═══════════════════════════════
+  //
+  // ⚠️ 真机上出的两次问题**都是布局结构**问题 —— 文字被挤成竖排、
+  //    按钮被甩到单独一行。渲染测试测的是「渲染出东西了没」，
+  //    测不出「排在哪儿」。
+  //
+  // ⚠️ 判据必须**从渲染结果上取**，不能查源码文本。
+  //    第一版查的是源码里有没有 `[swRow, actRow]` —— 注入验证发现
+  //    改成 `.flat()` 之后文本还在、守卫照样绿，而实际已经摊平成一行了。
+  {
+    const el = shims.render(
+      comboBox.ComboBlock,
+      comboProps({
+        presetsData: {
+          presets: [{ id: "写代码", name: "写代码", prompts: ["P1"], sections: {} }],
+          global: { enabled: true, presetId: "写代码" },
+          session: null,
+          effective: null,
+        },
+        presetSections: {},
+        setPresetSections: () => {},
+        sectionsData: { globalOverrides: {} },
+        MasterSwitch: function FakeSwitch() {
+          return shims.react.createElement("span", { role: "switch" });
+        },
+      }),
+    );
+
+    // 卡片头 = 带 role="switch" 的那个祖先 div
+    // ⚠️ 用**显式标记**定位，不猜结构。
+    //    猜过一版（「直接子元素里有 role=switch 的 div」）—— 失败：
+    //    `swRow` 的直接子元素是 MasterSwitch **返回的那个 div**，
+    //    带 role="switch" 的 span 在更深一层，于是判据一路钻到了外层容器。
+    const headEl = findEl(el, (n) => n.props && n.props["data-pm-card-head"] === "1");
+    ok(!!headEl, "找得到卡片头");
+
+    if (headEl) {
+      const kids = (headEl.children || []).filter(Boolean);
+      eq(kids.length, 2, "**卡片头只有两段**（开关段 + 动作段）");
+
+      const swSeg = kids[0];
+      const actSeg = kids[1];
+
+      // ① 开关段里**不该有**动作控件
+      const swText = swSeg ? flattenText(swSeg).join(" ") : "";
+      ok(!swText.includes("保存") && !swText.includes("删除"), "**开关段里没有动作按钮**");
+      const swHasSelect = !!(swSeg && findEl(swSeg, (n) => n.type === "select"));
+      ok(!swHasSelect, "开关段里没有下拉框");
+
+      // ② 动作段：四个控件都在，顺序对
+      const actText = actSeg ? flattenText(actSeg).join(" ") : "";
+      ok(actText.includes("保存"), "动作段里有「保存」");
+      ok(actText.includes("删除"), "动作段里有「删除」");
+      ok(actText.includes("↻"), "动作段里有「↻」");
+      ok(!!(actSeg && findEl(actSeg, (n) => n.type === "select")), "动作段里有下拉框");
+
+      const seq = [];
+      (function walkSeg(n) {
+        if (!n || typeof n !== "object") return;
+        if (n.type === "select") seq.push("sel");
+        if (n.type === "button") {
+          const t = flattenText(n).join("");
+          if (t.includes("保存")) seq.push("sav");
+          else if (t.includes("删除")) seq.push("del");
+          else if (t.includes("↻")) seq.push("r");
+        }
+        for (const c of n.children || []) walkSeg(c);
+      })(actSeg || {});
+      eq(seq.join(","), "sel,sav,del,r", "**顺序：下拉 → 保存 → 删除 → 刷新**（用户指定的位置）");
+
+      // ③ 动作段不许换行（控件要保持形状）
+      ok(!!actSeg, "**动作段（第二段）找得到**");
+      const actStyle = actSeg && actSeg.props && actSeg.props.style;
+      eq(
+        actStyle && actStyle.flexWrap,
+        "nowrap",
+        "**动作段 nowrap**（挤不下时该收窄的是标题，不是压按钮）",
+      );
+      ok(
+        !(headEl.props.style && headEl.props.style.flexDirection === "row"),
+        "**卡片头不是一行**（两段竖排）",
+      );
+    }
+  }
+
+
 // ── 5z. 勾选区那组「系统提示词」tag ────────────────────────────────────────
 //
 // 用户原话：「勾选**个人提示词与系统提示词 tag**」。

@@ -329,46 +329,49 @@ window.__ModuleLoader__.load({
           );
         }
 
-        var head = react.createElement(
+        // ── 第 1 段：全局注入开关 ──────────────────────────────────────────
+        //
+        // ⚠️ 它**自己占一行** —— 它管的是「整个全局层注不注入」，
+        //    跟「这个会话/全局用哪套配置」是两件事。挤在同一行会让人以为
+        //    它是这套配置的一个属性。
+        //
+        //    另外它自带 CARD + 内边距（单独占一张卡时是对的），塞进来会
+        //    把旁边的标题挤到只剩一个字宽 → 竖排。所以传 `bare` 摘掉卡片感。
+        var swRow = props.MasterSwitch
+          ? react.createElement(
+              "div",
+              { key: "sw", style: { display: "flex", alignItems: "center", minWidth: "0" } },
+              react.createElement(props.MasterSwitch, {
+                enabled: props.globalEnabled,
+                busy: props.presetsBusy,
+                onToggle: props.onToggleGlobal,
+                bare: true,
+              }),
+            )
+          : null;
+
+        // ── 第 2 段：标题 + 全部动作 ────────────────────────────────────────
+        //
+        // ⚠️ **这一段不许换行**（`nowrap`）—— 控件要保持形状。
+        //    挤不下时该收窄的是**标题**（它带 ellipsis），不是把按钮压成方块
+        //    或者甩到单独一行去。
+        //
+        //    结构：标题 ✎   [弹簧]   [下拉] [保存] [删除] [↻]
+        //    那个弹簧负责把按钮组推到右边；按钮**成组**放在一个容器里，
+        //    不然弹簧只会在它们之间撑开空洞。
+        var actRow = react.createElement(
           "div",
           {
-            style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
-              flexDirection: "row",
-              // ⚠️ **必须允许换行** —— `CARD_MAIN_ROW` 是 `flex-wrap: nowrap`，
-              //    而这一行现在装着：开关 + 标题 + 铅笔 + 下拉 + 保存 + 删除 + 刷新。
-              //    不许换行的话，空间不够时**所有项一起被压扁**：标题会被挤到
-              //    只剩一个字宽 → **「提示词全局注入」竖排成一行一个字**
-              //    （真机截图里就是这个）。
-              //    允许换行之后，挤不下就整块掉到下一行，谁都不会被压成竖条。
-              flexWrap: "wrap",
-              minHeight: "0",
-              padding: "10px 14px",
+            key: "act",
+            style: {
+              display: "flex",
+              alignItems: "center",
               gap: "8px",
-            }),
+              minWidth: "0",
+              flexWrap: "nowrap",
+            },
           },
           [
-            // ⚠️ 这里**只有「当前配置名」**，没有功能标题。
-            //
-            //    「提示词组合」是**区块标题**，在卡片外面、跟「个人提示词」
-            //    「系统提示词」同一套样式（见 renderCombo 末尾的 headLine）。
-            //    卡片头这一行的语义是「你现在在哪套配置上」——
-            //    塞个静态标题进来会把两件事混在一行。
-            //    （踩过两轮：先是把区块标题整个换成预设名 → 标题没了；
-            //      再把标题塞进卡片头 → 用户说「为什么功能标题在卡片顶部」。）
-            // ⚠️ **全局注入开关在这一行行首** —— 用户要求「全局注入开关合入提示词组合」：
-            //    它管的是**全局这一层整体注不注入**（关掉 = 没记录的会话什么都不挂），
-            //    跟这一块是同一件事的两个面，所以放同一张卡。
-            //    原来它自己占一张卡，用户分不清两个控件的边界。
-            props.MasterSwitch
-              ? react.createElement(props.MasterSwitch, {
-                  key: "sw",
-                  enabled: props.globalEnabled,
-                  busy: props.presetsBusy,
-                  onToggle: props.onToggleGlobal,
-                // ⚠️ 裸装：摘掉它自带的卡片内边距。不传的话标题会被挤成竖排一个字。
-                bare: true,
-                })
-              : null,
             titleNode,
             // 改名铅笔：只有「当前这套是一条真预设」时才有意义
             currentId && !props.renaming
@@ -389,95 +392,123 @@ window.__ModuleLoader__.load({
                   "✎",
                 )
               : null,
+            // 弹簧：把下面那一组动作推到最右
             react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-            // ⚠️ 这里原来还有两样，都删了：
-            //    · 「全局默认 · 所有会话」——作用范围当时是因为这一块**没有**
-            //      功能标题，得靠它说明自己是什么；现在标题回来了，它是纯噪音；
-            //    · 「已选 N 条 · 共 X tokens」——勾选框自己会说，数字没人看。
-            // 预设下拉：换一套
+            // ── 动作**成组** ──────────────────────────────────────────────
+            //
+            // ⚠️ 包一层容器，不然弹簧只会在各个按钮之间撑出空洞（踩过：
+            //    「删除」被甩到单独一行、「↻」跑到最右边）。
             react.createElement(
-              "select",
-              {
-                key: "sel",
-                className: "pm-input",
-                style: SELECT_SM,
-                disabled: bus,
-                value: currentId,
-                title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
-                onChange: function (ev) {
-                  var id = ev.target.value;
-                  if (id) applyPreset(id, props);
-                },
-              },
+              "div",
+              { key: "grp", style: { display: "flex", alignItems: "center", gap: "6px", flex: "none" } },
               [
-                // 手改过（没匹配上任何预设）时给个占位项，否则 select 会跳到第一条
+                // 预设下拉：换一套
+                react.createElement(
+                  "select",
+                  {
+                    key: "sel",
+                    className: "pm-input",
+                    style: SELECT_SM,
+                    disabled: bus,
+                    value: currentId,
+                    title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
+                    onChange: function (ev) {
+                      var id = ev.target.value;
+                      if (id) applyPreset(id, props);
+                    },
+                  },
+                  [
+                    // 手改过（没匹配上任何预设）时给个占位项，否则 select 会跳到第一条
+                    currentId
+                      ? null
+                      : react.createElement("option", { key: "__none", value: "" }, "未保存的配置"),
+                    list.length === 0
+                      ? react.createElement("option", { key: "__empty", value: "" }, "（还没有预设）")
+                      : null,
+                    list.map(function (p) {
+                      return react.createElement("option", { key: p.id, value: p.id }, p.name);
+                    }),
+                  ],
+                ),
+                // 保存：当前这套有名字就覆盖它自己，没名字就存新的
+                react.createElement(
+                  "button",
+                  {
+                    key: "sav",
+                    type: "button",
+                    className: "pm-btn",
+                    style: bus ? BTN_BUSY : BTN,
+                    disabled: bus,
+                    title: currentId
+                      ? "把当前勾选覆盖到预设「" + currentName + "」"
+                      : "把当前勾选存成一套新预设",
+                    onClick: function () {
+                      savePreset(props);
+                    },
+                  },
+                  props.presetsBusy ? "保存中…" : "保存",
+                ),
+                // ── 删除这条预设（位置：**保存和刷新之间**，用户指定）──────────
+                //
+                // ⚠️ 只在「当前这套是一条真预设」时才有意义（手改过的状态没东西可删）。
+                // ⚠️ 不新增 state —— hook 下标一动，测试里所有按序号塞状态的用例
+                //    都要跟着挪。做完就走，反馈交给 flash。
                 currentId
-                  ? null
-                  : react.createElement("option", { key: "__none", value: "" }, "未保存的配置"),
-                list.length === 0
-                  ? react.createElement("option", { key: "__empty", value: "" }, "（还没有预设）")
+                  ? react.createElement(
+                      "button",
+                      {
+                        key: "del",
+                        type: "button",
+                        className: "pm-btn",
+                        style: bus ? BTN_BUSY : BTN,
+                        disabled: bus,
+                        title: "删掉预设「" + currentName + "」（用它挂着的全局/会话会自动退回）",
+                        onClick: function () {
+                          props.doPreset({ action: "delete", id: currentId });
+                        },
+                      },
+                      "删除",
+                    )
                   : null,
-                list.map(function (p) {
-                  return react.createElement("option", { key: p.id, value: p.id }, p.name);
-                }),
+                react.createElement(
+                  "button",
+                  {
+                    key: "r",
+                    type: "button",
+                    className: "pm-btn",
+                    style: bus ? BTN_BUSY : BTN,
+                    disabled: bus,
+                    title: "重新从盘上读一遍",
+                    onClick: function () {
+                      props.loadPresets();
+                    },
+                  },
+                  "↻",
+                ),
               ],
             ),
-            // 保存：当前这套有名字就覆盖它自己，没名字就存新的
-            react.createElement(
-              "button",
-              {
-                key: "sav",
-                type: "button",
-                className: "pm-btn",
-                style: bus ? BTN_BUSY : BTN,
-                disabled: bus,
-                title: currentId
-                  ? "把当前勾选覆盖到预设「" + currentName + "」"
-                  : "把当前勾选存成一套新预设",
-                onClick: function () {
-                  savePreset(props);
-                },
-              },
-              props.presetsBusy ? "保存中…" : "保存",
-            ),
-              // ── 删除这条预设 ────────────────────────────────────────────────
-              // ⚠️ 位置是用户指定的：**保存和刷新之间**。
-              //    只在「当前这套是一条真预设」时才有意义（手改过的状态没东西可删）。
-              //    ⚠️ 不新增 state —— hook 下标一动，测试里所有按序号塞状态的用例
-              //       都要跟着挪。做完就走，反馈交给 flash。
-              currentId
-                ? react.createElement(
-                    "button",
-                    {
-                      key: "del",
-                      type: "button",
-                      className: "pm-btn",
-                      style: bus ? BTN_BUSY : BTN,
-                      disabled: bus,
-                      title: "删掉预设「" + currentName + "」（用它挂着的全局/会话会自动退回）",
-                      onClick: function () {
-                        props.doPreset({ action: "delete", id: currentId });
-                      },
-                    },
-                    "删除",
-                  )
-                : null,
-            react.createElement(
-              "button",
-              {
-                key: "r",
-                type: "button",
-                className: "pm-btn",
-                style: bus ? BTN_BUSY : BTN,
-                disabled: bus,
-                title: "重新从盘上读一遍",
-                onClick: function () {
-                  props.loadPresets();
-                },
-              },
-              "↻",
-            ),
           ],
+        );
+
+        // ⚠️ 两段**竖排**：开关一行，标题+动作一行。
+        //    之前 7 样全塞一行、靠 wrap 兜底 → 换行位置随机（用户说「按钮位置问题」）。
+        var head = react.createElement(
+          "div",
+          {
+            // ⚠️ **标记**：测试（以及以后可能的 DOM 补丁）靠它定位，不用猜结构。
+            //    猜过一版（「直接子元素里有 role=switch 的 div」）—— 失败：
+            //    `swRow` 的直接子元素是 MasterSwitch **返回的那个 div**，
+            //    带 role="switch" 的 span 在更深一层，判据一路钻到了外层容器。
+            "data-pm-card-head": "1",
+            style: Object.assign({}, CARD_HEAD, {
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              minWidth: "0",
+              padding: "10px 14px",
+            }),
+          },
+          [swRow, actRow],
         );
 
         var bodyNode = react.createElement(
