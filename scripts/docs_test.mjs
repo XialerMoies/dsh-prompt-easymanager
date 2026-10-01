@@ -155,7 +155,14 @@ const readme = readFileSync(at("README.md"), "utf8");
 
 // ── 4. docs/ 顶层只放给用户的 ───────────────────────────────────────────────
 {
-  const USER_DOCS = new Set(["system-prompt.md", "section-overrides-design.md"]);
+  // ⚠️ 白名单是**显式的** —— 加一份新文档就得来这里加名字。
+  //    这样「随手写份自用笔记扔进 docs/」会被挡住。
+  const USER_DOCS = new Set([
+    "system-prompt.md",
+    "section-overrides-design.md",
+    // 权限/依赖/失败边界 —— 给「装之前想确认安全」的用户，也给上架审核
+    "permissions.md",
+  ]);
   const top = readdirSync(at("docs"), { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith(".md"))
     .map((e) => e.name);
@@ -361,6 +368,59 @@ const readme = readFileSync(at("README.md"), "utf8");
     !files.includes("assets/banner.png"),
     "**没有把 banner 图打进包**（917 KB，README 里并没有引用）",
   );
+}
+
+// ── 11. 路由前缀跟包名一致，而且两份常量不许飘 ────────────────────────────
+//
+// ⚠️ 踩过：**改名那次路由没跟着改**。改名脚本替换的是包名
+//    （`dsh-prompt-manager`），而路由前缀是**短名字**（`prompt-manager`，
+//    没有 `dsh-` 前缀），所以没被命中 —— 我在报告里说「跟着变了」是错的，
+//    查 git 才发现从没改过。
+//
+// ⚠️ 还有一份隐患：路由常量在 **`index.js` 和 `client.js` 里各有一份**
+//    （宿主注册用一份，客户端兜底 + 通过 `api.route` 发给各 chunk 用一份）。
+//    少改一边就是前端 404，而且是**运行时才发现**。
+{
+  const idx = readFileSync(at("index.js"), "utf8");
+  const cli = readFileSync(at("client.js"), "utf8");
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+
+  /** 抠出 `const/export const NAME = "/api/…"` 那些。 */
+  const routesOf = (src) => {
+    const out = new Map();
+    for (const m of src.matchAll(/(?:export )?const (\w+_PATH|\w+_ROUTE|ROUTE_\w+)\s*=\s*"(\/api\/[^"]+)"/g)) {
+      out.set(m[1], m[2]);
+    }
+    return out;
+  };
+
+  const idxRoutes = routesOf(idx);
+  const cliRoutes = routesOf(cli);
+  ok(idxRoutes.size >= 8, "index.js 里抠出了路由常量", String(idxRoutes.size) + " 条");
+  ok(cliRoutes.size >= 8, "client.js 里抠出了路由常量", String(cliRoutes.size) + " 条");
+
+  // ① 前缀必须跟包名一致
+  //
+  //    ⚠️ 比的是**去掉 `dsh-` 前缀的包名** —— 路由用短名字。
+  const slug = pkg.name.replace(/^dsh-/, "");
+  const wantPrefix = "/api/" + slug + "/";
+  const wrong = [...idxRoutes, ...cliRoutes].filter(([, v]) => !v.startsWith(wantPrefix));
+  eq(wrong, [], `**全部路由用 /api/${slug}/ 前缀**`);
+
+  // ② 两份常量的值必须一样
+  //
+  //    ⚠️ 名字不同（index.js 是 `STATE_PATH`，client.js 是 `ROUTE_STATE`），
+  //       所以按**路径**比，不按常量名。
+  const idxPaths = new Set(idxRoutes.values());
+  const cliPaths = new Set(cliRoutes.values());
+  const onlyIdx = [...idxPaths].filter((p) => !cliPaths.has(p));
+  const onlyCli = [...cliPaths].filter((p) => !idxPaths.has(p));
+  eq(onlyIdx, [], "**index.js 里的路由 client.js 也有**（少一个就是前端 404）");
+  eq(onlyCli, [], "client.js 里的路由 index.js 也有");
+
+  // ③ 一个都不许是旧的短前缀（改名前的残留）
+  const stale = [...idxPaths, ...cliPaths].filter((p) => /^\/api\/prompt-manager\//.test(p));
+  eq(stale, [], "**没有改名前的旧前缀残留**");
 }
 
 // ── 断言描述不许在同一个文件里重复 ──────────────────────────────────────

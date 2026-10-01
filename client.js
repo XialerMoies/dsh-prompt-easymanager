@@ -20,20 +20,19 @@
     //    就等于抛异常，宿主报 `import failed: [object Promise]`；而且
     //    `fmtTokens(p.tokens)` 是当函数调的，拿不到就是 undefined is not a function。
     //    这里曾经是一个独立的 client.helpers.js —— 别改回去。
-    const ROUTE_STATE = "/api/prompt-manager/state";
-    const ROUTE_ASSIGN = "/api/prompt-manager/assign";
-    const ROUTE_PREVIEW = "/api/prompt-manager/preview";
-    const ROUTE_RELOAD = "/api/prompt-manager/reload";
-    const ROUTE_DEFAULTS = "/api/prompt-manager/defaults";
-    const ROUTE_EDIT = "/api/prompt-manager/edit";
-    const ROUTE_SECTIONS = "/api/prompt-manager/sections";
-    const ROUTE_PRESETS = "/api/prompt-manager/presets";
+    const ROUTE_STATE = "/api/prompt-easymanager/state";
+    const ROUTE_ASSIGN = "/api/prompt-easymanager/assign";
+    const ROUTE_PREVIEW = "/api/prompt-easymanager/preview";
+    const ROUTE_RELOAD = "/api/prompt-easymanager/reload";
+        const ROUTE_EDIT = "/api/prompt-easymanager/edit";
+    const ROUTE_SECTIONS = "/api/prompt-easymanager/sections";
+    const ROUTE_PRESETS = "/api/prompt-easymanager/presets";
 /**
  * 全局那份配置（开关 + 指向哪条预设）。
  *
  * ⚠️ 新会话页那个下拉框改的是**全局**（那边还没有会话），所以要用它。
  */
-const ROUTE_GLOBAL = "/api/prompt-manager/global";
+const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
     /** 原生段落的中文显示名。⚠️ **只用于显示**，存储/匹配一律用原始 name。 */
     const SECTION_LABELS = {
       "harness:identity": "harness 身份",
@@ -1079,7 +1078,6 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             ROUTE_ASSIGN: ROUTE_ASSIGN,
             ROUTE_PREVIEW: ROUTE_PREVIEW,
             ROUTE_RELOAD: ROUTE_RELOAD,
-            ROUTE_DEFAULTS: ROUTE_DEFAULTS,
             ROUTE_EDIT: ROUTE_EDIT,
             ROUTE_SECTIONS: ROUTE_SECTIONS,
             ROUTE_PRESETS: ROUTE_PRESETS,
@@ -1466,7 +1464,6 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           ROUTE_ASSIGN: ROUTE_ASSIGN,
           ROUTE_PREVIEW: ROUTE_PREVIEW,
           ROUTE_RELOAD: ROUTE_RELOAD,
-          ROUTE_DEFAULTS: ROUTE_DEFAULTS,
           ROUTE_EDIT: ROUTE_EDIT,
         };
         return module.exports;

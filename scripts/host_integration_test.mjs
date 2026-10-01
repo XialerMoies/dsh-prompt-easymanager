@@ -130,7 +130,6 @@ const {
   ASSIGN_PATH,
   PREVIEW_PATH,
   RELOAD_PATH,
-  DEFAULTS_PATH,
   GLOBAL_PATH,
   EDIT_PATH,
   SECTIONS_PATH,
@@ -270,12 +269,11 @@ const S = "session-live-0001";
   ok(inject.includes("connection"), "inject 含 connection");
   ok(inject.includes("agents"), "inject 含 agents");
   ok(inject.includes("tools"), "inject 含 tools");
-  eq(STATE_PATH, "/api/prompt-manager/state", "state 路径");
-  eq(ASSIGN_PATH, "/api/prompt-manager/assign", "assign 路径");
-  eq(PREVIEW_PATH, "/api/prompt-manager/preview", "preview 路径");
-  eq(RELOAD_PATH, "/api/prompt-manager/reload", "reload 路径");
-  eq(DEFAULTS_PATH, "/api/prompt-manager/defaults", "defaults 路径");
-  eq(EDIT_PATH, "/api/prompt-manager/edit", "edit 路径");
+  eq(STATE_PATH, "/api/prompt-easymanager/state", "state 路径");
+  eq(ASSIGN_PATH, "/api/prompt-easymanager/assign", "assign 路径");
+  eq(PREVIEW_PATH, "/api/prompt-easymanager/preview", "preview 路径");
+  eq(RELOAD_PATH, "/api/prompt-easymanager/reload", "reload 路径");
+  eq(EDIT_PATH, "/api/prompt-easymanager/edit", "edit 路径");
 }
 
 // ── 2. 路由注册 ─────────────────────────────────────────────────────────────
@@ -283,11 +281,16 @@ const live = makeAgent(S);
 const ctx = makeCtx([live.agent]);
 apply(ctx);
 
+// ⚠️ **全部已注册的路由** —— 从 index.js 的导出取，不手写。
+//
+//    手写那份曾经漏过东西，而且 `/defaults` 删掉之后就对不上了。
+//    从导出取还顺带把「导出了但没注册」和「注册了但没导出」都变成红的。
+const ALL = [...new Set([STATE_PATH, ASSIGN_PATH, PREVIEW_PATH, RELOAD_PATH, EDIT_PATH, SECTIONS_PATH, PRESETS_PATH, GLOBAL_PATH])];
+
 // ⚠️ 防回归：path 必须是**单个字符串**。曾经传数组 [A,B,C,D]，结果所有路由全部
 //    失效 —— 因为 dsh-client-connection 按 url.pathname 在 Map 里精确匹配。
 //    这几条断言专门盯住这个点。
 {
-  const ALL = [STATE_PATH, ASSIGN_PATH, PREVIEW_PATH, RELOAD_PATH, DEFAULTS_PATH, GLOBAL_PATH, EDIT_PATH, SECTIONS_PATH, PRESETS_PATH];
   eq(ctx.__registerCalls(), ALL.length, `注册了 ${ALL.length} 条独立路由`);
   const keys = [...ctx.__routes().keys()];
   ok(
@@ -298,7 +301,7 @@ apply(ctx);
   for (const p of ALL) {
     ok(typeof ctx.__route(p) === "function", "按 pathname 能取到路由: " + p);
   }
-  ok(typeof ctx.__route("/api/prompt-manager/nope") === "undefined", "未注册的路径取不到路由");
+  ok(typeof ctx.__route("/api/prompt-easymanager/nope") === "undefined", "未注册的路径取不到路由");
 }
 // ⚠️ v0.3.0 曾加过 list_personas / get_persona 两个「给子代理挑角色」的工具，
 //    v0.3.1 删掉了。原因：dsh 的 subagent 工具**没有** persona 参数
@@ -582,8 +585,12 @@ let P2 = "";
   const ctxF = makeCtx([other.agent]);
   apply(ctxF);
   eq(other.sections.length, 1, "**没记录的会话跟随全局**（挂上全局那条）");
-  // 收尾：清掉默认，免得影响后面的断言
-  await call(ctx, DEFAULTS_PATH, { method: "POST", body: { promptIds: [] } });
+  // 收尾：把全局清掉，免得影响后面的断言
+  //
+  // ⚠️ 这里原来打的是已退役的 `/defaults`（收一堆裸 prompt id）。
+  //    那条路由**已经删掉了** —— 它当初留着是为了给「老客户端」一个友好的 410，
+  //    但这个插件从没发布过、没有老客户端，所以那个理由不成立。
+  await call(ctx, GLOBAL_PATH, { method: "POST", body: { presetId: null, enabled: false } });
 }
 
 // ── 9. POST assign：各种错误输入 ────────────────────────────────────────────
@@ -643,20 +650,14 @@ let P2 = "";
   eq(r2.status, 400, "旧的 promptId 传 none 同样 400（那个哨兵已经没了）");
 }
 
-// ── 9c. /defaults 已退役；全局改用 /global ─────────────────────────────────
-{
-  const gone = await call(ctx, DEFAULTS_PATH);
-  eq(gone.status, 410, "**GET /defaults → 410 Gone**（不是 404，要说清是「换地方了」）");
-  eq(gone.json.outcome, "gone", "结论是 gone");
-  eq(gone.json.use, GLOBAL_PATH, "**告诉调用方该去哪儿**");
-
-  const gonePost = await call(ctx, DEFAULTS_PATH, {
-    method: "POST",
-    body: { promptIds: ["format-contract"] },
-  });
-  eq(gonePost.status, 410, "POST /defaults 同样 410");
-}
-
+// ── 9c. `/defaults` 已**整条删掉**（连 410 也不留）─────────────────────────
+//
+// ⚠️ 它原来是「留着但不干活，回 410 告诉调用方去哪儿」。那个设计的前提是
+//    **有老客户端** —— 而这个插件从没发布过，没有老客户端。
+//    所以路由、常量、客户端那份死常量一起删了。
+//
+//    现在打它就是**未注册路径**，跟打错字一样。跟下面「未注册路径」那条
+//    同样的形状 —— 这里就不再重复断言了。
 // ── 9d. /global：开关 + 用哪条预设 ─────────────────────────────────────────
 {
   // ⚠️ **先重置** —— 前面的用例（「没记录的会话跟随全局」那条）会把全局指向
@@ -957,7 +958,7 @@ const TMP_ID = "zz-test-only";
 // 请求会落到服务器的默认处理。这正是我们想要的（不再有"永远匹配不上"的哑路由）。
 {
   ok(
-    typeof ctx.__route("/api/prompt-manager/不存在") === "undefined",
+    typeof ctx.__route("/api/prompt-easymanager/不存在") === "undefined",
     "未注册路径没有路由（由服务器默认处理）",
   );
   // 已注册路径但方法不对：handler 内部返回 404

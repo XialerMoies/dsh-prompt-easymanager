@@ -95,8 +95,7 @@ window.__ModuleLoader__.load({
       var ROUTE_STATE = api.route.ROUTE_STATE;
       var ROUTE_SECTIONS = api.route.ROUTE_SECTIONS;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
-      var ROUTE_DEFAULTS = api.route.ROUTE_DEFAULTS;
-      // ⚠️ 这里原来还拿了 `ROUTE_ASSIGN`（按会话分配），但设置面板只写全局层，
+            // ⚠️ 这里原来还拿了 `ROUTE_ASSIGN`（按会话分配），但设置面板只写全局层，
       //    所以那份从删掉 sectionScope 起就没人用了 —— 一并删掉。
       //    会话页的 picker 自己拿自己那份，两边互不影响。
 

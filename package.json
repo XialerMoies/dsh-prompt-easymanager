@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-easymanager",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "给 DeepSeek Harness 用的个人提示词管理器：把「个人提示词 + 系统提示词改动」存成预设，按会话或全局挂载，并能改写、关闭、还原 DSH 的原生段落，还能看清模型实际收到的最终提示词。",
   "type": "module",
   "main": "./index.js",
@@ -24,7 +24,8 @@
     "system-prompt"
   ],
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.1.7"
   },
   "exports": {
     ".": "./index.js",
@@ -47,6 +48,7 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
+    "docs/permissions.md",
     "docs/system-prompt.md",
     "docs/section-overrides-design.md"
   ],
@@ -68,15 +70,55 @@
   "dsh": {
     "id": "dsh-prompt-easymanager",
     "name": "个人提示词",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "repo": "XialerMoies/dsh-prompt-easymanager",
-    "permissions": "系统提示词注入（按会话）, 会话头部选择器, 只读系统提示词预览",
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
       "platform": "web",
       "immediately": true
+    },
+    "capabilities": {
+      "files": {
+        "description": "读写本插件自己的数据目录（$DSH_HOME/dsh-prompt-easymanager-state.json、$DSH_HOME/prompts/）。不读也不写插件包目录以外的其他文件。",
+        "scope": "plugin-data-only",
+        "paths": [
+          "$DSH_HOME/dsh-prompt-easymanager-state.json",
+          "$DSH_HOME/prompts/catalog.json",
+          "$DSH_HOME/prompts/*.md"
+        ]
+      },
+      "network": {
+        "description": "只请求本插件自己注册的本地路由（/api/prompt-easymanager/*，由 dsh 的 webServer 提供）。**不连任何外部服务**，不上传任何数据。",
+        "scope": "loopback-only",
+        "endpoints": [
+          "/api/prompt-easymanager/*"
+        ],
+        "externalHosts": []
+      },
+      "commands": {
+        "description": "不执行任何子进程或 shell 命令。",
+        "scope": "none"
+      },
+      "credentials": {
+        "description": "不读取、不存储、不传输任何凭据。源码里的 token 一词指 LLM 的 token 计数（估算提示词占用），跟身份凭据无关。",
+        "scope": "none"
+      },
+      "systemPrompt": {
+        "description": "通过 dsh 的 systemPrompt 服务注册/改写系统提示词段落。改写的是**本会话**装配时用的那份，不改 dsh 自己的文件。",
+        "scope": "session-scoped"
+      }
+    },
+    "data": {
+      "location": "$DSH_HOME",
+      "files": [
+        "dsh-prompt-easymanager-state.json",
+        "prompts/catalog.json",
+        "prompts/<id>.md"
+      ],
+      "survivesUninstall": true,
+      "note": "都是用户数据，卸载**不删**。想清干净就手工删这几个路径。"
     }
   }
 }

@@ -27,6 +27,101 @@
 
 ---
 
+## v0.3.3 — 回应 DSH STORE 的上架检查
+
+DSH STORE 的自动检查把项目标成 **Catalog blocked**，四条原因：
+
+    DSH compatibility is not explicitly declared;
+    runtime source contains the files permission signal;
+    runtime source contains the network permission signal;
+    runtime source contains the commands permission signal;
+    runtime source contains the credentials permission signal
+
+逐条处理如下。
+
+### ① DSH 兼容范围 —— **这一条是真缺**
+
+以前只有 engines.node。查了 @deepseek-ai/dsh-package-manifest 的
+DshEnginesManifest，它明确有 dsh 字段：
+
+    /** Compatible DSH versions as a SemVer range, including an exact version. *\/
+    dsh?: string;
+
+补上：
+
+    "engines": {
+      "node": "^22.19.0 || >=24.0.0",
+      "dsh":  ">=0.1.7"
+    }
+
+⚠️ 用 \`>=\` 不用 \`^\`：semver 里 \`^0.1.7\` 等于 \`>=0.1.7 <0.2.0\`，
+而 0.x 的次版本号算破坏性变更 —— 那个上限是**假精确**，会把同一个
+API 的 0.2.x 挡在外面。
+
+⚠️ **只声明下限不声明上限**：声明上限需要有版本矩阵的测试，而我没有。
+实测环境是 DSH 0.1.7-rc.2 / Node 22.23.2 / Windows x64。
+
+### ② 四个权限信号 —— 扫了一遍，性质各不相同
+
+    files        真的读写文件。**这是它的工作** —— 它就是靠存文件做持久化的。
+    network      真的 fetch。但**全是调自己注册的本地路由**
+                 （/api/prompt-easymanager/*，由 dsh 的 webServer 提供），
+                 **零外部服务**。
+    commands     没有真信号。那条命中只是注释里出现了「命令」二字。
+    credentials  **假阳性**。命中的 token 一词**全是 LLM token 计数**
+                 （估算一条提示词占多少上下文），跟身份凭据无关。
+
+⚠️ dsh 那边**没有权限模型**可声明（参考 dsh-xray 那篇
+"The dsh Plugin Ecosystem Has No Permission Model"），package.json 里
+没有对应的字段。所以按商店给的第二条建议办：**写清楚**。
+
+  · 新增 \`docs/permissions.md\` —— 人读的完整说明：碰什么、连什么、
+    坏了会怎样、卸载后留什么
+  · \`package.json\` 的 \`dsh.capabilities\` —— 同一份内容的**机器可读摘要**，
+    四条信号逐条对应，每条带 scope
+
+⚠️ **文档里的每条断言都有脚本核实**（不只是写完就算）：不执行子进程、
+每个 fetch 都指向本地路由常量、零外部依赖、路由清单跟代码一致、
+engines 跟代码一致。写完先跑一遍，抓到两条我自己写得不实的地方。
+
+### ③ 一次性 Profile 的安装/启动/卸载证据
+
+在**隔离的 DSH_HOME** 里从 tarball 走完整流程（真实 ~/.dsh 全程没碰）：
+
+    ① 建一次性 profile（从随包发的 web 模板）
+    ② dsh plugin --profile evidence add <tgz>      exit 0
+    ③ dsh --profile evidence --dump-config         exit 0  条目里有本插件
+    ④ dsh plugin --profile evidence remove …       exit 0  node_modules 与依赖都清掉
+
+⚠️ **第 ① 步是 1，原因跟插件无关**：\`--from-default-profile\` 建完 profile
+**会立刻启动它**，而默认 web profile 要占 \`127.0.0.1:3080\` —— 验证时那个端口
+正被另一个 dsh 实例占着（\`EADDRINUSE\`）。**换个没被占用的端口就能到 0。**
+第 ②–④ 步都是 0，装/启/卸本身没问题。
+
+### ④ 顺手修的两个**真 bug**
+
+**路由前缀一直是旧的。**
+
+    /api/prompt-manager/*   →   /api/prompt-easymanager/*      （18 处）
+
+改名那次**没改到这里** —— 改名脚本替换的是包名（\`dsh-prompt-manager\`），
+而路由前缀是**短名字**（\`prompt-manager\`，没有 \`dsh-\` 前缀），所以没被命中。
+⚠️ 我在当时的报告里说「路由前缀跟着变了」是**错的**，查 git 才发现从没改过。
+现在改了（还没发布，没有兼容负担），并且加守卫盯住**两份常量不许飘** ——
+路由常量在 \`index.js\` 和 \`client.js\` 里各有一份，少改一边就是前端 404。
+
+**\`/defaults\` 这条退役路由删掉了。**
+
+它原来是「留着但不干活，回 410 告诉调用方去哪儿」。那个设计的前提是
+**有老客户端** —— 而这个插件从没发布过，没有老客户端。
+路由、常量、客户端那份死常量（\`ROUTE_DEFAULTS\`，只在注释里出现过）一起删。
+
+> 同一个道理，之前那两处「改名兼容读」（老状态文件名、老环境变量）也是
+> 白带的复杂度，v0.3.2 已经去掉了。
+
+---
+
+
 ## v0.3.2 — 提示词库移出包外（能发 npm 的前提）
 
 ### 为什么必须搬

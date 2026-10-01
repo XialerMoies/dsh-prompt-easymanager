@@ -29,6 +29,9 @@ prompts/
 Thumbs.db
 desktop.ini
 
+# 打出来的发布包
+*.tgz
+
 # 依赖与构建产物
 node_modules/
 dist/

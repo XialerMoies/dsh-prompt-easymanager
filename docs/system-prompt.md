@@ -22,14 +22,14 @@
 
 | 路径 | 方法 | 用途 |
 |---|---|---|
-| `/api/prompt-manager/state` | GET | 分配表 + 默认 + 提示词清单 + 诊断 |
-| `/api/prompt-manager/assign` | POST | `{ sessionId, promptIds: [...] }`；`null`=跟随默认，`[]`=不注入 |
-| `/api/prompt-manager/defaults` | GET/POST | 读/写全局默认 `{ promptIds: [...] }` |
-| `/api/prompt-manager/preview` | GET | `?session=<id>` 取该会话最终系统提示词 |
-| `/api/prompt-manager/reload` | POST | 重读 `catalog.json` |
-| `/api/prompt-manager/edit` | GET | **带正文**的完整清单（设置页编辑器用） |
-| `/api/prompt-manager/edit` | POST | `{ action: "upsert", prompt: {...} }` 或 `{ action: "delete", id }` |
-| `/api/prompt-manager/sections` | GET | 段落改写现状（原生段落列表 + 覆盖状态） |
+| `/api/prompt-easymanager/state` | GET | 分配表 + 默认 + 提示词清单 + 诊断 |
+| `/api/prompt-easymanager/assign` | POST | `{ sessionId, promptIds: [...] }`；`null`=跟随默认，`[]`=不注入 |
+| `/api/prompt-easymanager/defaults` | GET/POST | 读/写全局默认 `{ promptIds: [...] }` |
+| `/api/prompt-easymanager/preview` | GET | `?session=<id>` 取该会话最终系统提示词 |
+| `/api/prompt-easymanager/reload` | POST | 重读 `catalog.json` |
+| `/api/prompt-easymanager/edit` | GET | **带正文**的完整清单（设置页编辑器用） |
+| `/api/prompt-easymanager/edit` | POST | `{ action: "upsert", prompt: {...} }` 或 `{ action: "delete", id }` |
+| `/api/prompt-easymanager/sections` | GET | 段落改写现状（原生段落列表 + 覆盖状态） |
 
 > 兼容 v0.1.0 的旧写法：`{ sessionId, promptId: "a" }` 仍可用，会被当成单条；
 > `promptId: "none"` 当成空数组。
@@ -189,7 +189,7 @@ return {
 | `inline` | ▵ | 正文直接写。`file` 与 `inline` 二选一 |
 
 **错误不会让插件挂掉**：目录格式错、文件缺失、id 重复等等都会收集成错误列表，
-通过 `prompt_manager` 工具和 `GET /api/prompt-manager/state` 的 `diag.libraryErrors` 暴露。
+通过 `prompt_manager` 工具和 `GET /api/prompt-easymanager/state` 的 `diag.libraryErrors` 暴露。
 
 **模板花括号**：非内置变量（`cwd` / `model` / `provider` 之外）的连续 `{{` 会被自动
 转义成 `{ {`，避免 dsh 的插值引擎抛 malformed prompt variable reference。

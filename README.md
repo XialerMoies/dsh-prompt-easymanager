@@ -38,6 +38,10 @@ dsh plugin --profile web update dsh-prompt-easymanager
 
 > 名字里那个 `web` 是 profile 名，按你自己的来（`dsh profile list` 能看到）。
 
+**装之前想确认它碰什么？** 见 **[docs/permissions.md](docs/permissions.md)** ——
+读写哪些文件、连什么网络、坏了会怎样、卸载后留什么。摘要：
+**零运行时依赖、零外部服务、不执行任何命令、不碰任何凭据。**
+
 ### 从源码装（想改代码时用这个）
 
 指向本地目录：

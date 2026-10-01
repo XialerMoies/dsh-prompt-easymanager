@@ -52,24 +52,23 @@ import { migrateLibraryOutOfPackage } from "./scripts/lib/library-migration.mjs"
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.2";
+const PLUGIN_VERSION = "0.3.3";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
-export const STATE_PATH = "/api/prompt-manager/state";
-export const ASSIGN_PATH = "/api/prompt-manager/assign";
-export const PREVIEW_PATH = "/api/prompt-manager/preview";
-export const RELOAD_PATH = "/api/prompt-manager/reload";
-export const DEFAULTS_PATH = "/api/prompt-manager/defaults";
-export const EDIT_PATH = "/api/prompt-manager/edit";
-export const SECTIONS_PATH = "/api/prompt-manager/sections";
-export const PRESETS_PATH = "/api/prompt-manager/presets";
+export const STATE_PATH = "/api/prompt-easymanager/state";
+export const ASSIGN_PATH = "/api/prompt-easymanager/assign";
+export const PREVIEW_PATH = "/api/prompt-easymanager/preview";
+export const RELOAD_PATH = "/api/prompt-easymanager/reload";
+export const EDIT_PATH = "/api/prompt-easymanager/edit";
+export const SECTIONS_PATH = "/api/prompt-easymanager/sections";
+export const PRESETS_PATH = "/api/prompt-easymanager/presets";
 /**
  * 全局那份配置：`{ enabled, presetId }`。
  *
  * ⚠️ 它**取代**了老的 `/defaults`（那条路由收一堆裸 prompt id）。
  *    新模型里全局也得指向一条预设，所以这个入口叫 global 更贴切。
  */
-export const GLOBAL_PATH = "/api/prompt-manager/global";
+export const GLOBAL_PATH = "/api/prompt-easymanager/global";
 
 const STATE_DIR = process.env.DSH_HOME || join(homedir(), ".dsh");
 const STATE_FILE = join(STATE_DIR, "dsh-prompt-easymanager-state.json");
@@ -1602,26 +1601,6 @@ const jsonOf = (body, status) =>
           return jsonOf({ ok: true, global: readState().global });
         }
 
-        // ── /defaults 已退役 ────────────────────────────────────────────────
-        //
-        // ⚠️ 老路由收的是「一堆裸 prompt id」，新模型里全局也得指向一条预设，
-        //    所以它没法再正确工作。**留着但不干活**，明确告诉调用方去哪儿：
-        //    删掉整条的话老客户端会拿到 404，分不清「路由没了」和「打错了」。
-        if (path === DEFAULTS_PATH) {
-          diag.lastPost = "defaults-retired";
-          return jsonOf(
-            {
-              ok: false,
-              outcome: "gone",
-              error:
-                "`/defaults` 已换成 `/global` —— 现在全局要指向一条预设，" +
-                "不再直接收提示词 id。",
-              use: GLOBAL_PATH,
-            },
-            410, // Gone：比 404 说得清楚
-          );
-        }
-
         // ── GET edit：编辑器要的**带正文**清单（POST 见下）─────────────
         if (path === EDIT_PATH && request.method === "GET") {
           // ⚠️ 读盘（真相来源），不要绕 injector —— 它内部是 prompt id 视图，
@@ -1748,8 +1727,7 @@ const jsonOf = (body, status) =>
       ASSIGN_PATH,
       PREVIEW_PATH,
       RELOAD_PATH,
-      DEFAULTS_PATH,
-      GLOBAL_PATH,
+          GLOBAL_PATH,
       EDIT_PATH,
       SECTIONS_PATH,
       PRESETS_PATH,
