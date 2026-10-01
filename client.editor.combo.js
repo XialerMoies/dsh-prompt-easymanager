@@ -358,6 +358,8 @@ window.__ModuleLoader__.load({
                   enabled: props.globalEnabled,
                   busy: props.presetsBusy,
                   onToggle: props.onToggleGlobal,
+                // ⚠️ 裸装：摘掉它自带的卡片内边距。不传的话标题会被挤成竖排一个字。
+                bare: true,
                 })
               : null,
             titleNode,

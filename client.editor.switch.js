@@ -136,7 +136,23 @@ window.__ModuleLoader__.load({
               "你的配置都留着，开回来就恢复。";
             return react.createElement(
               "div",
-              { style: Object.assign({}, CARD, { padding: "12px 14px", marginBottom: "12px" }) },
+              {
+                style: Object.assign({}, CARD, {
+                  padding: "12px 14px",
+                  marginBottom: "12px",
+                  // ⚠️ **`bare`：塞进别的卡片里时把「卡片感」摘掉。**
+                  //
+                  //    它自带 CARD + 内边距 + marginBottom，单独占一张卡时是对的；
+                  //    但用户要求「开关合入提示词组合」，塞进组合卡的头之后，
+                  //    那层内边距（横向 12+14）把标题挤到只剩一个字宽 ——
+                  //    **「提示词全局注入」被竖排成一行一个字**（真机上出过，截图能看见）。
+                  //
+                  //    裸装时：无内边距、无外边距、无背景、无边框 —— 只留那两个控件。
+                  ...(props.bare === true
+                    ? { padding: "0", marginBottom: "0", background: "none", border: "none" }
+                    : null),
+                }),
+              },
               [
                 react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: "10px" } }, [
                   // 结构照抄原生：button[role=switch][aria-checked] + span(thumb)。

@@ -41,19 +41,10 @@ window.__ModuleLoader__.load({
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
 
-      var SEC = {
-        border: "1px solid rgba(128,128,128,.22)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "8px",
-      };
-      var ADVISE = {
-        border: "1px solid rgba(245,158,11,.7)",
-        background: "rgba(245,158,11,.08)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "10px",
-      };
+      // ⚠️ 这里原来有一份**本地兜底**的 SEC（同一作用域重复 var，后声明者赢）——
+      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
+      // ⚠️ 这里原来有一份**本地兜底**的 ADVISE（同一作用域重复 var，后声明者赢）——
+      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       function Overlay(props) {
         return reactDom.createPortal(
           react.createElement(

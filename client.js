@@ -761,7 +761,41 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         background: "var(--dsw-alias-bg-layer-1, Canvas)",
         color: "inherit",
       };
-      var SLOT_HEAD = Object.assign({}, CARD_MAIN_ROW, {
+      /**
+     * 新会话页那一行里的小下拉框 —— **照原生 `.select` 抄的**。
+     *
+     * ⚠️ 别拿 SELECT_SM 顶替：那是「带边框的输入框」，插到工作区/模式
+     *    那一行里长得完全不一样（真机上出过）。
+     *
+     *    那个箭头用**背景图**画（跟原生同一段 data URI），所以右边留 20px。
+     */
+    var HERO_CHIP = {
+      flex: "none",
+      maxWidth: "220px",
+      height: "28px",
+      color: "var(--dsw-alias-label-secondary, rgba(128,128,128,.95))",
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      cursor: "pointer",
+      appearance: "none",
+      backgroundColor: "transparent",
+      backgroundImage:
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+      backgroundPosition: "right 4px center",
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "12px 12px",
+      border: "none",
+      outline: "none",
+      padding: "0 20px 0 8px",
+      fontSize: "13px",
+      fontWeight: 500,
+      lineHeight: "20px",
+      fontFamily: "inherit",
+      borderRadius: "var(--dsw-radius-sm, 4px)",
+    };
+
+    var SLOT_HEAD = Object.assign({}, CARD_MAIN_ROW, {
         flexDirection: "row",
         minHeight: "0",
         padding: "10px 14px",
@@ -838,6 +872,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             ROW_ACTIVE: ROW_ACTIVE,
             ROW_MARK: ROW_MARK,
             TAG: TAG,
+            HERO_CHIP: HERO_CHIP,
             BTN: BTN,
             BTN_BUSY: BTN_BUSY,
             BTN_ERR: BTN_ERR,
@@ -1094,18 +1129,33 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           var KEY = "pmHeroPresetDone";
           var HOST_ATTR = "data-pm-hero-preset";
 
-          /** 找到「工作区 / agent 预设」那一行。 */
+          /**
+           * 找「工作区 / agent 预设」那个**紧包着两个触发器的容器**。
+           *
+           * ⚠️ 不靠 CSS module 的哈希 class（会变），靠**结构**。但结构判据要**够紧**：
+           *
+           *    第一版取的是 `btn.parentElement.parentElement` —— 走太高，
+           *    落到了「包住整块输入区（含卡片）」的外层容器上，于是控件被插到
+           *    **输入框下面另起一行**（真机上出过，截图能看见）。
+           *
+           *    现在从触发器往上走，**取第一个「同时含两个触发器」的祖先**，
+           *    并且要求那两个触发器**是它的后代里仅有的两个** —— 再往上走就会多出来，
+           *    所以这个祖先就是那一行本身。
+           */
           function rowOf() {
             try {
-              // ⚠️ 不靠 CSS module 的哈希 class（会变），靠**结构**：
-              //    那一行里会有 agent 预设那个槽位渲染出来的东西。
-              //    实测它是个带 aria-haspopup 的按钮（下拉触发器）。
               var btns = document.querySelectorAll("button[aria-haspopup='menu']");
-              for (var i = 0; i < btns.length; i++) {
-                var row = btns[i].parentElement && btns[i].parentElement.parentElement;
-                if (!row) continue;
-                // 那一行里应该已经有 2 个这样的触发器（工作区 + agent 预设）
-                if (row.querySelectorAll("button[aria-haspopup='menu']").length >= 2) return row;
+              if (btns.length < 2) return null;
+              // 拿前两个触发器：它们是「工作区」和「agent 预设」
+              var a = btns[0];
+              var b = btns[1];
+              var el = a.parentElement;
+              for (var up = 0; el && up < 6; up++) {
+                var el2 = el;
+                var inside = el2.querySelectorAll("button[aria-haspopup='menu']");
+                if (inside.length === 2 && el2.contains(b)) return el2;
+                if (inside.length > 2) return null; // 走过头了，说明判据不对
+                el = el.parentElement;
               }
             } catch {
               /* 结构变了就算了 */

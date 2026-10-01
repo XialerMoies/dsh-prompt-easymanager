@@ -939,6 +939,51 @@ const renderEditor = (props = {}) =>
   ok(/commitRename\(props\)/.test(comboSrc), "**调用 commitRename 时转发了 props**");
   ok(/renderPickerBody\(props\)/.test(comboSrc), "**调用 renderPickerBody 时转发了 props**");
   ok(/react\.createElement\(props\.ComboBlock/.test(edSrc), "编辑器从 props 取 ComboBlock");
+  // ══ chunk 里不许有「本地兜底的样式常量」══════════════════════════════════
+  //
+  // ⚠️ **同一作用域里重复 `var` 是后声明者赢** —— 所以这样写：
+  //
+  //      var ROW = api.style.ROW;    ← 从宿主取
+  //      var ROW = { ... };          ← 又声明一次
+  //
+  //    等于**把宿主给的那份顶掉了**。两个后果都是静默的：
+  //
+  //      ① 宿主真漏给某个常量时**测不出来** —— `strictApi` 那条守卫
+  //         （「CHUNK_API.style 里没有 X」）读到的是本地兜底，形同虚设
+  //         （踩过：picker 里 3 个、preview 里 2 个）
+  //      ② 本地那份和宿主那份**各自漂移** —— 改了宿主，界面不变
+  //
+  //    删完之后做了注入验证：从宿主摘掉 `ROW`，这里**当场抛**。
+  //    删之前那个注入是**全绿**的（真机上界面会空白，但测试测不出）。
+  {
+    const dupes = [];
+    for (const file of [
+      "client.js",
+      "client.editor.js",
+      "client.editor.switch.js",
+      "client.editor.sections.js",
+      "client.editor.combo.js",
+      "client.editor.library.js",
+      "client.picker.js",
+      "client.preview.js",
+    ]) {
+      const src = readFileSync(join(HERE, "..", file), "utf8");
+      // 从 api 取的那些名字
+      const fromApi = new Set(
+        [...src.matchAll(/var (\w+) = api\.style\.\w+;/g)].map((m) => m[1]),
+      );
+      // 本地对象的那些名字
+      for (const m of src.matchAll(/^ {6}var (\w+) = \{/gm)) {
+        if (fromApi.has(m[1])) dupes.push(file + ":" + m[1]);
+      }
+    }
+    eq(
+      dupes,
+      [],
+      "**chunk 里没有本地兜底的样式常量**（重复 var 会顶掉宿主给的，让守卫失效）",
+    );
+  }
+
   // ══ 宿主契约：客户端读的字段，宿主必须真的给 ══════════════════════════════
   //
   // ⚠️ **渲染测试测不出这个** —— 它自己喂数据（`shims.setStates`），

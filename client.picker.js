@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({
      */
     function create(api) {
       var SELECT_SM = api.style.SELECT_SM;
+      var HERO_CHIP = api.style.HERO_CHIP;
       var SLOT_HEAD = api.style.SLOT_HEAD;
       var CARD_MAIN_ROW = api.style.CARD_MAIN_ROW;
       var SLOT_WHY = api.style.SLOT_WHY;
@@ -73,35 +74,13 @@ window.__ModuleLoader__.load({
       var ROUTE_PREVIEW = api.route.ROUTE_PREVIEW;
       var ROUTE_RELOAD = api.route.ROUTE_RELOAD;
 
-      var SELECT_SM = {
-        flex: "0 0 auto",
-        width: "220px",
-        font: "inherit",
-        fontSize: "12px",
-        padding: "2px 6px",
-        borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
-        background: "var(--dsw-alias-bg-layer-1, Canvas)",
-        color: "inherit",
-      };
+      // ⚠️ 这里原来有一份**本地兜底**的 SELECT_SM（同一作用域重复 var，后声明者赢）——
+      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
 
-      var ADVISE = {
-        border: "1px solid rgba(245,158,11,.7)",
-        background: "rgba(245,158,11,.08)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "10px",
-      };
-      var ROW = { display: "inline-flex", alignItems: "center", gap: "4px", flex: "none" };
-      var PILL_SWITCH = {
-        position: "relative",
-        flex: "0 0 auto",
-        width: "36px",
-        height: "20px",
-        borderRadius: "999px",
-        padding: "0",
-        transition: "background .15s ease, border-color .15s ease",
-      };
+      // ⚠️ 这里原来有一份**本地兜底**的 ADVISE（同一作用域重复 var，后声明者赢）——
+      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
+      // ⚠️ 这里原来有一份**本地兜底**的 ROW（同一作用域重复 var，后声明者赢）——
+      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       /** 组件共用的浮层外壳：portal 到 body，点遮罩关闭。 */
       function Overlay(props) {
         return reactDom.createPortal(
@@ -469,7 +448,9 @@ window.__ModuleLoader__.load({
                 key: "b",
                 type: "button",
                 className: "pm-btn",
-                style: SELECT_SM,
+                // ⚠️ 用 HERO_CHIP（照原生 .select 抄的），不是 SELECT_SM ——
+                //    后者是带边框的输入框，插到那一行里长得完全不一样。
+                style: HERO_CHIP,
                 "aria-haspopup": "menu",
                 "aria-expanded": open ? "true" : "false",
                 title: "这个新会话用哪套提示词组合",
@@ -803,11 +784,11 @@ window.__ModuleLoader__.load({
           if (Object.prototype.hasOwnProperty.call(overrides, ok)) overrideNames.push(ok);
         }
         var overriddenCount = overrideNames.length;
-        var injectedCount = currentIds.length;
-        var customized = overriddenCount > 0 || injectedCount > 0;
-
-        // ⚠️ 标签的主体**仍然是提示词名字** —— 会话头一眼要能看出"这条提示词叫啥"。
-        //    改写数量是**追加**在后面的，不能把名字挤掉。
+          // ⚠️ 这里原来还有一段按「一堆 prompt id」算标签的旧代码
+          //    （`injectedCount` / `customized`，配合 `·改原生 N 段` 那个后缀）。
+          //    标签改成按**预设**算之后那两个变量没人读了 —— 删掉，免得以后有人
+          //    改标签逻辑时改到这里、以为生效了其实没有。
+          //    （`currentIds` 本身还在用，见下面的统计块。）
           // ── 算「这个会话实际用哪条预设」──────────────────────────────
           //
           // ⚠️ 新模型里预设是**唯一载体**，所以标签按**预设**算，不再按
