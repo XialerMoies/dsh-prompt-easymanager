@@ -1365,9 +1365,34 @@ const jsonOf = (body, status) =>
             );
           }
 
+          // ⚠️ **三种状态，必须分清楚**（会话页那个下拉框就靠这个区分）：
+          //
+          //      presetId: "写代码"   → 这个会话用这条预设
+          //      presetId: null      → **显式什么都不挂**（压过全局）
+          //      follow: true        → **删掉记录 = 跟随全局**
+          //
+          //    「什么都不挂」和「跟随全局」不是一回事：全局开着的时候，
+          //    前者是一条都不挂，后者是吃全局那条。合并成一个的话，
+          //    用户就没法表达「这个会话别挂全局的」。
+          if (body?.follow === true) {
+            const beforeFollow = readState();
+            const nextFollow = { ...beforeFollow.assignments };
+            delete nextFollow[sessionId];
+            writeState({ assignments: nextFollow });
+            syncInjector(ctx);
+            diag.lastPost = "assign:follow";
+            return jsonOf({ ok: true, presetId: undefined, follow: true, assignments: nextFollow });
+          }
+
           if (!("presetId" in (body ?? {}))) {
             diag.lastPost = "missing-presetId";
-            return jsonOf({ ok: false, error: "缺少 presetId" }, 400);
+            return jsonOf(
+              {
+                ok: false,
+                error: "要传 presetId（预设名或 null），或者 follow: true（跟随全局）",
+              },
+              400,
+            );
           }
           const presetId = body.presetId;
           if (presetId !== null && (typeof presetId !== "string" || !presetId)) {

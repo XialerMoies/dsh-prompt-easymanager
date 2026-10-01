@@ -1335,164 +1335,149 @@ const renderEditor = (props = {}) =>
   }
 }
 
-// ── 5d. 多选面板：打开后要能列出全部提示词 ─────────────────────────────────
-// Picker 的 useState 顺序：data / busy / err / preview / picking / message
-// 面板自己的 useState 接着排：selected / err
+// ── 5d. 会话页那个**预设下拉框**：三个非预设选项 + 当前生效标记 ─────────────
+//
+// 用户的要求就一句：「会话页头部精简为【一个预设下拉框，点击勾选就能注入】」。
+// 所以这里测的是**选预设**，不是选提示词 tag（那是设置页的事）。
 {
   const data = {
-    assignments: {},
-    defaults: [],
-    prompts: [
-      { id: "a", name: "甲", mode: "append", order: 100, tokens: 50, description: "甲的说明" },
-      { id: "b", name: "乙", mode: "append", order: 200, tokens: 60 },
-      { id: "repl", name: "替换", mode: "replace", order: 10, tokens: 20 },
-    ],
+    assignments: { s1: "写代码" },
+    global: { enabled: true, presetId: "全局那条" },
+    presets: {
+      写代码: { name: "写代码", prompts: ["a"], sections: {}, label: "写代码", summary: "自设 1 条" },
+      全局那条: { name: "全局那条", prompts: [], sections: { x: {} }, label: "系统提示词 · 改", summary: "改 1 段" },
+    },
+    prompts: [{ id: "a", name: "甲", mode: "append", order: 100, tokens: 50 }],
     diag: { routeRegistered: true, sessions: [] },
   };
-  // picking = true，面板初始选中 ["a"]
-  shims.setStates([data, false, null, null, true, null, ["a"], null]);
-  let el;
-  try {
-    el = renderPicker({ sessionId: "s1" });
-    ok(true, "多选面板渲染不抛异常");
-  } catch (e) {
-    ok(false, "多选面板渲染不抛异常 —— 抛了 " + e.message);
-    el = null;
-  }
-  if (el) {
-    const text = flattenText(el).join(" ");
-    ok(text.includes("选择本会话的提示词"), "面板标题在");
-    ok(text.includes("甲") && text.includes("乙") && text.includes("替换"), "三条提示词都列出来");
-    ok(text.includes("order 100"), "显示 order");
-    ok(text.includes("甲的说明"), "显示说明文字");
-    ok(text.includes("应用"), "有应用按钮");
-    ok(text.includes("跟随默认"), "有跟随默认按钮");
-    ok(text.includes("不注入"), "有不注入按钮");
-    ok(text.includes("已选 1 条"), "底部汇总已选数量");
-  }
+  // ⚠️ `/presets` 的响应形状（面板读的是它，不是 `/state`）。
+  const presetsResp = {
+    presets: [
+      { id: "写代码", name: "写代码", prompts: ["a"], sections: {}, label: "写代码", summary: "自设 1 条" },
+      { id: "全局那条", name: "全局那条", prompts: [], sections: { x: {} }, label: "系统提示词 · 改", summary: "改 1 段" },
+    ],
+    global: { enabled: true, presetId: "全局那条" },
+    session: { sessionId: "s1", presetId: "写代码" },
+    effective: { id: "写代码", preset: null, source: "session" },
+  };
+
+  shims.setStates([data, false, null, null, true, null]);
+  // ⚠️ 面板的 extras 是**调全局 fetch** 拿的（`/presets?session=`），
+  //    所以这里给 globalThis.fetch 装个假的。用完**必须还原** ——
+  //    不还原的话后面的用例会拿到这个假的，红得莫名其妙。
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url) => {
+    void url;
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(presetsResp) });
+  };
+
+  const el = renderPicker({ sessionId: "s1" });
+  const text = flattenText(el).join(" ");
+  ok(text.includes("系统提示词"), "**有「系统提示词」这个选项**（= 什么都不挂）");
+  ok(text.includes("跟随全局"), "**有「跟随全局」这个选项**（跟「什么都不挂」不是一回事）");
+  ok(text.includes("写代码"), "列出各条预设（用 label 显示）");
+  ok(
+    text.includes("系统提示词 · 改"),
+    "**只改了系统提示词的那种预设显示成「系统提示词 · 改」**（用户的场景②）",
+  );
+  globalThis.fetch = realFetch;
 }
 
-// ── 5e. 多选面板：不再有"非法组合"这回事（替换模式已删除）──────────────────
+// ── 5e. 点一下就提交，而且三种状态发的请求体不同 ──────────────────────────
+//
+// ⚠️ 三条请求体是这次改动**最容易写错**的地方：
+//
+//      具体预设   → { presetId: "<id>" }
+//      系统提示词 → { presetId: null }   （显式什么都不挂，压过全局）
+//      跟随全局   → { follow: true }     （删记录）
+//
+//    后两个**合并成一个**的话，用户就没法表达「这个会话别挂全局的」——
+//    而那正是开关关掉之后唯一能表达「什么都不挂」的方式。
 {
-  const data = {
+  const realFetchAgain = globalThis.fetch;
+  const mkData = () => ({
     assignments: {},
-    defaults: [],
-    prompts: [
-      { id: "a", name: "甲", mode: "append", order: 100, tokens: 50 },
-      { id: "b", name: "乙", mode: "append", order: 200, tokens: 60 },
-      { id: "c", name: "丙", mode: "append", order: 2900, tokens: 70 },
-    ],
+    global: { enabled: true, presetId: "全局那条" },
+    presets: { 写代码: { name: "写代码", prompts: ["a"], sections: {}, label: "写代码" } },
+    prompts: [],
     diag: { routeRegistered: true, sessions: [] },
+  });
+  const presetsResp = {
+    presets: [{ id: "写代码", name: "写代码", prompts: ["a"], sections: {}, label: "写代码" }],
+    global: { enabled: true, presetId: "全局那条" },
+    session: { sessionId: "s1", presetId: undefined },
+    effective: { id: "全局那条", preset: null, source: "global" },
   };
-  // 全选上 —— 任意多条 append 都是合法的，不该出现任何警告
-  shims.setStates([data, false, null, null, true, null, ["a", "b", "c"], null]);
-  try {
+  void mkData;
+
+  /** 渲染面板，并抓出它发出的那个 POST。 */
+  function tap(labelPart, own) {
+    const posts = [];
+    globalThis.fetch = (url, init) => {
+      if (init && init.method === "POST") posts.push({ url: String(url), body: init.body });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(presetsResp) });
+    };
+    // ⚠️ **预设表必须放在这里（/state 那份）** —— 渲染是同步的，
+    //    面板里 useEffect 拉的 extras 到断言时还没回来。
+    //    放空的话选项列表就是空的，红的会是夹具不是实现。
+    shims.setStates([{
+      // ⚠️ **每个断言要给不同的 `own`** —— 被测的那个选项必须是
+      //    **非当前项**，否则点下去只关面板（那是对的 UX，不是 bug）。
+      //    三种状态：
+      //      没有 s1 的记录      → 当前是「跟随全局」
+      //      assignments[s1]=null → 当前是「系统提示词」
+      //      assignments[s1]=某条 → 当前是那条预设
+      assignments: own,
+      // ⚠️ **每个断言要给不同的 `own`** —— 被测的那个选项必须是
+      //    **非当前项**，否则点下去只关面板（那是对的 UX，不是 bug）。
+      //    三种状态：
+      //      没有 s1 的记录      → 当前是「跟随全局」
+      //      assignments[s1]=null → 当前是「系统提示词」
+      //      assignments[s1]=某条 → 当前是那条预设
+      assignments: own,
+      global: { enabled: true, presetId: "全局那条" },
+      presets: {
+        写代码: { name: "写代码", prompts: ["a"], sections: {} },
+        全局那条: { name: "全局那条", prompts: ["g"], sections: {} },
+      },
+      prompts: [{ id: "a", name: "甲", mode: "append", order: 100, tokens: 50 }],
+      diag: { routeRegistered: true, sessions: [] },
+    }, false, null, null, true, null]);
+    // ⚠️ **面板靠注入 `picking: true` 打开**（state 序号 4），不能靠点按钮：
+    //    这些测试的状态是按 useState 下标塞的，每次 render 都归零 ——
+    //    onClick 里调的 setPicking 不影响下一次渲染读到的值。
+    //    （踩过：面板一直不开，findEl 找不到选项。）
     const el = renderPicker({ sessionId: "s1" });
-    const text = flattenText(el).join(" ");
-    ok(!text.includes("组合不合法"), "全选也不再提示组合问题");
-    ok(!text.includes("静默丢弃"), "不再有「会被丢弃」的警告");
-    ok(text.includes("已选 3 条"), "三条都算数");
-    ok(text.includes("应用"), "应用按钮在");
-  } catch (e) {
-    ok(false, "全选场景渲染不抛异常 —— 抛了 " + e.message);
-  }
 
-  // 模式标签里不该再有「替换」
-  shims.setStates([data, false, null, null, true, null, ["a"], null]);
-  try {
-    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
-    ok(!text.includes("替换"), "模式选项里不再出现「替换」");
-  } catch (e) {
-    ok(false, "单个 append 渲染不抛异常 —— 抛了 " + e.message);
-  }
-}
-
-// ── 5e2. 多选面板：按分类分组 + 整类全选 ───────────────────────────────────
-{
-  const CATS = [
-    { id: "identity", name: "身份", order: 20, hint: "" },
-    { id: "tool", name: "工具", order: 3000, hint: "" },
-    { id: "other", name: "其他", order: 100, hint: "" },
-  ];
-  const data = {
-    assignments: {},
-    defaults: [],
-    categories: CATS,
-    customCategories: ["安全审查"],
-    prompts: [
-      { id: "i1", name: "人设甲", category: "identity", mode: "append", order: 20, tokens: 10 },
-      { id: "i2", name: "人设乙", category: "identity", mode: "append", order: 30, tokens: 11 },
-      { id: "t1", name: "工具偏好", category: "tool", mode: "append", order: 3000, tokens: 20 },
-      { id: "c1", name: "安全规矩", category: "安全审查", mode: "append", order: 100, tokens: 30 },
-    ],
-    diag: { routeRegistered: true, sessions: [] },
-  };
-  // 一个都没选
-  shims.setStates([data, false, null, null, true, null, [], null]);
-  let el;
-  try {
-    el = renderPicker({ sessionId: "s1" });
-    ok(true, "分组渲染不抛异常");
-  } catch (e) {
-    ok(false, "分组渲染不抛异常 —— 抛了 " + e.message);
-    el = null;
-  }
-  if (el) {
-    const text = flattenText(el).join(" ");
-    ok(text.includes("身份"), "显示「身份」组标题");
-    ok(text.includes("工具"), "显示「工具」组标题");
-    ok(text.includes("安全审查"), "显示自定义分类组标题");
-    ok(text.includes("自定义分类"), "自定义组有标记");
-    ok(text.includes("全选本类"), "每组有「全选本类」按钮");
-    ok(!text.includes("清空本类"), "没选时不显示「清空本类」");
-
-    // 三组 → 三个全选按钮
+    // ⚠️ 用现成的 findEl 收全部匹配 —— pred 里 push 完返回 false 继续遍历。
     const btns = [];
-    (function walk(n) {
-      if (!n || typeof n !== "object") return;
-      if (n.type === "button" && n.props && n.props["data-cat-toggle"]) btns.push(n.props["data-cat-toggle"]);
-      for (const c of n.children || []) walk(c);
-    })(el);
-    eq(btns.sort(), ["identity", "tool", "安全审查"], "三个分组各有一个整类按钮");
-    void text;
+    findEl(el, (n) => {
+      if (n.type === "button" && flattenText(n).join(" ").includes(labelPart)) btns.push(n);
+      return false;
+    });
+    ok(btns.length > 0, "找得到选项「" + labelPart + "」");
+    if (btns[0]) btns[0].props.onClick && btns[0].props.onClick();
+    return posts;
   }
 
-  // 整组选满 → 按钮变成「清空本类」
-  shims.setStates([data, false, null, null, true, null, ["i1", "i2"], null]);
-  try {
-    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
-    ok(text.includes("清空本类"), "身份组选满后按钮变「清空本类」");
-    ok(text.includes("全选本类"), "其他组仍是「全选本类」");
-  } catch (e) {
-    ok(false, "选满一组渲染不抛异常 —— 抛了 " + e.message);
+  {
+const posts = tap("写代码", {}); // 当前是「跟随全局」→「写代码」可点
+    eq(posts.length, 1, "**点一下就提交**（没有「应用」按钮）");
+    eq(posts[0].url.includes("/assign"), true, "提交给 /assign");
+    eq(JSON.parse(posts[0].body).presetId, "写代码", "具体预设 → presetId 是那条预设");
   }
-
-  // 只有一组时，不显示组标题（免得满屏小标题）
-  shims.setStates([
-    { ...data, prompts: [{ id: "only", name: "唯一", category: "tool", mode: "append", order: 3000, tokens: 5 }] },
-    false, null, null, true, null, [], null,
-  ]);
-  try {
-    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
-    ok(text.includes("唯一"), "单组时条目照常显示");
-    ok(!text.includes("全选本类"), "单组时不显示整类按钮");
-  } catch (e) {
-    ok(false, "单组渲染不抛异常 —— 抛了 " + e.message);
+  {
+const posts = tap("系统提示词", { s1: "写代码" }); // 当前是「写代码」→「系统提示词」可点
+    eq(JSON.parse(posts[0]?.body || "{}").presetId, null, "**「系统提示词」→ presetId: null**（显式什么都不挂）");
+    eq("follow" in JSON.parse(posts[0]?.body || "{}"), false, "它**不**是 follow");
   }
-
-  // 边界：没有 categories 字段（老宿主）
-  shims.setStates([
-    { ...data, categories: undefined, customCategories: undefined },
-    false, null, null, true, null, [], null,
-  ]);
-  try {
-    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
-    ok(text.includes("安全审查"), "没有内置分类表时，用条目自带分类名");
-    ok(text.includes("人设甲"), "条目照常显示");
-  } catch (e) {
-    ok(false, "**个人提示词那块**缺 categories 字段时不抛异常 —— 抛了 " + e.message);
+  {
+const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码」→「跟随全局」可点
+    eq(JSON.parse(posts[0]?.body || "{}").follow, true, "**「跟随全局」→ follow: true**（删记录）");
   }
+  globalThis.fetch = realFetchAgain;
 }
+
 
 // ── 5f. 入口按钮显示当前选择（含来自默认时的区分）──────────────────────────
 {

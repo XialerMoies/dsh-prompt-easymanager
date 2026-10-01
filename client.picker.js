@@ -45,6 +45,9 @@ window.__ModuleLoader__.load({
       var SUMSUM = api.style.SUMSUM;
       var ROW = api.style.ROW;
       var CARD_HEADING = api.style.CARD_HEADING;
+      var CARD_TITLE = api.style.CARD_TITLE;
+      var ROW_ACTIVE = api.style.ROW_ACTIVE;
+      var ROW_MARK = api.style.ROW_MARK;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
       var DETAIL_BTN = api.style.DETAIL_BTN;
@@ -116,109 +119,70 @@ window.__ModuleLoader__.load({
       }
 
       // ── 多选面板 ──────────────────────────────────────────────────────────
-      function PickerPanel(props) {
+      /**
+       * 会话页那个**预设下拉框**。
+       *
+       * ⚠️ 它**只选预设**，不选提示词 tag —— 用户明确说过：
+       *    「会话页的是选预设下拉框不是选提示词 tag 下拉框」。
+       *    想改预设内容去设置页，这边不提供微调入口。
+       *
+       * ⚠️ **点一下就生效**，没有「应用」按钮。
+       */
+      function PresetDropdown(props) {
         var data = props.data;
         var sessionId = props.sessionId;
         var busy = props.busy;
         var onClose = props.onClose;
-        var onApply = props.onApply;
+        void sessionId;
+        void busy;
 
-        // ⚠️ 老版本这里是「显式有记录就用它，否则用默认」—— 新模型里**没有**
-        //    「回落默认」这个概念了：不记录 = 跟随全局，那件事由宿主算（见
-        //    `/presets` 的 `effective` 字段）。这里只反映**这个会话自己选的**。
-        //    面板本身正在按「一个预设下拉框」重写，这段是过渡。
-        var initial = (function () {
-          var a = (data && data.assignments) || {};
-          if (Object.prototype.hasOwnProperty.call(a, sessionId)) {
-            var v = a[sessionId];
-            return Array.isArray(v) ? v.slice() : typeof v === "string" && v !== "none" ? [v] : [];
-          }
-            return [];
-        })();
-
-        var selSt = react.useState(initial);
-        var selected = selSt[0];
-        var setSelected = selSt[1];
         var errSt = react.useState(null);
         var err = errSt[0];
         var setErr = errSt[1];
-        // ── 这个会话的预设 + 段落改写 ─────────────────────────────────────
-        //
-        // ⚠️ **会话级的东西放会话头**，不塞进设置页 —— 设置页天然是「全局配置」，
-        //    把「只改这个会话」的开关混在那儿，用户分不清自己改的是哪一层。
+        // ⚠️ 面板**自己拉一份 /presets?session=** —— 因为：
+        //    · /state 里那份预设表没有 label（会话页要按 label 显示）
+        //    · 「这个会话自己选了哪条」只有 /presets 的 session.presetId 说清了
+        //      （undefined = 没记录、null = 显式什么都不挂 —— 两者不同）
         var exSt = react.useState(null);
         var extras = exSt[0];
         var setExtras = exSt[1];
-        var exBusySt = react.useState(false);
-        var exBusy = exBusySt[0];
-        var setExBusy = exBusySt[1];
-        var exMsgSt = react.useState("");
-        var exMsg = exMsgSt[0];
-        var setExMsg = exMsgSt[1];
-
-        var loadExtras = react.useCallback(function () {
-          return Promise.all([
-            fetch(ROUTE_PRESETS + "?session=" + encodeURIComponent(sessionId))
-              .then(function (r) { return r.ok ? r.json() : null; })
-              .catch(function () { return null; }),
-            fetch(ROUTE_SECTIONS + "?session=" + encodeURIComponent(sessionId))
-              .then(function (r) { return r.ok ? r.json() : null; })
-              .catch(function () { return null; }),
-          ]).then(function (pair) {
-            return { presets: pair[0], sections: pair[1] };
-          });
-        }, [sessionId]);
+        var msgSt = react.useState("");
+        var msg = msgSt[0];
+        var setMsg = msgSt[1];
 
         react.useEffect(function () {
           var alive = true;
-          loadExtras().then(function (d) {
-            if (alive) setExtras(d);
-            return null;
-          });
+          fetch(ROUTE_PRESETS + "?session=" + encodeURIComponent(sessionId))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .catch(function () { return null; })
+            .then(function (d) {
+              if (alive) setExtras(d);
+              return null;
+            });
           return function () {
             alive = false;
           };
-        }, [loadExtras]);
+        }, [sessionId, msg]);
 
-        /** 应用一条会话层预设。 */
-        function applySessionPreset(id) {
-          setExBusy(true);
-          setExMsg("");
-          return fetch(ROUTE_PRESETS + "?session=" + encodeURIComponent(sessionId), {
+        var presets = metaOf(Object.assign({}, props, { extras: extras }));
+
+        /** 点一下 → 写状态 + 让宿主重挂（宿主会 syncInjector）。 */
+        function pick(o) {
+          setErr(null);
+          setMsg("");
+          var body = { sessionId: sessionId };
+          if (o.kind === "follow") {
+            // ⚠️ 「跟随全局」= **删掉这个会话的记录**。
+            //    宿主 /assign 收 `presetId: null` 是「显式什么都不挂」，
+            //    跟「跟随」**不是一回事** —— 所以这条走单独的参数。
+            body.follow = true;
+          } else {
+            body.presetId = o.kind === "system" ? null : o.id;
+          }
+          return fetch(ROUTE_ASSIGN, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ action: "apply", id: id }),
-          })
-            .then(function (r) {
-              return r.json().then(function (j) {
-                if (!r.ok) throw new Error((j && j.error) || "HTTP " + r.status);
-                return j;
-              });
-            })
-            .then(function (d) {
-              setExMsg("已切换到「" + d.name + "」—— 关掉这个面板后生效");
-              onApplied && onApplied();
-              return loadExtras();
-            })
-            .then(function (d) {
-              setExtras(d);
-              return null;
-            })
-            .catch(function (e) {
-              setExMsg("失败：" + ((e && e.message) || String(e)));
-            })
-            .then(function () {
-              setExBusy(false);
-            });
-        }
-
-        /** 还原这个会话的一条段落改写。 */
-        function restoreSessionSection(name) {
-          setExBusy(true);
-          return fetch(ROUTE_SECTIONS + "?session=" + encodeURIComponent(sessionId), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name: name, action: "restore", scope: "session" }),
+            body: JSON.stringify(body),
           })
             .then(function (r) {
               return r.json().then(function (j) {
@@ -227,426 +191,230 @@ window.__ModuleLoader__.load({
               });
             })
             .then(function () {
-              setExMsg("已还原：" + name);
-              return loadExtras();
-            })
-            .then(function (d) {
-              setExtras(d);
+              setMsg("已切换到「" + o.label + "」");
+              // ⚠️ 重新拉 /presets —— 勾要跟着挪到新选项上，否则用户看不出生效了
+              props.onApplied && props.onApplied();
               return null;
             })
             .catch(function (e) {
-              setExMsg("失败：" + ((e && e.message) || String(e)));
-            })
-            .then(function () {
-              setExBusy(false);
+              setErr((e && e.message) || String(e));
             });
         }
 
-        var prompts = (data && data.prompts) || [];
-        var byId = {};
-        for (var i = 0; i < prompts.length; i++) byId[prompts[i].id] = prompts[i];
+        var rows = [];
 
-        var hasExplicit =
-          data && data.assignments && Object.prototype.hasOwnProperty.call(data.assignments, sessionId);
-
-        // v0.2.2 起没有 replace 模式了，因此**不存在非法组合** ——
-        // 以前这里有「两个替换」「替换+追加」两条前端护栏，随模式一起删掉了。
-
-        function toggle(id) {
-          setErr(null);
-          var next = selected.slice();
-          var at = next.indexOf(id);
-          if (at >= 0) next.splice(at, 1);
-          else next.push(id);
-          setSelected(next);
-        }
-
-        /** 内置分类表 + 目录里的自定义分类（选词面板按它分组）。 */
-        var pickerCategories = (data && data.categories) || [];
-        var pickerCustom = (data && data.customCategories) || [];
-
-        function pickerCategoryName(id) {
-          for (var i = 0; i < pickerCategories.length; i++) {
-            if (pickerCategories[i].id === id) return pickerCategories[i].name;
-          }
-          return id || "其他";
-        }
-
-        /** 整类全选 / 全不选。 */
-        function toggleCategory(ids, makeAllOn) {
-          setErr(null);
-          var next = selected.slice();
-          for (var i = 0; i < ids.length; i++) {
-            var at = next.indexOf(ids[i]);
-            if (makeAllOn && at < 0) next.push(ids[i]);
-            else if (!makeAllOn && at >= 0) next.splice(at, 1);
-          }
-          setSelected(next);
-        }
-
-        function renderItem(p) {
-          var on = selected.indexOf(p.id) >= 0;
-          return react.createElement(
-            "div",
-            {
-              key: p.id,
-              style: on ? PICK_ON : PICK,
-              onClick: function () {
-                toggle(p.id);
-              },
-              title: p.description || "",
-            },
-            react.createElement("span", {
-              style: {
-                flex: "none",
-                width: "14px",
-                textAlign: "center",
-                fontWeight: "bold",
-              },
-            }, on ? "✓" : "　"),
+        // ── ────────────────────────────────────────────────────────
+        // 「当前实际用哪条」（宿主算好的，面板不自己猜）
+        // ──────────────────────────────────────────────────────────
+        var head = react.createElement(
+          "div",
+          { key: "h", style: PANEL_HEAD },
+          [
+            react.createElement("span", { key: "t", style: CARD_TITLE }, "这个会话用什么"),
+            react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
             react.createElement(
-              "div",
-              { style: { flex: "1 1 auto", minWidth: "0" } },
-              react.createElement(
-                "div",
-                null,
-                [
-                  react.createElement("strong", { key: "n" }, p.name || p.id),
-                  react.createElement(
-                    "span",
-                    { key: "m", style: MUTED },
-                    "  " + (MODE_LABEL[p.mode] || p.mode) + " · order " + (p.order == null ? "?" : p.order) +
-                      " · " + fmtTokens(p.tokens),
-                  ),
-                ],
-              ),
-              p.description
-                ? react.createElement(
-                    "div",
-                    { style: Object.assign({}, MUTED, { marginTop: "3px" }) },
-                    p.description,
-                  )
-                : null,
+              "button",
+              { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: onClose },
+              "关闭",
             ),
-          );
-        }
-
-        /** 按分类分组渲染，每组带「全选 / 清空」。 */
-        function rows() {
-          var out = [];
-          if (prompts.length === 0) {
-            out.push(react.createElement("div", { key: "empty", style: MUTED }, "提示词库是空的。"));
-            return out;
-          }
-
-          // 分组顺序：内置五类的固定次序 → 自定义分类按名字排
-          var groups = [];
-          var known = {};
-          for (var a = 0; a < pickerCategories.length; a++) {
-            groups.push({ id: pickerCategories[a].id, builtin: true, items: [] });
-            known[pickerCategories[a].id] = true;
-          }
-          var extras = [];
-          for (var b = 0; b < prompts.length; b++) {
-            var c = (prompts[b] && prompts[b].category) || "other";
-            if (!known[c]) {
-              known[c] = true;
-              extras.push(c);
-            }
-          }
-          extras.sort();
-          for (var d = 0; d < extras.length; d++) groups.push({ id: extras[d], builtin: false, items: [] });
-          for (var e = 0; e < prompts.length; e++) {
-            var pc = (prompts[e] && prompts[e].category) || "other";
-            for (var f = 0; f < groups.length; f++) {
-              if (groups[f].id === pc) {
-                groups[f].items.push(prompts[e]);
-                break;
-              }
-            }
-          }
-
-          for (var g = 0; g < groups.length; g++) {
-            var grp = groups[g];
-            if (grp.items.length === 0) continue;
-            // 单组只有一条时不显示组标题，免得满屏小标题
-            var single = groups.filter(function (x) { return x.items.length > 0; }).length <= 1;
-            var ids = grp.items.map(function (x) { return x.id; });
-            var allOn = ids.every(function (id) { return selected.indexOf(id) >= 0; });
-            if (!single) {
-              out.push(
-                react.createElement(
-                  "div",
-                  { key: "gh-" + grp.id, style: Object.assign({}, CARD_HEADING, { marginBottom: "6px" }) },
-                  [
-                    react.createElement("span", { key: "n", style: HEADING_TITLE }, pickerCategoryName(grp.id)),
-                    react.createElement("span", { key: "c", style: HEADING_COUNT }, grp.items.length + " 条"),
-                    !grp.builtin
-                      ? react.createElement("span", { key: "t", style: HEADING_COUNT }, "自定义分类")
-                      : null,
-                    react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-                    react.createElement(
-                      "button",
-                      {
-                        key: "all",
-                        type: "button",
-                        className: "pm-btn",
-                        style: BTN,
-                        "data-cat-toggle": grp.id,
-                        onClick: function () {
-                          toggleCategory(ids, !allOn);
-                        },
-                      },
-                      allOn ? "清空本类" : "全选本类",
-                    ),
-                  ],
-                ),
-              );
-            }
-            for (var h = 0; h < grp.items.length; h++) out.push(renderItem(grp.items[h]));
-          }
-          void pickerCustom;
-          return out;
-        }
-
-        var selInOrder = selected
-          .filter(function (id) {
-            return byId[id];
-          })
-          .slice()
-          .sort(function (a, b) {
-            return (byId[a].order || 0) - (byId[b].order || 0);
-          });
-        var totalTokens = selInOrder.reduce(function (n, id) {
-          return n + (byId[id].tokens || 0);
-        }, 0);
-
-        // ── 这个会话的预设 + 段落改写 ─────────────────────────────────────
-        //
-        // 只列**这个会话层**的东西。全局层改了什么不在这儿显示 ——
-        // 那是设置页的事，混在一起又变成"分不清改的是哪一层"。
-        var sessionExtras = (function () {
-          var kids = [];
-
-          if (exMsg) {
-            kids.push(react.createElement("div", { key: "msg", style: MUTED }, exMsg));
-          }
-
-          // 预设
-          var plist = (extras && extras.presets && extras.presets.presets) || [];
-          var mine = plist.filter(function (p) {
-            return p.scope === "session";
-          });
-          kids.push(
-            react.createElement(
-              "div",
-              { key: "pt", style: Object.assign({}, MUTED, { marginTop: "10px", fontWeight: 600 }) },
-              "这个会话的预设",
-            ),
-          );
-          if (mine.length === 0) {
-            kids.push(
-              react.createElement(
-                "div",
-                { key: "pn", style: MUTED },
-                "还没有。在设置页调好这个会话的配置后，可以存成预设。",
-              ),
-            );
-          } else {
-            var matched =
-              extras && extras.presets && extras.presets.matched && extras.presets.matched.session;
-            kids.push(
-              react.createElement(
-                "div",
-                { key: "pc", style: { display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" } },
-                mine.map(function (p) {
-                  var isCur = matched && matched.id === p.id;
-                  return react.createElement(
-                    "button",
-                    {
-                      key: p.id,
-                      type: "button",
-                      className: "pm-btn",
-                      style: exBusy ? BTN_BUSY : isCur ? BTN_PRIMARY : BTN,
-                      disabled: exBusy,
-                      title: p.summary,
-                      onClick: function () {
-                        applySessionPreset(p.id);
-                      },
-                    },
-                    p.name + (isCur ? " ✓" : ""),
-                  );
-                }),
-              ),
-            );
-          }
-
-          // 段落改写（只列被改过的）
-          var applied =
-            (extras && extras.sections && extras.sections.applied) || [];
-          var stale = (extras && extras.sections && extras.sections.stale) || [];
-          var changed = applied.concat(stale);
-          kids.push(
-            react.createElement(
-              "div",
-              { key: "st", style: Object.assign({}, MUTED, { marginTop: "10px", fontWeight: 600 }) },
-              "这个会话改写过的原生段落",
-            ),
-          );
-          if (changed.length === 0) {
-            kids.push(
-              react.createElement(
-                "div",
-                { key: "se", style: MUTED },
-                "这个会话没单独改过段落。要改的话去设置页（那里配的是全局，或在这里…）",
-              ),
-            );
-          } else {
-            kids.push(
-              react.createElement(
-                "div",
-                { key: "sl", style: { marginTop: "4px" } },
-                changed.map(function (row) {
-                  return react.createElement(
-                    "div",
-                    {
-                      key: row.name,
-                      style: { display: "flex", alignItems: "center", gap: "8px", padding: "2px 0" },
-                    },
-                    [
-                      react.createElement(
-                        "span",
-                        { key: "n", style: { flex: "1 1 auto", fontSize: "12px" } },
-                        row.name + (row.action === "disable" ? "（已关掉）" : "（已改写）"),
-                      ),
-                      react.createElement(
-                        "button",
-                        {
-                          key: "r",
-                          type: "button",
-                          className: "pm-btn",
-                          style: exBusy ? BTN_BUSY : BTN,
-                          disabled: exBusy,
-                          title: "删掉这个会话对它的改写，回落到全局/官方",
-                          onClick: function () {
-                            restoreSessionSection(row.name);
-                          },
-                        },
-                        "还原",
-                      ),
-                    ],
-                  );
-                }),
-              ),
-            );
-          }
-
-          return react.createElement("div", { key: "extras" }, kids);
-        })();
-
-        return react.createElement(
-          Overlay,
-          { onClose: onClose },
-          react.createElement(
-            "div",
-            { style: PANEL_HEAD },
-            react.createElement(
-              "div",
-              null,
-              [
-                react.createElement("strong", { key: "t" }, "选择本会话的提示词"),
-                react.createElement(
-                  "span",
-                  { key: "s", style: MUTED },
-                  "　可以多选；各自按 order 排序插入" +
-                    (hasExplicit ? "（本会话已显式指定）" : "（当前来自全局默认）"),
-                ),
-              ],
-            ),
-            react.createElement("button", { type: "button", style: BTN, onClick: onClose }, "关闭"),
-          ),
-          react.createElement("div", { style: PANEL_BODY }, [
-            err
-              ? react.createElement(
-                  "div",
-                  { key: "err", style: WARN },
-                  [react.createElement("strong", { key: "t" }, "应用失败："), err],
-                )
-              : null,
-            react.createElement("div", { key: "list" }, rows()),
-            // ── 这个会话的预设 / 段落改写 ──────────────────────────────
-            //
-            // ⚠️ **会话级的东西放会话头**，不塞进设置页。
-            //    设置页天然是「全局配置」的地方；把「只改这个会话」的开关
-            //    混在那儿，用户分不清自己改的是哪一层。
-            sessionExtras,
-          ]),
-          react.createElement(
-            "div",
-            { style: PANEL_FOOT },
-            react.createElement(
-              "div",
-              { style: MUTED },
-              selInOrder.length === 0
-                ? "未选任何提示词 → 该会话不注入"
-                : "已选 " + selInOrder.length + " 条 · 共 " +
-                  fmtTokens(totalTokens) + "（" +
-                  selInOrder
-                    .map(function (id) {
-                      return (byId[id].name || id) + "@" + (byId[id].order == null ? "?" : byId[id].order);
-                    })
-                    .join(" → ") +
-                  "）",
-            ),
-            react.createElement(
-              "div",
-              { style: { display: "flex", gap: "6px", flexWrap: "wrap" } },
-              [
-                react.createElement(
-                  "button",
-                  {
-                    key: "apply",
-                    type: "button",
-                    style: busy ? BTN_BUSY : BTN,
-                    disabled: busy,
-                    onClick: function () {
-                      onApply(selected, setErr);
-                    },
-                  },
-                  "应用",
-                ),
-                react.createElement(
-                  "button",
-                  {
-                    key: "def",
-                    type: "button",
-                    style: busy ? BTN_BUSY : BTN,
-                    disabled: busy,
-                    title: "清除本会话的指定，改回跟随全局默认",
-                    onClick: function () {
-                      onApply(null, setErr);
-                    },
-                  },
-                  "跟随默认",
-                ),
-                react.createElement(
-                  "button",
-                  {
-                    key: "none",
-                    type: "button",
-                    style: busy ? BTN_BUSY : BTN,
-                    disabled: busy,
-                    title: "显式指定为不注入（即使默认里有东西也不挂）",
-                    onClick: function () {
-                      onApply([], setErr);
-                    },
-                  },
-                  "不注入",
-                ),
-              ],
-            ),
-          ),
+          ],
         );
+        rows.push(head);
+
+        if (err) {
+          rows.push(react.createElement("div", { key: "e", style: MSG_ERR }, err));
+        } else if (msg) {
+          rows.push(react.createElement("div", { key: "m", style: MSG_OK }, msg));
+        }
+
+        // ── 选项 ────────────────────────────────────────────────────
+        for (var i = 0; i < presets.length; i++) {
+          rows.push(renderOption(presets[i], props));
+        }
+
+        if (presets.length === 0) {
+          rows.push(
+            react.createElement(
+              "div",
+              { key: "none", style: MUTED },
+              "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
+            ),
+          );
+        }
+
+        // ⚠️ 加载中**不要**渲染成「空列表」—— 那会闪一下「还没有任何提示词组合」，
+        //    看着像数据丢了。
+        if (!data) {
+          return react.createElement(
+            Overlay,
+            { narrow: true, onClose: onClose },
+            react.createElement("div", { style: MUTED }, "读取中…"),
+          );
+        }
+
+        return react.createElement(Overlay, { narrow: true, onClose: onClose }, [
+          react.createElement("div", { key: "b", style: PANEL_BODY }, rows),
+        ]);
+      }
+
+      /** 「跟随全局」这个选项在内部用一个哨兵值表示（不是字符串 id）。 */
+      var FOLLOW = "\u0000follow";
+
+      /**
+       * 从 `/presets` 的响应算出一串**选项**。
+       *
+       * ⚠️ **必须包含「系统提示词」和「跟随全局」两个非预设选项** ——
+       *    用户点名要「原生提示词」那个选项（= 系统提示词），
+       *    而「跟随全局」是「没单独设过」的唯一表达方式，两个都不能少。
+       */
+      /**
+       * 预设的显示标签 —— **跟宿主 `presetLabel` 同一套规则**。
+       *
+       * ⚠️ 两边规则要一致：宿主给 /presets 的列表里带 `label`，
+       *    而 /state 的预设表没有 —— 这里补算，免得同一个预设
+       *    在两处显示成不同的东西。
+       */
+      function presetLabelOf(p) {
+        if (!p) return "系统提示词";
+        var ps = Array.isArray(p.prompts) ? p.prompts : [];
+        if (ps.length > 0) return p.name || "（无名预设）";
+        var n = p.sections && typeof p.sections === "object" ? Object.keys(p.sections).length : 0;
+        return n > 0 ? "系统提示词 · 改" : "系统提示词";
+      }
+      function metaOf(props) {
+        var d = props.data;
+        var out = [];
+        if (!d) return out;
+
+        // ⚠️ **两个形状都要认**：
+        //      /state   → presets 是**对象**（id → 预设），global 在里面
+        //      /presets → presets 是**数组**（带 label），另有 session / effective
+        //    只认一种的话另一半就静默读不到 —— 不报错，只是选项少了。
+        var list = [];
+        if (Array.isArray(d.presets)) {
+          list = d.presets.filter(Boolean);
+        } else if (d.presets && typeof d.presets === "object") {
+          for (var pid in d.presets) {
+            if (!Object.prototype.hasOwnProperty.call(d.presets, pid)) continue;
+            var one = d.presets[pid] || {};
+            list.push({
+              id: pid,
+              name: one.name,
+              prompts: one.prompts,
+              sections: one.sections,
+              label: presetLabelOf(one),
+              summary: "",
+            });
+          }
+        }
+        // extras 也要合进来 —— 它是 /presets?session= 的响应，
+        // 带一份**带 label 的预设数组**和 session / effective。
+        // props.data（/state）里那份预设表没有 label，只有这边有。
+        var ex = props.extras || null;
+        if (list.length === 0 && ex && Array.isArray(ex.presets)) {
+          list = ex.presets.filter(Boolean);
+        }
+        var g = (ex && ex.global) || d.global || {};
+        // ⚠️ 会话自己选的那条：
+        //      /presets → d.session.presetId（undefined = 没记录、null = 什么都不挂）
+        //      /state   → d.assignments[sessionId]（同一个语义）
+        var sess = (ex && ex.session) || d.session || null;
+        var ownId;
+        if (sess && "presetId" in sess) {
+          ownId = sess.presetId;
+        } else if (d.assignments && typeof d.assignments === "object") {
+          var sid = props.sessionId;
+          ownId = Object.prototype.hasOwnProperty.call(d.assignments, sid)
+            ? d.assignments[sid]
+            : undefined;
+        }
+
+        // ① 跟随全局（只在全局真有一条预设时才有意义）
+        var gp = null;
+        for (var k = 0; k < list.length; k++) {
+          if (list[k] && list[k].id === g.presetId) gp = list[k];
+        }
+        if (gp) {
+          out.push({
+            kind: "follow",
+            label: "跟随全局（" + gp.label + "）",
+            sub: "全局改了就跟着变",
+            active: ownId === undefined,
+          });
+        }
+
+        // ② 系统提示词（= 什么都不挂）
+        out.push({
+          kind: "system",
+          label: "系统提示词",
+          sub: "这个会话不挂任何自设提示词",
+          active: ownId === null,
+        });
+
+        // ③ 具体预设
+        for (var m = 0; m < list.length; m++) {
+          var p = list[m];
+          if (!p) continue;
+          out.push({
+            kind: "preset",
+            id: p.id,
+            label: p.label || p.name,
+            sub: p.summary || "",
+            active: ownId === p.id,
+          });
+        }
+        return out;
+      }
+
+      /** 一个选项行。当前生效的带勾 + 高亮。 */
+      function renderOption(o, props) {
+        return react.createElement(
+          "button",
+          {
+            key: "o-" + o.kind + "-" + (o.id || ""),
+            type: "button",
+            className: "pm-btn",
+            style: Object.assign({}, ROW, o.active ? ROW_ACTIVE : null),
+            "aria-current": o.active ? "true" : undefined,
+            onClick: function () {
+              if (o.active) {
+                props.onClose && props.onClose();
+                return;
+              }
+              pickOption(o, props);
+            },
+          },
+          [
+            react.createElement("span", { key: "g", style: ROW_MARK }, o.active ? "✓" : ""),
+            react.createElement("span", { key: "l", style: CARD_TITLE }, o.label),
+            o.sub ? react.createElement("span", { key: "s", style: MUTED }, o.sub) : null,
+          ],
+        );
+      }
+
+      /** 点一个选项 → 写状态 + 让宿主重挂。 */
+      function pickOption(o, props) {
+        var body = { sessionId: props.sessionId };
+        if (o.kind === "follow") body.follow = true;
+        else body.presetId = o.kind === "system" ? null : o.id;
+        return fetch(ROUTE_ASSIGN, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        })
+          .then(function (r) {
+            return r.json().then(function (j) {
+              if (!r.ok) throw new Error((j && j.error) || "HTTP " + r.status);
+              return j;
+            });
+          })
+          .then(function () {
+            props.onApplied && props.onApplied();
+            return null;
+          })
+          .catch(function () {
+            /* 失败时不动面板，让用户重试 */
+          });
       }
       function PromptPicker(props) {
         var sessionId = props && props.sessionId;
@@ -1009,14 +777,16 @@ window.__ModuleLoader__.load({
               )
             : null,
           picking
-            ? react.createElement(PickerPanel, {
+            ? react.createElement(PresetDropdown, {
                 data: data,
                 sessionId: sessionId,
                 busy: busy,
                 onClose: function () {
                   setPicking(false);
                 },
-                onApply: doAssign,
+                // ⚠️ 新语义：**点一下就生效**，没有「应用」按钮 ——
+                  //    所以这里是 onApplied（写完之后刷新），不是 onApply。
+                  onApplied: load,
               })
             : null,
           preview
@@ -1035,7 +805,7 @@ window.__ModuleLoader__.load({
       // dsh-client-ui-settings-plugin-inventory/lib/client.js：
 
       return {
-        PickerPanel: PickerPanel,
+        PresetDropdown: PresetDropdown,
         PromptPicker: PromptPicker,
       };
     }

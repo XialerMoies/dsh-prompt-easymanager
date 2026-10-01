@@ -791,6 +791,19 @@
         overflow: "hidden",
         textOverflow: "ellipsis",
       });
+
+    /** 下拉里「当前生效」那一项的高亮（跟普通行区分开）。 */
+    var ROW_ACTIVE = {
+      background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12))",
+      borderRadius: "var(--dsw-radius-md, 8px)",
+    };
+
+    /** 勾那一列 —— 固定宽度，免得没勾的行跟有勾的行对不齐。 */
+    var ROW_MARK = {
+      flex: "none",
+      width: "14px",
+      textAlign: "center",
+    };
         /**
          * 交给 chunk 的那一份：宿主独有的东西显式列在这里，chunk 的 create(api)
          * 解构回去 —— 同一个东西在几个文件里各写一份，迟早改一处漏一处。
@@ -804,6 +817,8 @@
         var CHUNK_API = {
           style: {
             ROW: ROW,
+            ROW_ACTIVE: ROW_ACTIVE,
+            ROW_MARK: ROW_MARK,
             BTN: BTN,
             BTN_BUSY: BTN_BUSY,
             BTN_ERR: BTN_ERR,
