@@ -46,11 +46,28 @@ window.__ModuleLoader__.load({
        *    这里返回 CARD 的话，「预设名 / 下拉 / 保存」就只能摆在卡片外面，
        *    变成三层（踩过：用户问「下拉框和保存不都说是卡片顶部了吗」）。
        */
+      /**
+       * 取「全局指向的那条预设」。
+       *
+       * ⚠️ 新形状：全局**指向一条预设**（`global.presetId`），内容在 `presets` 里查 ——
+       *    不再是老版本那种「一层裸 prompt id」（`layers.global.prompts`）。
+       *    读老字段不会报错，只会静默拿到 undefined，所以专门有「宿主契约」守卫盯着。
+       */
+      function globalPresetOf(props) {
+        var d = props.presetsData;
+        if (!d || !d.global || typeof d.global.presetId !== "string") return null;
+        var list = Array.isArray(d.presets) ? d.presets : [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i] && list[i].id === d.global.presetId) return list[i];
+        }
+        return null;
+      }
+
       function renderPickerBody(props) {
         // ⚠️ 只取 global 层。不带 ?session= 时后端**根本不返回** session 层，
         //    原来那个三元的 session 分支永远取到 undefined（死代码，已删）。
-        var layer = props.presetsData.layers && props.presetsData.layers.global;
-        var activeIds = (layer && Array.isArray(layer.prompts) ? layer.prompts : []).slice();
+        var globalPreset = globalPresetOf(props);
+        var activeIds = (globalPreset && Array.isArray(globalPreset.prompts) ? globalPreset.prompts : []).slice();
 
         var usable = [];
         for (var pi = 0; pi < props.prompts.length; pi++) {
@@ -165,7 +182,7 @@ window.__ModuleLoader__.load({
        *       （他的原话：「下拉框和保存不都说是卡片顶部了吗」）。
        */
       function renderCombo(props) {
-        var matched = props.presetsData && props.presetsData.matched ? props.presetsData.matched.global : null;
+        var matched = globalPresetOf(props);
         var list = (props.presetsData && props.presetsData.presets) || [];
         var currentId = matched ? matched.id : "";
         var currentName = matched ? matched.name : "未保存的配置";
@@ -364,7 +381,7 @@ window.__ModuleLoader__.load({
        *    覆盖走同一条 save（同名 → presetId 命中同一条）。
        */
       function savePreset(props) {
-        var matched = props.presetsData && props.presetsData.matched ? props.presetsData.matched.global : null;
+        var matched = globalPresetOf(props);
         if (matched) {
           props.doPreset({ action: "save", name: matched.name, scope: "global" });
           return;
@@ -386,9 +403,9 @@ window.__ModuleLoader__.load({
         var next = props.renameDraft.trim();
         props.setRenaming(false);
         if (!next) return;
-        var matched = props.presetsData && props.presetsData.matched ? props.presetsData.matched.global : null;
+        var matched = globalPresetOf(props);
         if (!matched || matched.name === next) return;
-        props.doPreset({ action: "rename", id: matched.id, name: next });
+        props.doPreset({ action: "update", id: matched.id, name: next });
       }
 
       /** 这一块没有 CSS module，只有内联样式；保留成接口形状，宿主会调。 */

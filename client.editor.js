@@ -226,7 +226,10 @@ window.__ModuleLoader__.load({
               // 总开关的本地态跟服务端对齐（第一次读、以及每次 refresh 之后）
               setEnabledDraft(d.enabled !== false);
               // 刷新时把默认的草稿重置成服务端的值（丢弃未保存的勾选）
-              setDefaultsDraft(Array.isArray(d.defaults) ? d.defaults.slice() : []);
+              // ⚠️ 这里原来读 `d.defaults`（老形状：一层裸 prompt id）。新模型里全局是
+              //    「指向一条预设」（`d.global`），那套数据由**提示词组合卡片**管（combo 块），
+              //    所以这份 draft 不再需要。`defaultsDraft` / `defaultsBusy` 两个 state 还在
+              //    （hook 下标不能动，测试按序号塞状态），只是没人读了。
               setErr(null);
             })
             .catch(function (e) {

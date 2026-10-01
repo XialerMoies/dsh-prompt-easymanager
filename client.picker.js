@@ -123,14 +123,17 @@ window.__ModuleLoader__.load({
         var onClose = props.onClose;
         var onApply = props.onApply;
 
-        // 打开时的初始选择：显式有记录就用它，否则用默认
+        // ⚠️ 老版本这里是「显式有记录就用它，否则用默认」—— 新模型里**没有**
+        //    「回落默认」这个概念了：不记录 = 跟随全局，那件事由宿主算（见
+        //    `/presets` 的 `effective` 字段）。这里只反映**这个会话自己选的**。
+        //    面板本身正在按「一个预设下拉框」重写，这段是过渡。
         var initial = (function () {
           var a = (data && data.assignments) || {};
           if (Object.prototype.hasOwnProperty.call(a, sessionId)) {
             var v = a[sessionId];
             return Array.isArray(v) ? v.slice() : typeof v === "string" && v !== "none" ? [v] : [];
           }
-          return ((data && data.defaults) || []).slice();
+            return [];
         })();
 
         var selSt = react.useState(initial);
@@ -832,7 +835,7 @@ window.__ModuleLoader__.load({
             : typeof explicitVal === "string" && explicitVal !== "none"
               ? [explicitVal]
               : []
-          : (data && data.defaults) || [];
+          : []; // ⚠️ 新模型里没有「回落默认」（见上面那段说明）
 
         var byId = {};
         for (var i = 0; i < prompts.length; i++) byId[prompts[i].id] = prompts[i];
@@ -860,21 +863,57 @@ window.__ModuleLoader__.load({
 
         // ⚠️ 标签的主体**仍然是提示词名字** —— 会话头一眼要能看出"这条提示词叫啥"。
         //    改写数量是**追加**在后面的，不能把名字挤掉。
-        var label = "不注入";
-        if (currentIds.length > 0) {
-          var first = byId[currentIds[0]];
-          label = (first && first.name) || currentIds[0];
-          if (currentIds.length > 1) label += " +" + (currentIds.length - 1);
-          // 来源要**看得见**，不能只靠状态点颜色 + tooltip。
-          // 「来自默认」是常态（正是全局默认的意义），标出来才知道这条不是为
-          // 本会话专门设的。
-          if (!hasExplicit) label += " ·默认";
-        } else if (overrideNames.length > 0) {
-          // 没加自设提示词，但改了原生段落 —— 不能说「不注入」（那是在骗人）
-          label = "默认";
-        }
-        // 改写原生段落：追加，不覆盖上面的名字
-        if (overrideNames.length > 0) label += " ·改原生 " + overrideNames.length + " 段";
+          // ── 算「这个会话实际用哪条预设」──────────────────────────────
+          //
+          // ⚠️ 新模型里预设是**唯一载体**，所以标签按**预设**算，不再按
+          //    「一堆 prompt id」算。三种状态分清楚：
+          //
+          //      显式选了某条          → 用那条（`source: session`）
+          //      显式选了「什么都不挂」 → 不注入（`presetId === null`）
+          //      没记录                → 跟随全局（全局开着）/ 什么都不挂（关掉）
+          //
+          //    最后一种**不能**并进「不注入」—— 用户要能看出自己没单独设过。
+          var presetsTable = (data && data.presets) || {};
+          var g = (data && data.global) || {};
+          var hasOwn = Object.prototype.hasOwnProperty.call(assigns, sessionId);
+          var ownId = hasOwn ? assigns[sessionId] : undefined;
+          var ownPreset = typeof ownId === "string" ? presetsTable[ownId] : null;
+          var globalPreset =
+            g.enabled === true && typeof g.presetId === "string" ? presetsTable[g.presetId] : null;
+
+          var effective = null;
+          var source = "none";
+          if (ownPreset) {
+            effective = ownPreset;
+            source = "session";
+          } else if (ownId === null) {
+            source = "none"; // 显式「什么都不挂」
+          } else if (globalPreset) {
+            effective = globalPreset;
+            source = "global";
+          }
+
+          /** 预设的显示名 —— 跟 server 端 presetLabel 同一套规则。 */
+          function labelOf(p) {
+            if (!p) return null;
+            var ps = Array.isArray(p.prompts) ? p.prompts : [];
+            if (ps.length > 0) return p.name || "（无名预设）";
+            var nsec = p.sections && typeof p.sections === "object" ? Object.keys(p.sections).length : 0;
+            return nsec > 0 ? "系统提示词 · 改" : "系统提示词";
+          }
+
+          var label;
+          if (source === "none") {
+            // 显式「什么都不挂」，或者全局关着且没记录
+            label = hasOwn ? "不注入" : "系统提示词";
+          } else {
+            label = labelOf(effective) || "系统提示词";
+            // ⚠️ 来源要**看得见** —— 「跟随全局」是常态，标出来才知道这条
+            //    不是为本会话专门设的。
+            if (source === "global") label += " ·跟随全局";
+          }
+          var injectedCount = effective && Array.isArray(effective.prompts) ? effective.prompts.length : 0;
+          var customized = source === "session";
 
         // 从诊断里找本会话的挂载结论，决定状态点颜色
         var mine = null;

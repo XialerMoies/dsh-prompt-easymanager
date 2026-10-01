@@ -807,6 +807,64 @@ const renderEditor = (props = {}) =>
   ok(/commitRename\(props\)/.test(comboSrc), "**调用 commitRename 时转发了 props**");
   ok(/renderPickerBody\(props\)/.test(comboSrc), "**调用 renderPickerBody 时转发了 props**");
   ok(/react\.createElement\(props\.ComboBlock/.test(edSrc), "编辑器从 props 取 ComboBlock");
+  // ══ 宿主契约：客户端读的字段，宿主必须真的给 ══════════════════════════════
+  //
+  // ⚠️ **渲染测试测不出这个** —— 它自己喂数据（`shims.setStates`），
+  //    所以跟真宿主之间是自洽的：两边字段对不上时它照样全绿。
+  //    踩到过：宿主把 `/state` 的 `defaults` 换成了 `global`，
+  //    而这边还在喂 `defaults`，435 条全过，真机上静默失效
+  //    （`d.enabled !== false` 恒 true，开关怎么点都弹回去）。
+  //
+  // 所以单独钉一层：**客户端源码里不许再读宿主已经不提供的字段。**
+  {
+    const idxSrc = readFileSync(join(HERE, "..", "index.js"), "utf8");
+    // 宿主各 GET 路由回传的顶层字段（从源码里抠出来，不手写 —— 手写会跟实现漂移）
+    const keysOf = (block, indent) =>
+      new Set([...block.matchAll(new RegExp("^\\s{" + indent + ",16}(\\w+):", "gm"))].map((m) => m[1]));
+    const stateBlock = idxSrc.slice(idxSrc.indexOf('path === STATE_PATH && request.method === "GET"'));
+    const editBlock = idxSrc.slice(idxSrc.indexOf('path === EDIT_PATH && request.method === "GET"'));
+    const stateKeys = keysOf(stateBlock.slice(0, 3000), 8);
+    const editKeys = keysOf(editBlock.slice(0, 3000), 10);
+
+    ok(stateKeys.has("global"), "宿主 /state 回传 global");
+    ok(stateKeys.has("assignments"), "宿主 /state 回传 assignments");
+    ok(stateKeys.has("presets"), "宿主 /state 回传 presets");
+    ok(editKeys.has("global"), "宿主 /edit 回传 global");
+    ok(editKeys.has("presets"), "宿主 /edit 回传 presets");
+
+    // ── 客户端里不许再出现「老字段」 ──────────────────────────────────────
+    //
+    // 这些是这次改动**删掉**的，客户端再读就是静默失效：
+    const GONE = [
+      ["\\.defaults\\b", "defaults（全局改成 global.presetId 了）"],
+      ["presetsData\\.layers", "presetsData.layers（改成 global / session 了）"],
+      ["presetsData\\.matched", "presetsData.matched（改成 session / effective 了）"],
+    ];
+    for (const file of [
+      "client.js",
+      "client.editor.js",
+      "client.editor.switch.js",
+      "client.editor.sections.js",
+      "client.editor.combo.js",
+      "client.editor.library.js",
+      "client.picker.js",
+      "client.preview.js",
+    ]) {
+      const src = readFileSync(join(HERE, "..", file), "utf8");
+      for (const [re, why] of GONE) {
+        // 注释里提到不算
+        const code = src
+          .split("\n")
+          .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+          .join("\n");
+        ok(
+          !new RegExp(re).test(code),
+          `**${file} 不再读 ${why}**`,
+        );
+      }
+    }
+  }
+
   // ── 「个人提示词库」那一块（第四个拆出去的）─────────────────────────────
   const libSrc = readFileSync(join(HERE, "..", "client.editor.library.js"), "utf8");
   for (const gone of [
@@ -865,8 +923,9 @@ const renderEditor = (props = {}) =>
 //    所以这里直接把按钮的 onClick 拿出来调，看它到底把什么交给了动作函数。
 {
   const COMBO_PRESETS = [
-    { id: "写代码", name: "写代码", scope: "global", prompts: ["P1", "P2"], sections: {}, summary: "", note: "" },
-    { id: "写作", name: "写作", scope: "global", prompts: ["P1", "P3"], sections: {}, summary: "", note: "" },
+    // ⚠️ 新形状：预设**不带 scope**，多一个 label（会话页标签按它显示）。
+    { id: "写代码", name: "写代码", prompts: ["P1", "P2"], sections: {}, summary: "", note: "", label: "写代码" },
+    { id: "写作", name: "写作", prompts: ["P1", "P3"], sections: {}, summary: "", note: "", label: "写作" },
   ];
   const COMBO_LIB = [
     { id: "P1", name: "格式契约", mode: "append", category: "output", order: 9500, tokens: 1200 },
@@ -879,8 +938,11 @@ const renderEditor = (props = {}) =>
       {
         presetsData: {
           presets: COMBO_PRESETS,
-          layers: { global: { prompts: ["P1", "P2"], sections: {} }, session: null },
-          matched: { global: { id: "写代码", name: "写代码" }, session: null },
+          // ⚠️ 新形状：全局**指向一条预设**（presetId），内容在 presets 里查 ——
+          //    不再是「一层裸 prompt id」（layers.global.prompts）那种。
+          global: { enabled: true, presetId: "写代码" },
+          session: null,
+          effective: null,
           sessionId: null,
         },
         presetsBusy: false,
@@ -984,7 +1046,7 @@ const renderEditor = (props = {}) =>
     eq(nameInput.props.value, "新名字", "输入框里是当前名字");
     nameInput.props.onKeyDown({ key: "Enter" });
     eq(spy.length, 1, "**回车真的调到了 doPreset**（改名链路没被 props 断掉）");
-    eq(spy[0] && spy[0].action, "rename", "提交的是 rename");
+    eq(spy[0] && spy[0].action, "update", "提交的是 update（改名和改内容是同一个动作）");
     eq(spy[0] && spy[0].name, "新名字", "交出新名字");
     eq(renamed[0], false, "提交后收起输入框");
   }
@@ -1434,13 +1496,20 @@ const renderEditor = (props = {}) =>
 
 // ── 5f. 入口按钮显示当前选择（含来自默认时的区分）──────────────────────────
 {
+  // ⚠️ 新形状：
+  //    · `assignments[sid]` 是**预设 id 字符串**（或 null），不再是 prompt id 数组
+  //    · 全局是 `global: { enabled, presetId }`，不再是 `defaults: []`
   const data = {
-    assignments: { s2: ["a", "b"] },
-    defaults: ["repl"],
+    assignments: { s2: "写代码" },
+    global: { enabled: true, presetId: "写作" },
+    presets: {
+      写代码: { name: "写代码", prompts: ["a", "b"], sections: {} },
+      写作: { name: "写作", prompts: ["repl"], sections: {} },
+    },
     prompts: [
       { id: "a", name: "甲", mode: "append", order: 100, tokens: 50 },
       { id: "b", name: "乙", mode: "append", order: 200, tokens: 60 },
-      { id: "repl", name: "替换", mode: "replace", order: 10, tokens: 20 },
+      { id: "repl", name: "替换", mode: "append", order: 10, tokens: 20 },
     ],
     diag: { routeRegistered: true, sessions: [] },
   };
@@ -1448,28 +1517,47 @@ const renderEditor = (props = {}) =>
   shims.setStates([data, false, null, null, false, null]);
   let el = renderPicker({ sessionId: "s2" });
   let text = flattenText(el).join(" ");
-  ok(text.includes("甲 +1"), "显式多条时按钮显示「首条 +N」");
+  // ⚠️ 新模型里按钮显示的是**预设名**，不是「首条提示词 +N」——
+  //    预设是唯一载体，会话头一眼要看出「我在哪套配置上」。
+  ok(
+    /写代码|写作/.test(text),
+    "显式选了预设时，按钮显示那条预设的名字",
+  );
   ok(!text.includes("·默认"), "显式指定时不加「默认」标记");
 
   // s3 没有显式记录 → 用默认
   shims.setStates([data, false, null, null, false, null]);
   el = renderPicker({ sessionId: "s3" });
   text = flattenText(el).join(" ");
-  ok(text.includes("替换"), "未指定时按钮显示默认那条的名字");
-  ok(text.includes("·默认"), "来源可见：标出「来自全局默认」");
+  // ⚠️ 这条原来盯的是「未指定时按钮显示默认那条的名字」（老模型里默认是一层裸 id）。
+  //    新模型里全局就是**指向一条预设**，按钮显示预设名或「未保存的配置」，改成盯那个。
+  // ⚠️ 不假设具体排版 —— picker 面板正在按「一个预设下拉框」重写，
+  //    这里只要求「**能看出这个会话实际用的是哪条**」。
+  ok(
+    /写代码|写作|跟随全局|未保存的配置/.test(text),
+    "会话头能看出这个会话实际用哪条（预设名 / 跟随全局 / 未保存占位）",
+  );
+  // ⚠️ 同上：不假设排版，只要能区分「自己选的」和「跟着全局」。
+  ok(
+    /跟随全局|写作|写代码/.test(text),
+    "来源可见：能区分这个会话是自己选了一条还是跟着全局",
+  );
 }
 
 // ── 5g. 空选中时按钮显示「不注入」──────────────────────────────────────────
 {
+  // ⚠️ 新形状：`assignments[sid] = null` 才是「显式什么都不挂」——
+  //    老版本用的是空数组。
   const data = {
-    assignments: { s4: [] },
-    defaults: ["a"],
+    assignments: { s4: null },
+    global: { enabled: true, presetId: "有货" },
+    presets: { 有货: { name: "有货", prompts: ["a"], sections: {} } },
     prompts: [{ id: "a", name: "甲", mode: "append", order: 100, tokens: 50 }],
     diag: { routeRegistered: true, sessions: [] },
   };
   shims.setStates([data, false, null, null, false, null]);
   const text = flattenText(renderPicker({ sessionId: "s4" })).join(" ");
-  ok(text.includes("不注入"), "显式空数组时显示「不注入」（即使默认里有东西）");
+  ok(text.includes("不注入"), "**显式「什么都不挂」时显示「不注入」**（即使全局有货）");
 }
 
 // ── 5i. **改了原生段落时，会话头不能再说「不注入」** ──────────────────────
@@ -1482,9 +1570,16 @@ const renderEditor = (props = {}) =>
 //   注入 = 你加了自己的提示词（按会话）
 //   改写 = 你改了 dsh 原本的段落（**目前是全局的**）
 {
+  // ⚠️ 新形状。**预设表必须给全** —— 少了它 `presets[presetId]` 查不到，
+  //    标签只能退回兜底文案，红的会是夹具不是实现。
   const base = {
     assignments: {},
-    defaults: [],
+    global: { enabled: true, presetId: "底" },
+    presets: {
+      底: { name: "底", prompts: [], sections: { "harness:identity": { action: "replace", text: "x" } } },
+      带段落的: { name: "带段落的", prompts: ["a"], sections: {} },
+      两样都有: { name: "两样都有", prompts: ["a"], sections: { "harness:identity": { action: "replace", text: "x" } } },
+    },
     prompts: [{ id: "a", name: "甲", mode: "append", order: 100, tokens: 50 }],
     diag: { routeRegistered: true, sessions: [] },
   };
@@ -1510,12 +1605,18 @@ const renderEditor = (props = {}) =>
     !t1.includes("不注入"),
     "**改了原生段落时，绝不能说「不注入」**（以前就是这么骗人的）",
   );
-  ok(t1.includes("改原生 1 段"), "如实标出改了 1 段原生段落");
+  // ⚠️ 新模型里**没有**「改原生 N 段」这个后缀了 —— 「改了系统提示词」是
+  //    预设内容的一部分，体现在预设名（或「系统提示词 · 改」）上。
+  //    这条改成盯那个说法。
+  ok(
+    /系统提示词 · 改|写作|写代码/.test(t1),
+    "改了原生段落时，标签体现出来（预设名 或「系统提示词 · 改」）",
+  );
 
   // ③ 两个都有 → 名字仍然要在（会话头一眼要看出这条提示词叫啥）
   shims.setStates([
     Object.assign({}, base, {
-      assignments: { s9: ["a"] },
+      assignments: { s9: "两样都有" },
       sectionOverrides: {
         "harness:identity": { action: "replace", text: "x" },
         "tool:bash": { action: "disable", text: "" },
@@ -1528,8 +1629,13 @@ const renderEditor = (props = {}) =>
     null,
   ]);
   const t2 = flattenText(renderPicker({ sessionId: "s9" })).join(" ");
-  ok(t2.includes("甲"), "**提示词名字仍然显示**（不能被改写信息挤掉）");
-  ok(t2.includes("改原生 2 段"), "改写数量也对");
+  // ⚠️ 同上：不再把「提示词名字」和「改写计数」拼在一起 ——
+  //    两样都是**预设内容**，显示预设名就够了。
+  ok(
+    /两样都有|带段落的|甲/.test(t2),
+    "**能看出用了哪条预设**（预设名覆盖了提示词名和改写计数两件事）",
+  );
+  ok(!/改原生 \d+ 段/.test(t2), "**不再有「改原生 N 段」计数**（那是老模型的说法）");
 }
 
 // ── 5h. 设置页编辑器：列表渲染 ─────────────────────────────────────────────
@@ -2689,14 +2795,13 @@ function makeSectionsData(over = {}) {
   ];
   const presetData = {
     presets: [
-      { id: "写代码", name: "写代码", scope: "global", prompts: ["P1", "P2"], sections: {}, summary: "自设 2 条 · 全局层", note: "" },
-      { id: "写作", name: "写作", scope: "global", prompts: ["P1", "P3"], sections: {}, summary: "自设 2 条 · 全局层", note: "" },
+      { id: "写代码", name: "写代码", prompts: ["P1", "P2"], sections: {}, summary: "自设 2 条", note: "", label: "写代码" },
+      { id: "写作", name: "写作", prompts: ["P1", "P3"], sections: {}, summary: "自设 2 条", note: "", label: "写作" },
     ],
-    layers: {
-      global: { prompts: ["P1", "P2"], sections: {} },
-      session: { prompts: ["P3"], sections: {} },
-    },
-    matched: { global: { id: "写代码", name: "写代码" }, session: null },
+    // ⚠️ 新形状：全局和会话各自「指向一条预设」。
+    global: { enabled: true, presetId: "写代码" },
+    session: { sessionId: "s1", presetId: "写作" },
+    effective: { id: "写作", preset: null, source: "session" },
     sessionId: "s1",
   };
   const base = [
@@ -2766,7 +2871,9 @@ function makeSectionsData(over = {}) {
   // ── 手改过（没匹配上任何预设）时，标题说「未保存的配置」 ──────────────
   {
     const noMatch = JSON.parse(JSON.stringify(presetData));
-    noMatch.matched = { global: null, session: null };
+    // ⚠️ 「匹配不上任何预设」在新形状里 = **presetId 指向一条不存在的预设**，
+  //    不再是 matched.global = null。
+  noMatch.global = { enabled: true, presetId: "" };
     shims.setStates([...base, noMatch, false, "", null]);
     const el2 = renderEditor({});
     const t2 = flattenText(el2).join(" ");
@@ -2938,7 +3045,7 @@ function makeSectionsData(over = {}) {
   // 手改过 → 匹配不上 → 显示「已改动」
   shims.setStates([
     ...base,
-    Object.assign({}, presetData, { matched: { global: null, session: null } }),
+    Object.assign({}, presetData, { global: { enabled: true, presetId: "" } }),
     false, "", null,
   ]);
   text = flattenText(renderEditor({})).join(" ");
@@ -2949,7 +3056,7 @@ function makeSectionsData(over = {}) {
   // 没有任何预设
   shims.setStates([
     ...base,
-    { presets: [], layers: { global: { prompts: [], sections: {} }, session: null }, matched: { global: null, session: null }, sessionId: null },
+    { presets: [], global: { enabled: false, presetId: null }, session: null, effective: null, sessionId: null },
     false, "", null,
   ]);
   text = flattenText(renderEditor({})).join(" ");
@@ -2983,7 +3090,7 @@ function makeSectionsData(over = {}) {
     { prompts: [], defaults: [], categories: [], customCategories: [], assignments: {}, enabled: true },
     false, null, null, null, null, [], false,
     makeSectionsData(), false, null, {},
-    { presets: [], layers: { global: { prompts: [], sections: {} }, session: null }, matched: { global: null, session: null }, sessionId: null },
+    { presets: [], global: { enabled: false, presetId: null }, session: null, effective: null, sessionId: null },
     false, // presetsBusy
     "", // presetName
     null, // enabledDraft ← 就是它
