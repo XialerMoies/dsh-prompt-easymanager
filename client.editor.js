@@ -703,118 +703,6 @@ window.__ModuleLoader__.load({
          * 两件事，所以两块都留，但这一块不该铺得比卡片还大。
          */
         /**
-         * 卡片体的内容：勾选网格（已选的排前面）。
-         *
-         * ⚠️ **只吐内容，不自带卡片** —— 卡片是 renderCombo 那层的。
-         *    这里返回 CARD 的话，「预设名 / 下拉 / 保存」就只能摆在卡片外面，
-         *    变成三层（踩过：用户问「下拉框和保存不都说是卡片顶部了吗」）。
-         */
-        function renderPickerBody() {
-          // ⚠️ 只取 global 层。不带 ?session= 时后端**根本不返回** session 层，
-          //    原来那个三元的 session 分支永远取到 undefined（死代码，已删）。
-          var layer = presetsData.layers && presetsData.layers.global;
-          var activeIds = (layer && Array.isArray(layer.prompts) ? layer.prompts : []).slice();
-
-          var usable = [];
-          for (var pi = 0; pi < prompts.length; pi++) {
-            if (prompts[pi] && prompts[pi].mode !== "none") usable.push(prompts[pi]);
-          }
-          var byId = {};
-          for (var bi = 0; bi < usable.length; bi++) byId[usable[bi].id] = usable[bi];
-
-          // 生效的排前面（按真实注入顺序），其余在后
-          var ordered = [];
-          var picked = {};
-          for (var ai = 0; ai < activeIds.length; ai++) {
-            var hit = byId[activeIds[ai]];
-            if (hit) {
-              ordered.push(hit);
-              picked[hit.id] = true;
-            }
-          }
-          for (var ri = 0; ri < usable.length; ri++) {
-            if (!picked[usable[ri].id]) ordered.push(usable[ri]);
-          }
-
-          if (usable.length === 0) {
-            return react.createElement(
-              "div",
-              { style: STATUS_LINE },
-              "库里还没有可选的提示词 —— 在下面「新建」加一条。",
-            );
-          }
-
-          var rows = [];
-          for (var oi = 0; oi < ordered.length; oi++) {
-            (function (p) {
-              var on = !!picked[p.id];
-              rows.push(
-                react.createElement(
-                  "label",
-                  {
-                    key: p.id,
-                    title: p.description || p.id,
-                    style: {
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      minWidth: "0",
-                      cursor: presetsBusy ? "default" : "pointer",
-                    },
-                  },
-                  [
-                    react.createElement("input", {
-                      key: "cb",
-                      type: "checkbox",
-                      checked: on,
-                      disabled: presetsBusy,
-                      onChange: function () {
-                        var next = on
-                          ? activeIds.filter(function (x) { return x !== p.id; })
-                          : activeIds.concat([p.id]);
-                        setActivePrompts(next);
-                      },
-                    }),
-                    // 名字占满剩余宽度。
-                    // ⚠️ 这里原来还跟了 `order 950` 和 `1 tokens` —— 用户明确说
-                    //    不要。勾选清单只回答「哪几条生效」，order / token 数
-                    //    在下面「个人提示词」的卡片详情里本来就有。
-                    react.createElement(
-                      "span",
-                      {
-                        key: "n",
-                        style: Object.assign({}, CARD_TITLE, {
-                          flex: "1 1 auto",
-                          fontSize: "13px",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }),
-                      },
-                      p.name || p.id,
-                    ),
-                  ],
-                ),
-              );
-            })(ordered[oi]);
-          }
-
-          return react.createElement(
-            "div",
-            {
-              key: "grid",
-              style: {
-                display: "grid",
-                // 两列：库大了不至于拉成一条长龙；列宽自适应，窄屏自动收成一列
-                gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-                gap: "8px 18px",
-              },
-            },
-            rows,
-          );
-        }
-
-        /**
          * 总开关那一块 —— 组件在 client.editor.switch.js 里。
          *
          * 这里只负责把宿主给的 api 交给它、把「当前开没开」递进去。
@@ -868,246 +756,6 @@ window.__ModuleLoader__.load({
          *   · 以前把「选哪些」和「预设」拆成两张卡片、外加一排胶囊，
          *     同一件事在三处出现，用户问「你为什么要做到那么麻烦」。
          */
-        /**
-         * 提示词组合 —— **一整张卡片**：标题就是「你现在在哪套配置上」。
-         *
-         *     写代码 ✎  全局默认 · 所有会话   已选 2 条  [写代码 ▾] [保存] [↻]
-         *     ─────────────────────────────────────────────────────────────
-         *     ☐ 格式契约  order 9500  1200 tokens
-         *     ☐ 编码规范  order 950    300 tokens
-         *
-         * ⚠️ 头和体在**同一张卡片**里。这里踩了两次，都记下：
-         *    1) 外面单独一行标题、下面再套一张卡片 → 三层结构；
-         *    2) 下拉和保存留在卡片**外面** → 用户要的「卡片顶部」没做到
-         *       （他的原话：「下拉框和保存不都说是卡片顶部了吗」）。
-         */
-        function renderCombo() {
-          var matched = presetsData && presetsData.matched ? presetsData.matched.global : null;
-          var list = (presetsData && presetsData.presets) || [];
-          var currentId = matched ? matched.id : "";
-          var currentName = matched ? matched.name : "未保存的配置";
-          var bus = presetsBusy || !presetsData;
-
-          // ⚠️ 这里原来先算了一遍「已选 N 条 · 共 X tokens」给卡片头用。
-          //    用户说那些数字不需要，头里就不显示了 —— 计算也跟着删掉，
-          //    免得留一段没人读的死代码。
-
-          // 标题：预设名 + 改名铅笔；改名时就地变输入框
-          var titleNode;
-          if (renaming) {
-            titleNode = react.createElement("input", {
-              key: "rn",
-              type: "text",
-              className: "pm-input",
-              style: Object.assign({}, SELECT_SM, { maxWidth: "200px" }),
-              value: renameDraft,
-              autoFocus: true,
-              disabled: presetsBusy,
-              onChange: function (ev) {
-                setRenameDraft(ev.target.value);
-              },
-              onKeyDown: function (ev) {
-                if (ev.key === "Enter") commitRename();
-                if (ev.key === "Escape") setRenaming(false);
-              },
-              onBlur: function () {
-                setRenaming(false);
-              },
-            });
-          } else {
-            titleNode = react.createElement(
-              "span",
-              { key: "t", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto" }) },
-              currentName,
-            );
-          }
-
-          var head = react.createElement(
-            "div",
-            {
-              style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
-                flexDirection: "row",
-                minHeight: "0",
-                padding: "10px 14px",
-                gap: "8px",
-              }),
-            },
-            [
-              // ⚠️ 这里**只有「当前配置名」**，没有功能标题。
-              //
-              //    「提示词组合」是**区块标题**，在卡片外面、跟「个人提示词」
-              //    「系统提示词」同一套样式（见 renderCombo 末尾的 headLine）。
-              //    卡片头这一行的语义是「你现在在哪套配置上」——
-              //    塞个静态标题进来会把两件事混在一行。
-              //    （踩过两轮：先是把区块标题整个换成预设名 → 标题没了；
-              //      再把标题塞进卡片头 → 用户说「为什么功能标题在卡片顶部」。）
-              titleNode,
-              // 改名铅笔：只有「当前这套是一条真预设」时才有意义
-              currentId && !renaming
-                ? react.createElement(
-                    "button",
-                    {
-                      key: "pen",
-                      type: "button",
-                      className: "pm-btn",
-                      style: Object.assign({}, DETAIL_BTN, { padding: "1px 6px" }),
-                      disabled: bus,
-                      title: "改这套预设的名字",
-                      onClick: function () {
-                        setRenaming(true);
-                        setRenameDraft(currentName);
-                      },
-                    },
-                    "✎",
-                  )
-                : null,
-              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-              // ⚠️ 这里原来还有两样，都删了：
-              //    · 「全局默认 · 所有会话」——作用范围当时是因为这一块**没有**
-              //      功能标题，得靠它说明自己是什么；现在标题回来了，它是纯噪音；
-              //    · 「已选 N 条 · 共 X tokens」——勾选框自己会说，数字没人看。
-              // 预设下拉：换一套
-              react.createElement(
-                "select",
-                {
-                  key: "sel",
-                  className: "pm-input",
-                  style: SELECT_SM,
-                  disabled: bus,
-                  value: currentId,
-                  title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
-                  onChange: function (ev) {
-                    var id = ev.target.value;
-                    if (id) applyPreset(id);
-                  },
-                },
-                [
-                  // 手改过（没匹配上任何预设）时给个占位项，否则 select 会跳到第一条
-                  currentId
-                    ? null
-                    : react.createElement("option", { key: "__none", value: "" }, "未保存的配置"),
-                  list.length === 0
-                    ? react.createElement("option", { key: "__empty", value: "" }, "（还没有预设）")
-                    : null,
-                  list.map(function (p) {
-                    return react.createElement("option", { key: p.id, value: p.id }, p.name);
-                  }),
-                ],
-              ),
-              // 保存：当前这套有名字就覆盖它自己，没名字就存新的
-              react.createElement(
-                "button",
-                {
-                  key: "sav",
-                  type: "button",
-                  className: "pm-btn",
-                  style: bus ? BTN_BUSY : BTN,
-                  disabled: bus,
-                  title: currentId
-                    ? "把当前勾选覆盖到预设「" + currentName + "」"
-                    : "把当前勾选存成一套新预设",
-                  onClick: function () {
-                    savePreset();
-                  },
-                },
-                presetsBusy ? "保存中…" : "保存",
-              ),
-              react.createElement(
-                "button",
-                {
-                  key: "r",
-                  type: "button",
-                  className: "pm-btn",
-                  style: bus ? BTN_BUSY : BTN,
-                  disabled: bus,
-                  title: "重新从盘上读一遍",
-                  onClick: function () {
-                    loadPresets();
-                  },
-                },
-                "↻",
-              ),
-            ],
-          );
-
-          var bodyNode = react.createElement(
-            "div",
-            { key: "body", style: CARD_DETAILS },
-            presetsData
-              ? renderPickerBody()
-              : react.createElement("div", { style: STATUS_LINE }, "读取中…"),
-          );
-
-          // ⚠️ 区块标题在**卡片外面**，跟「个人提示词」「系统提示词」同一套样式
-          //    （CARD_HEADING + 同一组间距）。
-          //
-          //    这里的两次返工值得记：先是把区块标题整个换成预设名（标题没了），
-          //    再把标题塞进卡片头（用户说「为什么功能标题在卡片顶部」）。
-          //    结论：**区块标题归区块，卡片头归卡片头** ——
-          //    标题说明「这块干什么」，卡片头说明「当前在哪套配置上」。
-          var headLine = react.createElement(
-            "div",
-            { style: Object.assign({}, CARD_HEADING, { marginTop: "22px", marginBottom: "10px" }) },
-            [react.createElement("span", { key: "n", style: HEADING_TITLE }, "提示词组合")],
-          );
-
-          // ⚠️ 卡片是独立一层，**不带 marginTop**（标题那行已经给了间距）。
-          return react.createElement("div", null, [
-            headLine,
-            react.createElement(
-              "div",
-              { key: "card", style: CARD },
-              [head, bodyNode],
-            ),
-          ]);
-        }
-
-        /**
-         * 换一套：应用预设（把它的内容写回**全局层**）。
-         *
-         * ⚠️ 不需要传「写到哪一层」—— 应用是**写回预设自己那一层**
-         *    （预设里存着 scope），后端按预设的 scope 决定。面板这边
-         *    只能存全局预设，所以永远写全局层。
-         */
-        function applyPreset(id) {
-          doPreset({ action: "apply", id: id });
-        }
-
-        /**
-         * 保存当前勾选。
-         *
-         * ⚠️ 当前这套**已经有名字**时是**覆盖它自己**，不是又存一份同名的 ——
-         *    同名会让列表里堆一串「写代码」「写代码 2」「写代码 3」。
-         *    覆盖走同一条 save（同名 → presetId 命中同一条）。
-         */
-        function savePreset() {
-          var matched = presetsData && presetsData.matched ? presetsData.matched.global : null;
-          if (matched) {
-            doPreset({ action: "save", name: matched.name, scope: "global" });
-            return;
-          }
-          var name = presetName.trim();
-          if (!name) {
-            flash("先给它起个名字");
-            setRenaming(true);
-            setRenameDraft("");
-            return;
-          }
-          doPreset({ action: "save", name: name, scope: "global" }).then(function () {
-            setPresetName("");
-          });
-        }
-
-        /** 改名：把当前这条预设换个名字（id 跟着变，所以要跟着更新选中）。 */
-        function commitRename() {
-          var next = renameDraft.trim();
-          setRenaming(false);
-          if (!next) return;
-          var matched = presetsData && presetsData.matched ? presetsData.matched.global : null;
-          if (!matched || matched.name === next) return;
-          doPreset({ action: "rename", id: matched.id, name: next });
-        }
-
         /**
          * 「?」图标。
          *
@@ -1746,7 +1394,37 @@ window.__ModuleLoader__.load({
           //    从「管什么」到「管具体哪条」再到「dsh 自己的段落」，一层层收窄。
           body.push(react.createElement("div", { key: "master" }, renderMasterSwitch()));
           // 提示词组合 + 快速预设 —— 管「哪些生效」，在具体条目之前
-          body.push(react.createElement("div", { key: "combo" }, renderCombo()));
+          body.push(
+            react.createElement("div", { key: "combo" },
+              /**
+               * 「提示词组合 + 预设」整块 —— 渲染在 client.editor.combo.js 里。
+               *
+               * props 全从这边递：**状态和动作都留在本组件**（presetsData /
+               * presetsBusy / presetName / renaming / renameDraft，以及
+               * doPreset / applyPreset / savePreset / commitRename /
+               * setActivePrompts / loadPresets / flash）—— 它们跟 /defaults、
+               * /presets、/edit 几条接口的数据流缠在一起，而且测试按 hook 下标
+               * 塞状态，搬走会让按索引塞状态的地方全错位。这一块只搬了渲染。
+               */
+              props.ComboBlock
+                ? react.createElement(props.ComboBlock, {
+                    presetsData: presetsData,
+                    presetsBusy: presetsBusy,
+                    prompts: prompts,
+                    renaming: renaming,
+                    renameDraft: renameDraft,
+                    setRenaming: setRenaming,
+                    setRenameDraft: setRenameDraft,
+                    presetName: presetName,
+                    setPresetName: setPresetName,
+                    loadPresets: loadPresets,
+                    flash: flash,
+                    doPreset: doPreset,
+                    setActivePrompts: setActivePrompts,
+                  })
+                : null,
+            ),
+          );
           // 个人提示词：标题行 + 分类卡片，最后作为一个块推入（见下面那段说明）
           var cards = [];
           // 按分类分组显示。组内顺序：内置五类的固定次序 → 自定义分类按名字排。

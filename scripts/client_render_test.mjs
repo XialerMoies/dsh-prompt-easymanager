@@ -634,6 +634,10 @@ const EditorSlot = regs.find((r) => r.opts.name === "settings.section").Componen
       typeof seenEditorProps.SectionsBlock === "function",
       "**宿主把 SectionsBlock 递给了编辑器**（漏了系统提示词那一整块静默消失）",
     );
+    ok(
+      typeof seenEditorProps.ComboBlock === "function",
+      "**宿主把 ComboBlock 递给了编辑器**（漏了提示词组合那一整块静默消失）",
+    );
   }
 }
 ok(!!sandbox.lastApi, "宿主真的把 api 交给了 chunk");
@@ -689,10 +693,18 @@ ok(!!modSections, "拿得到 sections chunk 模块");
 const sectionsBox = modSections.create(strict.api);
 ok(typeof sectionsBox.SectionsBlock === "function", "sections chunk 导出了 SectionsBlock");
 
+// 「提示词组合 + 预设」那一块同理。
+sandbox.preload("client.editor.combo.js");
+const modCombo = sandbox.cache.get("dsh-prompt-manager/client.editor.combo.js");
+ok(!!modCombo, "拿得到 combo chunk 模块");
+const comboBox = modCombo.create(strict.api);
+ok(typeof comboBox.ComboBlock === "function", "combo chunk 导出了 ComboBlock");
+
 const EDITOR_PROPS = {
   MasterSwitch: switchBox.MasterSwitch,
   helpIcon: switchBox.helpIcon,
   SectionsBlock: sectionsBox.SectionsBlock,
+  ComboBlock: comboBox.ComboBlock,
 };
 
 // 预览面板：宿主是把整块跟面板**一起**拉好、随 props 交给面板的
@@ -762,8 +774,167 @@ const renderEditor = (props = {}) =>
   );
   ok(/react\.createElement\(props\.SectionsBlock/.test(edSrc), "编辑器从 props 取 SectionsBlock");
 
+  // ── 「提示词组合 + 预设」那一块（第三个拆出去的）─────────────────────
+  const comboSrc = readFileSync(join(HERE, "..", "client.editor.combo.js"), "utf8");
+  for (const gone of ["renderCombo", "renderPickerBody", "applyPreset", "savePreset", "commitRename"]) {
+    ok(
+      !new RegExp("function " + gone + "\\(").test(edSrc),
+      `编辑器里不再有 ${gone}（已搬进 combo chunk）`,
+    );
+  }
+  ok(/function renderCombo\(props\)/.test(comboSrc), "combo chunk 里 renderCombo 收 props");
+  // ⚠️ 内部函数也要接 props，**调用点还要转发** —— 这轮两个都漏过：
+  //    renderPickerBody 忘了接（props is not defined），
+  //    applyPreset/savePreset/commitRename 的调用点忘了转发（静默失效，测试全绿）。
+  ok(/function renderPickerBody\(props\)/.test(comboSrc), "renderPickerBody 也收 props");
+  ok(/function applyPreset\(id, props\)/.test(comboSrc), "applyPreset 收 props");
+  ok(/function savePreset\(props\)/.test(comboSrc), "savePreset 收 props");
+  ok(/function commitRename\(props\)/.test(comboSrc), "commitRename 收 props");
+  ok(/applyPreset\(id, props\)/.test(comboSrc), "**调用 applyPreset 时转发了 props**");
+  ok(/\bsavePreset\(props\)/.test(comboSrc), "**调用 savePreset 时转发了 props**");
+  ok(/commitRename\(props\)/.test(comboSrc), "**调用 commitRename 时转发了 props**");
+  ok(/renderPickerBody\(props\)/.test(comboSrc), "**调用 renderPickerBody 时转发了 props**");
+  ok(/react\.createElement\(props\.ComboBlock/.test(edSrc), "编辑器从 props 取 ComboBlock");
+
   // 方向二（渲染出来还在）见下面「总开关」那一节 —— 那里状态才设齐，
   // 放在这儿渲染出来的是「读取中…」，断言会假红。
+}
+
+// ── 3f. **真的点一下按钮**：回调链不能被 props 断掉 ─────────────────────────
+//
+// ⚠️ 这一条是补的，因为它暴露了一个**测试盲区**：
+//    在这之前，本文件对编辑器的所有断言都只读**静态渲染结果**
+//    （文案在不在、元素是什么类型、样式值对不对），**从来没有调用过任何
+//    onClick**。于是「回调里忘了把 props 传下去」这类错误一路绿灯 ——
+//    拆包时 `applyPreset(id)` / `savePreset()` / `commitRename()` 三处就是这么漏的
+//    （它们的签名改成了收 props，调用点却没转发），测试全绿。
+//
+//    所以这里直接把按钮的 onClick 拿出来调，看它到底把什么交给了动作函数。
+{
+  const COMBO_PRESETS = [
+    { id: "写代码", name: "写代码", scope: "global", prompts: ["P1", "P2"], sections: {}, summary: "", note: "" },
+    { id: "写作", name: "写作", scope: "global", prompts: ["P1", "P3"], sections: {}, summary: "", note: "" },
+  ];
+  const COMBO_LIB = [
+    { id: "P1", name: "格式契约", mode: "append", category: "output", order: 9500, tokens: 1200 },
+    { id: "P2", name: "编码规范", mode: "append", category: "domain", order: 950, tokens: 300 },
+    { id: "P3", name: "文风要求", mode: "append", category: "domain", order: 950, tokens: 100 },
+  ];
+  /** 组合块要的一整套 props（照编辑器递的那份写）。 */
+  const comboProps = (over = {}) =>
+    Object.assign(
+      {
+        presetsData: {
+          presets: COMBO_PRESETS,
+          layers: { global: { prompts: ["P1", "P2"], sections: {} }, session: null },
+          matched: { global: { id: "写代码", name: "写代码" }, session: null },
+          sessionId: null,
+        },
+        presetsBusy: false,
+        prompts: COMBO_LIB,
+        renaming: false,
+        renameDraft: "",
+        setRenaming: () => {},
+        setRenameDraft: () => {},
+        presetName: "",
+        setPresetName: () => {},
+        loadPresets: () => {},
+        flash: () => {},
+        doPreset: () => Promise.resolve({}),
+        setActivePrompts: () => {},
+      },
+      over,
+    );
+
+  const spy = [];
+  const el = shims.render(
+    comboBox.ComboBlock,
+    comboProps({
+      doPreset: (payload) => {
+        spy.push(payload);
+        return Promise.resolve({ ok: true, name: payload.name });
+      },
+    }),
+  );
+
+  // 「保存」按钮：当前匹配到预设 → 应该调 doPreset({action:"save", name: 当前预设名})
+  const saveBtn = findEl(el, (n) => n.type === "button" && flattenText(n).join("") === "保存");
+  ok(!!saveBtn, "找得到「保存」按钮");
+  if (saveBtn) {
+    saveBtn.props.onClick();
+    eq(spy.length, 1, "**点保存真的调到了 doPreset**（回调链没被 props 断掉）");
+    eq(spy[0] && spy[0].action, "save", "提交的是 save");
+    eq(spy[0] && spy[0].name, "写代码", "覆盖当前匹配到的那条预设");
+    eq(spy[0] && spy[0].scope, "global", "写全局层");
+  }
+
+  // 预设下拉：选另一条 → doPreset({action:"apply", id})
+  spy.length = 0;
+  const sel = findEl(el, (n) => n.type === "select");
+  ok(!!sel, "找得到预设下拉");
+  if (sel) {
+    sel.props.onChange({ target: { value: "写作" } });
+    eq(spy.length, 1, "**换预设真的调到了 doPreset**");
+    eq(spy[0] && spy[0].action, "apply", "提交的是 apply");
+    eq(spy[0] && spy[0].id, "写作", "应用的是下拉选中的那条");
+  }
+
+  // 「重新读取」→ loadPresets
+  const calls = [];
+  const el2 = shims.render(comboBox.ComboBlock, comboProps({ loadPresets: () => calls.push("reload") }));
+  const reloadBtn = findEl(el2, (n) => n.type === "button" && flattenText(n).join("") === "↻");
+  ok(!!reloadBtn, "找得到「↻」重新读取");
+  if (reloadBtn) {
+    reloadBtn.props.onClick();
+    eq(calls.length, 1, "**点 ↻ 真的调到了 loadPresets**");
+  }
+
+  // 勾选框 → setActivePrompts
+  const picked = [];
+  const el3 = shims.render(
+    comboBox.ComboBlock,
+    comboProps({ setActivePrompts: (ids) => picked.push(ids) }),
+  );
+  const cb = findEl(el3, (n) => n.type === "input" && n.props && n.props.type === "checkbox");
+  ok(!!cb, "找得到勾选框");
+  if (cb) {
+    cb.props.onChange();
+    eq(picked.length, 1, "**勾一下真的调到了 setActivePrompts**");
+    ok(Array.isArray(picked[0]), "交出的是 id 数组：" + JSON.stringify(picked[0]));
+  }
+
+  // 改名：点 ✎ → 标题变输入框 → 回车提交 → doPreset({action:"rename"})
+  //
+  // ⚠️ 这一段是补的：上面那几条（保存/下拉/↻/勾选）**覆盖不到 commitRename** ——
+  //    注入验证时发现「commitRename 忘了转发 props」照样全绿。
+  //    改名这条链路要先让 `renaming` 为真才会出现输入框，所以单独渲染一次。
+  spy.length = 0;
+  const renamed = [];
+  const elRename = shims.render(
+    comboBox.ComboBlock,
+    comboProps({
+      renaming: true,
+      renameDraft: "新名字",
+      doPreset: (payload) => {
+        spy.push(payload);
+        return Promise.resolve({ ok: true, id: "新名字", name: "新名字" });
+      },
+      setRenaming: (v) => renamed.push(v),
+    }),
+  );
+  const nameInput = findEl(
+    elRename,
+    (n) => n.type === "input" && n.props && n.props.type === "text",
+  );
+  ok(!!nameInput, "改名时标题位置是个输入框");
+  if (nameInput) {
+    eq(nameInput.props.value, "新名字", "输入框里是当前名字");
+    nameInput.props.onKeyDown({ key: "Enter" });
+    eq(spy.length, 1, "**回车真的调到了 doPreset**（改名链路没被 props 断掉）");
+    eq(spy[0] && spy[0].action, "rename", "提交的是 rename");
+    eq(spy[0] && spy[0].name, "新名字", "交出新名字");
+    eq(renamed[0], false, "提交后收起输入框");
+  }
 }
 
 // ── 3d. 「按索引塞状态」这件事必须有个护栏 ─────────────────────────────────
