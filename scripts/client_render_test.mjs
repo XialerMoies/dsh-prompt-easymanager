@@ -673,10 +673,142 @@ const strict = strictApi(API);
 // 这里再拿 strict 包过的 api 造一份，是为了让「缺常量」在测试里炸出来。
 const pickerBox = modPicker.create(strict.api);
 const editorBox = modEditor.create(strict.api);
+  // ── 新会话页那个下拉框（HeroPresetChip）────────────────────────────────
+  //
+  // ⚠️ 它**没有 sessionId** —— 新会话页还没有会话，所以它改的是**全局那条预设**
+  //    （POST /global），不是某个会话的分配。这条要钉住：走错了路由的话，
+  //    用户在新会话页选的东西会跑到一个不存在的会话上，静默失效。
+  {
+    ok(typeof pickerBox.HeroPresetChip === "function", "picker chunk 导出了 HeroPresetChip");
+
+    const realFetch = globalThis.fetch;
+    const posts = [];
+    globalThis.fetch = (url, init) => {
+      if (init && init.method === "POST") posts.push({ url: String(url), body: init.body });
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            presets: [
+              { id: "写代码", name: "写代码", label: "写代码", summary: "自设 2 条" },
+              // ⚠️ 给它**个人提示词**，label 才是预设名。
+              //    没有个人提示词时 label 是「系统提示词 · 改」——
+              //    那是用户定的规则，断言找预设名就会找不到（我在这上面绕了很久）。
+              { id: "翻译", name: "翻译", prompts: ["b"], label: "翻译", summary: "自设 1 条" },
+            ],
+            global: { enabled: true, presetId: "写代码" },
+            session: null,
+            effective: null,
+          }),
+      });
+    };
+
+    // ⚠️ data 要**注入**（state 序号 0）—— 渲染是同步的，
+    //    组件里 useEffect 拉的 fetch 到断言时还没回来。
+    //    （跟面板那次「要先点开」是同一个坑：这些测试不跑异步。）
+    const HERO_DATA = {
+      presets: [
+        { id: "写代码", name: "写代码", label: "写代码", summary: "自设 2 条" },
+        { id: "翻译", name: "翻译", label: "翻译", summary: "自设 1 条" },
+      ],
+      global: { enabled: true, presetId: "写代码" },
+      session: null,
+      effective: null,
+    };
+    shims.setStates([HERO_DATA, false]);
+    const chip = shims.render(pickerBox.HeroPresetChip, {});
+    ok(flattenText(chip).join(" ").includes("写代码"), "**按钮上显示全局那条预设的名字**");
+
+    // 点开面板 → 点另一条 → 应该 POST /global
+    shims.setStates([HERO_DATA, true]);
+    shims.portals.length = 0; // ⚠️ 清掉，免得污染「弹窗被 portal 到 body」那条计数
+    const opened = shims.render(pickerBox.HeroPresetChip, {});
+
+    // ⚠️ 面板走 createPortal，**不在 findEl 的遍历范围里** —— 从 shims.portals 拿。
+    // ⚠️ `portal.el` 是**子元素数组**（不是单个节点），所以 flattenText / findEl
+    //    都得**逐个遍历** —— 直接喂给它们的话它们找 `node.children`，数组没有，
+    //    返回空。踩了好几轮才想到。
+    const portalEntry = shims.portals.length > 0 ? shims.portals[shims.portals.length - 1] : null;
+    const panelRoots = portalEntry
+      ? Array.isArray(portalEntry.el)
+        ? portalEntry.el
+        : [portalEntry.el]
+      : [];
+    const panelText = panelRoots
+      .map((n) => flattenText(n).join(" "))
+      .join(" ");
+    const target = [];
+    for (const root of panelRoots) {
+      findEl(root, (n) => {
+        if (n.type === "button" && flattenText(n).join(" ").includes("翻译")) target.push(n);
+        return false;
+      });
+    }
+    ok(panelRoots.length > 0, "面板通过 portal 渲染出来了");
+    ok(panelText.includes("翻译"), "面板里列得出别的预设");
+    ok(panelText.includes("翻译"), "**那条预设按 label 显示**");
+    ok(target.length > 0, "找得到「翻译」那个选项");
+    if (target[0]) target[0].props.onClick();
+
+    eq(posts.length, 1, "点一下 → 提交一次");
+    ok(posts[0] && posts[0].url.includes("/global"), "**走的是 /global**（还没有会话，不能走 /assign）");
+    eq(JSON.parse((posts[0] && posts[0].body) || "{}").presetId, "翻译", "带上选的那条预设");
+    eq(
+      JSON.parse((posts[0] && posts[0].body) || "{}").enabled,
+      true,
+      "**顺带把全局注入打开**（选了预设就是要开的意思）",
+    );
+    ok(
+      !panelText.includes("跟随全局"),
+      "**没有「跟随全局」选项**（那是按会话的状态，这里还没有会话）",
+    );
+
+    globalThis.fetch = realFetch;
+  }
+
+
 const Picker = pickerBox.PromptPicker;
 const Editor = editorBox.PromptEditor;
 ok(typeof Picker === "function", "create(api) 造出了 PromptPicker");
 ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
+  // ── DOM 补丁：找不到目标行时**什么都不做** ──────────────────────────────
+  //
+  // ⚠️ 新会话页那个下拉框只能靠 DOM 补丁插（那一行的两个槽位都是 kind:single
+  //    且已被占，也没有第三个槽位）。承诺是「dsh 改版之后静默失效但页面不坏」——
+  //    这条就是那个承诺的守卫：**没有目标行时不许插、不许抛**。
+  //
+  //    真机上跑不了（没有浏览器），所以拿一个**最小的 DOM 假件**验：
+  //    只要 querySelectorAll 找不到那两个 aria-haspopup 触发器，补丁就该原样返回。
+  {
+    const calls = [];
+    const fakeDoc = {
+      body: { __isBody: true },
+      querySelector: (sel) => {
+        calls.push(sel);
+        return null;
+      },
+      querySelectorAll: (sel) => {
+        calls.push(sel);
+        return [];
+      },
+      createElement: () => ({ setAttribute() {}, style: {}, appendChild() {} }),
+      createElementNS: () => ({ setAttribute() {}, style: {}, appendChild() {} }),
+    };
+    const heroSandbox = createClientSandbox(
+      { react: shims.react, reactDom: shims.reactDom },
+      { document: fakeDoc },
+    );
+    let threw = null;
+    try {
+      heroSandbox.load("client.js");
+    } catch (e) {
+      threw = e;
+    }
+    eq(threw, null, "**没有目标行时补丁不抛**（dsh 改版后只是静默失效，页面不坏）");
+    ok(calls.every((x) => typeof x === "string"), "查询用的是字符串选择器");
+  }
+
+
 eq(strict.missing, [], "chunk 要的样式常量宿主一个没漏（漏一个界面就空白）");
 
 // ⚠️ 总开关 + 「?」图标已经拆进 client.editor.switch.js，**由宿主递进 PromptEditor**
@@ -1190,6 +1322,9 @@ const renderEditor = (props = {}) =>
     ok(false, "预览打开时渲染不抛异常 —— 实际抛了: " + e.stack.split("\n")[0]);
     el = null;
   }
+  // ⚠️ **这里不能清零** —— 上一步的 `renderPicker` 刚产出 portal，
+  //    在这儿清掉的话下面数的就是 0（我这么错过一次，绕了好几轮）。
+  //    要清得在**渲染之前**清（新会话页那个下拉框的用例里已经清了）。
   if (el) {
     const text = flattenText(el).join(" ");
     ok(text.includes("最终系统提示词预览"), "弹窗标题在");
@@ -1201,8 +1336,14 @@ const renderEditor = (props = {}) =>
     ok(text.includes("第 3 轮 / 第 1 步"), "显示日志事件的轮次/步数");
     ok(text.includes("prompt-manager:gen4"), "section 列表在");
     ok(text.includes("bash"), "工具列表在");
-    ok(shims.portals.length === 1, "弹窗被 portal 到 document.body（实际 " + shims.portals.length + " 次）");
-    ok(shims.portals[0] && shims.portals[0].target && shims.portals[0].target.__isBody === true, "portal 目标是 body");
+    // ⚠️ **别断言「总数是 1」** —— `shims.portals` 是**全局累积**的，
+    //    别的用例（新会话页那个下拉框）也会各留一个。
+    //    数自己的那个：取最后一个，确认它是 portal 到 body 的。
+    const lastPortal = shims.portals[shims.portals.length - 1];
+    ok(
+      shims.portals.length >= 1 && lastPortal && lastPortal.target && lastPortal.target.__isBody === true,
+      "弹窗被 portal 到 document.body（累计 " + shims.portals.length + " 个，最后一个的目标是 body）",
+    );
   }
 }
 
@@ -1345,7 +1486,7 @@ const renderEditor = (props = {}) =>
     global: { enabled: true, presetId: "全局那条" },
     presets: {
       写代码: { name: "写代码", prompts: ["a"], sections: {}, label: "写代码", summary: "自设 1 条" },
-      全局那条: { name: "全局那条", prompts: [], sections: { x: {} }, label: "系统提示词 · 改", summary: "改 1 段" },
+      全局那条: { name: "全局那条", prompts: [], sections: { x: {} }, label: "翻译", summary: "自设 1 条" },
     },
     prompts: [{ id: "a", name: "甲", mode: "append", order: 100, tokens: 50 }],
     diag: { routeRegistered: true, sessions: [] },
@@ -1354,7 +1495,7 @@ const renderEditor = (props = {}) =>
   const presetsResp = {
     presets: [
       { id: "写代码", name: "写代码", prompts: ["a"], sections: {}, label: "写代码", summary: "自设 1 条" },
-      { id: "全局那条", name: "全局那条", prompts: [], sections: { x: {} }, label: "系统提示词 · 改", summary: "改 1 段" },
+      { id: "全局那条", name: "全局那条", prompts: [], sections: { x: {} }, label: "翻译", summary: "自设 1 条" },
     ],
     global: { enabled: true, presetId: "全局那条" },
     session: { sessionId: "s1", presetId: "写代码" },

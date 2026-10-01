@@ -66,6 +66,7 @@ window.__ModuleLoader__.load({
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
+      var ROUTE_GLOBAL = api.route.ROUTE_GLOBAL;
       var ROUTE_SECTIONS = api.route.ROUTE_SECTIONS;
       var ROUTE_STATE = api.route.ROUTE_STATE;
       var ROUTE_ASSIGN = api.route.ROUTE_ASSIGN;
@@ -416,6 +417,182 @@ window.__ModuleLoader__.load({
             /* 失败时不动面板，让用户重试 */
           });
       }
+      /**
+       * 新会话页那一行里的小控件：一个按钮 + 点开的面板。
+       *
+       * ⚠️ **没有 sessionId** —— 新会话页还没有会话。所以它改的是
+       *    **全局那条预设**（`POST /global`），不是某个会话的分配。
+       *    真按会话存要 dsh 给「会话创建」钩子，而 hero 的渲染上下文里
+       *    连 sessionId 都没有（查过槽位表）。
+       */
+      function HeroPresetChip(props) {
+        var st = react.useState(null);
+        var data = st[0];
+        var setData = st[1];
+        var openSt = react.useState(false);
+        var open = openSt[0];
+        var setOpen = openSt[1];
+
+        var load = react.useCallback(function () {
+          return fetch(ROUTE_PRESETS)
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .catch(function () { return null; })
+            .then(function (d) {
+              setData(d);
+              return null;
+            });
+        }, []);
+
+        react.useEffect(function () {
+          var alive = true;
+          load().then(function () { return alive; });
+          return function () {
+            alive = false;
+          };
+        }, [load]);
+
+        var label = "提示词组合";
+        if (data && data.global && typeof data.global.presetId === "string") {
+          var list = Array.isArray(data.presets) ? data.presets : [];
+          for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].id === data.global.presetId) label = list[i].label || list[i].name;
+          }
+        }
+
+        return react.createElement(
+          react.Fragment,
+          null,
+          [
+            react.createElement(
+              "button",
+              {
+                key: "b",
+                type: "button",
+                className: "pm-btn",
+                style: SELECT_SM,
+                "aria-haspopup": "menu",
+                "aria-expanded": open ? "true" : "false",
+                title: "这个新会话用哪套提示词组合",
+                onClick: function () {
+                  setOpen(true);
+                },
+              },
+              label + " ▾",
+            ),
+            open
+              ? react.createElement(HeroPresetPanel, {
+                  data: data,
+                  onClose: function () {
+                    setOpen(false);
+                  },
+                  onApplied: load,
+                })
+              : null,
+          ],
+        );
+      }
+
+      /**
+       * 新会话页的面板：**只列全局能用的选项**。
+       *
+       * ⚠️ 跟会话页那个面板的区别：这边**没有**「跟随全局」和「系统提示词」
+       *    那两个选项 —— 它们是**按会话**的状态，而这里还没有会话。
+       *    硬塞进来的话用户会以为「给这个新会话选了原生」，其实改的是全局。
+       */
+      function HeroPresetPanel(props) {
+        var errSt = react.useState(null);
+        var err = errSt[0];
+        var setErr = errSt[1];
+
+        function pick(o) {
+          setErr(null);
+          return fetch(ROUTE_GLOBAL, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            // ⚠️ 顺带把全局注入打开 —— 用户定的规则是「要开就得先选预设」，
+            //    反过来「选了预设」也就是要开的意思。
+            body: JSON.stringify({ presetId: o.id, enabled: true }),
+          })
+            .then(function (r) {
+              return r.json().then(function (j) {
+                if (!r.ok) throw new Error((j && j.error) || "HTTP " + r.status);
+                return j;
+              });
+            })
+            .then(function () {
+              props.onApplied && props.onApplied();
+              props.onClose && props.onClose();
+              return null;
+            })
+            .catch(function (e) {
+              setErr((e && e.message) || String(e));
+            });
+        }
+
+        var d = props.data;
+        var g = (d && d.global) || {};
+        var list = d && Array.isArray(d.presets) ? d.presets : [];
+        var rows = [
+          react.createElement(
+            "div",
+            { key: "h", style: PANEL_HEAD },
+            [
+              react.createElement("span", { key: "t", style: CARD_TITLE }, "新会话用哪套"),
+              react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
+              react.createElement(
+                "button",
+                { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: props.onClose },
+                "关闭",
+              ),
+            ],
+          ),
+        ];
+        if (err) rows.push(react.createElement("div", { key: "e", style: MSG_ERR }, err));
+        for (var i = 0; i < list.length; i++) {
+          var p = list[i];
+          if (!p) continue;
+          var active = g.presetId === p.id;
+          rows.push(
+            react.createElement(
+              "button",
+              {
+                key: "o-" + p.id,
+                type: "button",
+                className: "pm-btn",
+                style: Object.assign({}, ROW, active ? ROW_ACTIVE : null),
+                "aria-current": active ? "true" : undefined,
+                onClick: (function (oo, isActive) {
+                  return function () {
+                    if (isActive) {
+                      props.onClose && props.onClose();
+                      return;
+                    }
+                    pick(oo);
+                  };
+                })(p, active),
+              },
+              [
+                react.createElement("span", { key: "g", style: ROW_MARK }, active ? "✓" : ""),
+                react.createElement("span", { key: "l", style: CARD_TITLE }, p.label || p.name),
+                p.summary ? react.createElement("span", { key: "s", style: MUTED }, p.summary) : null,
+              ],
+            ),
+          );
+        }
+        if (list.length === 0) {
+          rows.push(
+            react.createElement(
+              "div",
+              { key: "none", style: MUTED },
+              "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
+            ),
+          );
+        }
+        return react.createElement(Overlay, { narrow: true, onClose: props.onClose }, [
+          react.createElement("div", { key: "b", style: PANEL_BODY }, rows),
+        ]);
+      }
+
       function PromptPicker(props) {
         var sessionId = props && props.sessionId;
 
@@ -806,6 +983,7 @@ window.__ModuleLoader__.load({
 
       return {
         PresetDropdown: PresetDropdown,
+          HeroPresetChip: HeroPresetChip,
         PromptPicker: PromptPicker,
       };
     }

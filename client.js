@@ -28,6 +28,12 @@
     const ROUTE_EDIT = "/api/prompt-manager/edit";
     const ROUTE_SECTIONS = "/api/prompt-manager/sections";
     const ROUTE_PRESETS = "/api/prompt-manager/presets";
+/**
+ * 全局那份配置（开关 + 指向哪条预设）。
+ *
+ * ⚠️ 新会话页那个下拉框改的是**全局**（那边还没有会话），所以要用它。
+ */
+const ROUTE_GLOBAL = "/api/prompt-manager/global";
     /** 原生段落的中文显示名。⚠️ **只用于显示**，存储/匹配一律用原始 name。 */
     const SECTION_LABELS = {
       "harness:identity": "harness 身份",
@@ -916,6 +922,7 @@
             ROUTE_EDIT: ROUTE_EDIT,
             ROUTE_SECTIONS: ROUTE_SECTIONS,
             ROUTE_PRESETS: ROUTE_PRESETS,
+          ROUTE_GLOBAL: ROUTE_GLOBAL,
           },
         };
 
@@ -1060,6 +1067,94 @@
           }
         }
 
+        /**
+         * 新会话页（hero）那一行插一个「提示词组合」下拉框。
+         *
+         * ⚠️ **只能 DOM 补丁** —— 那一行的两个槽位都是 `kind: "single"`
+         *    且已被占，抢会抛错；也没有第三个槽位。详见上面那段说明。
+         *
+         * ⚠️ 找不到目标就**什么都不做** —— 不抛错、不插半个控件。
+         *    dsh 改版之后这个补丁会静默失效，但页面照常能用。
+         */
+        function patchHeroPreset() {
+          if (typeof document === "undefined" || !document.body) return;
+          var KEY = "pmHeroPresetDone";
+          var HOST_ATTR = "data-pm-hero-preset";
+
+          /** 找到「工作区 / agent 预设」那一行。 */
+          function rowOf() {
+            try {
+              // ⚠️ 不靠 CSS module 的哈希 class（会变），靠**结构**：
+              //    那一行里会有 agent 预设那个槽位渲染出来的东西。
+              //    实测它是个带 aria-haspopup 的按钮（下拉触发器）。
+              var btns = document.querySelectorAll("button[aria-haspopup='menu']");
+              for (var i = 0; i < btns.length; i++) {
+                var row = btns[i].parentElement && btns[i].parentElement.parentElement;
+                if (!row) continue;
+                // 那一行里应该已经有 2 个这样的触发器（工作区 + agent 预设）
+                if (row.querySelectorAll("button[aria-haspopup='menu']").length >= 2) return row;
+              }
+            } catch {
+              /* 结构变了就算了 */
+            }
+            return null;
+          }
+
+          function apply() {
+            try {
+              if (document.querySelector("[" + HOST_ATTR + "]")) return true; // 已经插过
+              var row = rowOf();
+              if (!row) return false;
+              var box = document.createElement("span");
+              box.setAttribute(HOST_ATTR, "1");
+              box.style.display = "inline-flex";
+              box.style.alignItems = "center";
+              row.appendChild(box);
+              mountHeroPicker(box);
+              return true;
+            } catch {
+              /* 补丁失败不影响功能 */
+            }
+            return false;
+          }
+
+          apply();
+          try {
+            var obs = new MutationObserver(function () {
+              apply();
+            });
+            obs.observe(document.body, { childList: true, subtree: true });
+          } catch {
+            /* 没有 MutationObserver 就只生效一次 */
+          }
+        }
+
+        /**
+         * 把 picker chunk 的面板挂进那个容器。
+         *
+         * ⚠️ 用 **portal** 把它挂进我们自己的容器：面板内部走的是
+         *    `reactDom.createPortal(..., document.body)`，所以它本来就
+         *    不依赖 React 树的位置 —— 从这儿挂进去跟从槽位挂进去一样。
+         *
+         * ⚠️ `sessionId` 传 **undefined** —— 新会话页还没有会话，
+         *    面板会去改**全局那条预设**（见上面那段说明）。
+         */
+        function mountHeroPicker(box) {
+          require.async("./client.picker.js").then(function (mod) {
+            try {
+              var box2 = mod.create(CHUNK_API);
+              if (typeof box2.installStyles === "function") box2.installStyles();
+              reactDom.render(
+                react.createElement(box2.HeroPresetChip, { container: box }),
+                box,
+              );
+            } catch (err) {
+              console.error("[" + PLUGIN_ID + "] hero 下拉框挂载失败：" + (err && err.message));
+            }
+            return null;
+          });
+        }
+
         function apply(ctx) {
           // 会话头部：每个会话的多选器
           ctx.slots.inject("conversation.session.header.actions", () =>
@@ -1090,6 +1185,8 @@
           // 侧边栏那一项的图标：dsh 只给白名单 id 配图标，我们落到了兜底齿轮
           // （原因见 patchNavIcon 上面那段）。渲染后替换掉。
           patchNavIcon();
+          // 新会话页那一行：在工作区 / agent 预设之后插我们的下拉框
+          patchHeroPreset();
         }
 
         exports.name = "dsh-prompt-manager";
