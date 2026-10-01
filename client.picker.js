@@ -246,16 +246,19 @@ window.__ModuleLoader__.load({
                 hoverId: hoverId,
                 setHoverId: setHoverId,
                 // ⚠️ **面板自己包好的「点完了」回调** ——
-                //    这三件事都得在**面板的闭包**里做，模块级的 `pickOption`
-                //    看不到 `tick` / `setTick` / `onClose`。
+                //    这几件事都得在**面板的闭包**里做，模块级的 `pickOption`
+                //    看不到 `tick` / `setTick`。
                 //
                 //    （踩过：我把 setTick 写进了 pickOption，ReferenceError 被
                 //      里面的 catch 吞了 —— 表现就是「切了但要关掉浮窗才看到」。）
                 onDone: function () {
+                  // 刷新**面板自己那份** /presets —— 这样勾会立刻挪到新选项上，
+                  // 而**面板保持打开**。
                   setTick(tick + 1);
-                  // ⚠️ 选完自动关 —— 用户要的是「点一下就生效」，
-                  //    留着浮窗反而让人以为没生效。
-                  if (onClose) onClose();
+                  // ⚠️ **不要自动关**（用户明确要求）：
+                  //    「为什么一切换就退出选择框而不是和初始会话页的一样
+                  //      **自由切换自主关闭**」
+                  //    —— 留在这儿才能连着点几个、比较一下，自己决定什么时候关。
                 },
               }),
             ),
@@ -670,7 +673,9 @@ window.__ModuleLoader__.load({
             })
             .then(function () {
               props.onApplied && props.onApplied();
-              props.onClose && props.onClose();
+              // ⚠️ **不要自动关** —— 跟会话页那个面板保持一致
+              //    （用户要求「自由切换自主关闭」，两边都该是这样）。
+              //    面板自己那份数据由 `onApplied`（外面的 load）刷新。
               return null;
             })
             .catch(function (e) {
