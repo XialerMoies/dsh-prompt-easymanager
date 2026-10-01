@@ -174,6 +174,8 @@ const readme = readFileSync(at("README.md"), "utf8");
     "section-overrides-design.md",
     // 权限/依赖/失败边界 —— 给「装之前想确认安全」的用户，也给上架审核
     "permissions.md",
+    // 安装与更新 —— 装之前要看，更新时也要看
+    "install.md",
   ]);
   const top = readdirSync(at("docs"), { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith(".md"))

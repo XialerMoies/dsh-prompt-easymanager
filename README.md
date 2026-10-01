@@ -39,6 +39,8 @@ dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.3
 `dsh-prompt-easymanager` 发布时，新包被 npm 扣在「暂存待批」的状态里，
 CLI 看不到也没法批。GitHub 直装不受影响。
 
+**装不上、要更新、要卸载？** 见 **[docs/install.md](docs/install.md)**。
+
 **装之前想确认它碰什么？** 见 **[docs/permissions.md](docs/permissions.md)** ——
 读写哪些文件、连什么网络、坏了会怎样、卸载后留什么。摘要：
 **零运行时依赖、零外部服务、不执行任何命令、不碰任何凭据。**

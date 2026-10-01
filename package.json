@@ -49,6 +49,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "docs/permissions.md",
+    "docs/install.md",
     "docs/system-prompt.md",
     "docs/section-overrides-design.md"
   ],
