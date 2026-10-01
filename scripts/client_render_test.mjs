@@ -3054,6 +3054,61 @@ function makeSectionsData(over = {}) {
     for (const m of codeOnly.matchAll(/--dsh-[\w-]+/g)) used.add(m[0]);
     eq([...used], [], "**不许用 `--dsh-*` 这种不存在的变量**（正确命名空间是 `--dsw-alias-*`）");
 
+    // ── ③ 面板背景必须是**弹层语义**的变量 ────────────────────────────
+    //
+    // ⚠️ 这条是三轮真机问题里**最难过的那一条**：
+    //
+    //    `--dsw-alias-bg-overlay` —— 变量**存在**、明暗也**不同**，
+    //    但它是个**遮罩层**色（浮层背后压暗那一层）。深色下它是中灰
+    //    #61666b，拿它当面板背景会把面板糊成一片灰。
+    //
+    //    前两条守卫（变量存在 / 兜底跟主题走）**都拦不住它** ——
+    //    所以得把「哪些变量能当弹层背景」写成白名单。
+    //
+    //    dsh 自己的弹层（`MenuSurface.module.css`）用的是
+    //    `--dsw-menu-surface-fill` + `--dsw-menu-backdrop-filter`。
+    {
+      const OK_BG = [
+        "--dsw-specific-menu",
+        "--dsw-menu-surface-fill",
+        "--dsw-alias-settings-card-fill",
+        "--dsw-alias-bg-module-platform",
+        "--dsw-alias-bg-layer-2",
+      ];
+      const OK_MASK = ["--dsw-alias-bg-mask-1"];
+      const panels2 = [...src.matchAll(/var PANEL = \{[\s\S]*?\n {4,10}\};/g)].map((m) => m[0]);
+      for (const [i, one] of panels2.entries()) {
+        const m = /background:\s*"var\((--dsw-[a-z0-9-]+)/.exec(one);
+        ok(!!m, `面板背景用主题变量（第 ${i + 1} 份）`);
+        if (m) {
+          ok(
+            OK_BG.includes(m[1]),
+            `**面板背景是「面」语义的变量**（第 ${i + 1} 份实际用了 \`${m[1]}\`）—— ` +
+              "遮罩层类（如 --dsw-alias-bg-overlay）深色下是中灰，会把面板糊成一片灰",
+          );
+        }
+      }
+      // 遮罩层那一个单独网开一面：它**就该**用遮罩色
+      ok(
+        OK_MASK.some((k) => src.includes(k)),
+        "遮罩层用遮罩色（--dsw-alias-bg-mask-1）",
+      );
+    }
+    //
+    // ── ④ 兜底不许是 Canvas / CanvasText ──────────────────────────────
+    //
+    // ⚠️ `Canvas` 在浅色下是白、深色下**也常是白** —— 跟主题不同步。
+    //    兜底要么用同族的 dsw 变量，要么用灰度（灰度在两边都不突兀）。
+    {
+      const sysColors = [...codeOnly.matchAll(/var\(--dsw-[a-z0-9-]+,\s*(Canvas|CanvasText|ButtonFace|Field)\b/g)].map(
+        (m) => m[1],
+      );
+      eq(
+        sysColors,
+        [],
+        "**兜底不许用 Canvas / CanvasText 这类系统色**（浅色下是白，深色下也常是白）",
+      );
+    }
     // ── 硬编码灰度：必须在 var(--dsw-…) 的兜底位里 ────────────────────
     //
     // ⚠️ 用户报过：面板的 borderBottom 写的是纯 rgba(128,128,128,.25)，
@@ -3089,7 +3144,9 @@ function makeSectionsData(over = {}) {
     ok(panels.length > 0, "能定位到 PANEL 样式");
     for (const [i, one] of panels.entries()) {
       ok(
-        /background:\s*"var\(--dsw-alias-/.test(one),
+        // ⚠️ 前缀放宽到 `--dsw-(alias|specific|menu)-` —— 弹层专用变量是
+        //    `--dsw-specific-menu`，只认 `--dsw-alias-` 的话它会被误判成「没套变量」。
+        /background:\s*"var\(--dsw-(?:alias|specific|menu)-/.test(one),
         `**浮窗背景用主题变量**（第 ${i + 1} 份；写死颜色会导致明暗主题下有一边是错的）`,
       );
       ok(

@@ -367,8 +367,15 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
           padding: "24px",
         };
         var PANEL = {
-          background: "var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2, Canvas))",
-          color: "var(--dsw-alias-label-primary, CanvasText)",
+          // ⚠️ **弹层配方**，照 dsh 自己的 `MenuSurface.module.css` 抄：
+  //      background: var(--dsw-menu-surface-fill)
+  //      backdrop-filter: var(--dsw-menu-backdrop-filter)
+  //
+  //    别用 `--dsw-alias-bg-overlay` —— 那是**遮罩层**（浮层背后压暗那一层），
+  //    深色下它是中灰 #61666b，拿它当面会把面板糊成一片灰（真机截图里就是这个）。
+  background: "var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, rgba(128,128,128,.14)))",
+  backdropFilter: "var(--dsw-menu-backdrop-filter, none)",
+          color: "var(--dsw-alias-label-primary, rgba(128,128,128,.95))",
           border: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
           borderRadius: "8px",
           maxWidth: "860px",
@@ -758,7 +765,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
         padding: "2px 6px",
         borderRadius: "var(--dsw-radius-sm, 4px)",
         border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
-        background: "var(--dsw-alias-bg-layer-1, Canvas)",
+        background: "var(--dsw-alias-bg-layer-1, rgba(128,128,128,.1))",
         color: "inherit",
       };
       /**
