@@ -950,7 +950,9 @@ ok(typeof previewBox.PreviewPanel === "function", "create(api) 造出了 Preview
 // 这里只确认两边都真的定义了自己的 Overlay，别哪天又变成「引用了别人文件里的名字」。
 {
   const each = [
-    ["client.picker.js", "多选面板"],
+    // ⚠️ 标签原来写的是「多选面板」—— picker 早就改成**一个预设下拉框**了，
+    //    留着旧名字会让人以为这里还有一个多选面板。
+    ["client.picker.js", "预设下拉框"],
     ["client.preview.js", "预览"],
   ];
   for (const [file, what] of each) {

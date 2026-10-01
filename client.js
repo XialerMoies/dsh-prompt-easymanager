@@ -1239,7 +1239,6 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
          */
         function patchHeroPreset() {
           if (typeof document === "undefined" || !document.body) return;
-          var KEY = "pmHeroPresetDone";
           var HOST_ATTR = "data-pm-hero-preset";
 
           /**
