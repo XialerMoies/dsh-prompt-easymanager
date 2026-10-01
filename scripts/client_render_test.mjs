@@ -1185,6 +1185,36 @@ const renderEditor = (props = {}) => shims.render(Editor, props);
   }
   if (el) {
     const text = flattenText(el).join(" ");
+    // ── 页头：跟 dsh 其它设置页一样（标题 + 一句话说明）──────────────────
+    //
+    // 参照物是插件页：
+    //     <h2 className={css.heading}>{t("title")}</h2>
+    //     <p  className={css.intro}>{t("intro")}</p>
+    // heading = `margin:0;font-size:18px;font-weight:600`
+    // intro   = `color:label-tertiary;margin:0;font-size:13px`
+    {
+      const h2 = findEl(el, (n) => n.type === "h2");
+      ok(!!h2, "**页头有 h2 标题**（其它内容页也是 h2）");
+      if (h2) {
+        eq(flattenText(h2).join(""), "提示词管理", "**页头标题就是这一页的名字**");
+        eq(h2.props.style.fontSize, "18px", "标题字号跟其它页一致（18px）");
+        eq(h2.props.style.fontWeight, "600", "标题字重跟其它页一致（600）");
+      }
+      const intro = findEl(
+        el,
+        (n) => n.type === "p" && flattenText(n).join("").length > 10,
+      );
+      ok(!!intro, "页头标题下面有一句话说明");
+      if (intro) {
+        eq(intro.props.style.fontSize, "13px", "说明字号跟其它页一致（13px）");
+      }
+      // ⚠️ 页头必须在**最前面** —— 排在内容后面就不叫页头了。
+      //    根节点的第一个子元素应该就是它（里面装着 h2）。
+      const rootKids = el.children || [];
+      const first = rootKids[0];
+      const firstHasH2 = !!findEl(first, (n) => n.type === "h2");
+      ok(firstHasH2, "**页头在页面最前面**（根的第一个子元素）");
+    }
     ok(text.includes("个人提示词"), "标题在");
     ok(text.includes("2 条"), "显示条数");
     ok(text.includes("格式契约"), "列出条目名");

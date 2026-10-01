@@ -2447,8 +2447,38 @@ window.__ModuleLoader__.load({
 
         // ⚠️ `header` 已经并进 personal 块了（见上面那段说明），这里**只拼 body**。
         //    原来写成 `[header].concat(body)` —— 那样个人提示词的标题会出现两次。
-        return react.createElement("div", { style: SECTION }, body);
+        //
+        // 页头（标题 + 一句话说明）放**最前**，跟 dsh 其它设置页同一套：
+        // 插件页是
+        //     <h2 className={css.heading}>{t("title")}</h2>
+        //     <p  className={css.intro}>{t("intro")}</p>
+        // 对应 CSS：heading = `margin:0;font-size:18px;font-weight:600`，
+        //           intro   = `color:label-tertiary;margin:0;font-size:13px`，
+        // 外层 section 是 `max-width:760px; flex-direction:column; gap:12px`
+        // —— 我们的 SECTION 已经是 760px + column + gap，所以照抄这两个字号就行。
+        return react.createElement("div", { style: SECTION }, [PAGE_HEAD].concat(body));
       }
+
+      var PAGE_HEAD = react.createElement("div", null, [
+        react.createElement(
+          "h2",
+          { key: "t", style: { margin: "0", fontSize: "18px", fontWeight: "600" } },
+          "提示词管理",
+        ),
+        react.createElement(
+          "p",
+          {
+            key: "i",
+            style: {
+              margin: "6px 0 0",
+              fontSize: "13px",
+              lineHeight: "20px",
+              color: "var(--dsw-alias-label-tertiary, inherit)",
+            },
+          },
+          "给每个会话挑一套提示词：选哪几条生效、存成预设随时切换，也能改写 dsh 的原生段落。",
+        ),
+      ]);
 
       // ── 注入一小段样式表 ──────────────────────────────────────────────────
       // 内联 style 做不了 `:hover` / `:focus-visible`，而这两样正是原生卡片的关键手感。
