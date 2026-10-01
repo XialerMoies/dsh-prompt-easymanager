@@ -3,13 +3,8 @@
 # 目标位置：data/plugins/XialerMoies__dsh-prompt-easymanager.yml
 # 用法：把下面 `---` 之后的内容整段复制（不含这几行注释）
 #
-# ⚠️ 提交前必须核对（投稿指南：**描述必须属实，会被逐句对着代码核**）：
-#      · 32 sections  → scripts/lib/section-slots.mjs 的 SECTION_SLOTS.length
-#      · replace/disable → scripts/lib/section-overrides.mjs 的 OVERRIDE_ACTIONS
-#      · per-session or globally → assignments{} 与 global.presetId
-#      · preview → /api/prompt-easymanager/preview 读 assemble() 结果
-#      · no network / no builds → 见 docs/permissions.md
-#    仓库根有 entry_check.mjs 可以一键核这几条。
+# ⚠️ 提交前跑 `node scripts/entry_check.mjs` —— 它会把描述里**每个声明**
+#    对着代码核一遍（投稿指南：描述必须属实，会被逐句核）。
 #
 # ⚠️ description.en 只有一句、以句号结尾、无营销词。
 #    含 `: ` 必须加引号（我们这句没有，但别改坏了）。
@@ -19,5 +14,5 @@ name: XialerMoies/dsh-prompt-easymanager
 category: session
 tarball: https://github.com/XialerMoies/dsh-prompt-easymanager/releases/download/v0.3.3/dsh-prompt-easymanager-0.3.3.tgz
 description:
-  en: Edits what the model is told, not what you type — DSH builds its system prompt from 32 named sections, and this replaces or disables any of them, saves the combination as a preset, applies one preset per session or globally, and previews the assembled result.
-  zh: 改的是模型被告知的内容，不是草稿里打的话——DSH 的系统提示词由 32 个具名段落拼成，本插件可改写或关闭其中任意一段、把组合存成预设、按会话或全局挂载，并预览拼装结果。
+  en: Applies personal prompts and system-prompt edits at the global level or on a single session, so each session can work with its own prompt setup without touching the others.
+  zh: 可以自行选择在全局范围或单独会话中增加个人提示词、修改系统提示词来工作，各会话互不影响。

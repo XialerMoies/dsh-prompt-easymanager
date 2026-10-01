@@ -1,13 +1,27 @@
 /**
  * 投稿前自查：把 `scripts/awesome-entry.yml` 里**每一句话**对着代码核一遍。
  *
- * ⚠️ 投稿指南明说：「描述必须属实，会被逐句对着代码核」，
- *    而且「夸大是让一个本来不错的插件被打回的主要原因」。
- *    所以这个脚本的作用是**拦住我自己**：写进描述里的每个数字、
- *    每个 API 名字，都得在代码里找得到。
+ * ═══ 这个脚本是干什么的 ═══
  *
- * ⚠️ 顺带核对截图声明 —— 指南警告过「声明了不存在的图 = 静默烂掉」
- *    （已发布的 773 张截图里有 41 张就是这样变成 404 的）。
+ * 投稿指南明说：「描述必须属实，会被逐句对着代码核」，
+ * 而且「夸大是让一个本来不错的插件被打回的主要原因」。
+ * 所以它的用途是**拦住我自己** —— 描述里说的每件事，代码里都得真有。
+ *
+ * ═══ 判据的设计（改过三次，记下来免得再走弯路）═══
+ *
+ * ⚠️ **非对称的**：指南没有「必须声称所有功能」这一条，它要求的是
+ *    「**说出来的都得是真的**」。所以：
+ *
+ *      声称了某能力 + 代码里没有  →  ❌ 不实（要拦）
+ *      声称了某能力 + 代码里有    →  ✔
+ *      **没声称**某能力           →  ✔ 不算错（只是没提）
+ *
+ *    第一版不是这样：它要求「描述里必须提到段落数 / preview / replace...」，
+ *    于是你把描述改得简短一点就一堆假红 —— 而那些描述其实完全属实。
+ *
+ * ⚠️ 措辞不固定：判据要卡在「**声明的粒度**」上。
+ *    · 太窄（写成 `/per session or globally/`）→ 描述换个说法就假红
+ *    · 太宽（写成 `/preset/`）→ 删掉「存成预设」这个声明也红不了（实测过）
  *
  * 用法：node scripts/entry_check.mjs
  */
@@ -76,73 +90,124 @@ if (tarball) {
   ok(fname.includes(pkg0.version), "tarball 文件名里的版本跟 package.json 一致", fname + " vs " + pkg0.version);
 }
 
-// ── 描述里的每个声明，对着代码核 ──────────────────────────────────────
-//
-// ⚠️ **判据要按「声明」写，不要按「措辞」写。**
-//    第一版把断言写成 `/per session or globally/` 这种**具体短语**，
-//    结果描述一改措辞就假红 —— 而那时描述其实完全属实。
-//    正确的做法：先把描述里**声称的能力**列出来，再逐条去代码里找证据。
+// ── 描述里的声明，对着代码核（非对称：没声称不算错）────────────────────
 console.log("");
-console.log("═══ 描述里的声明 ═══");
+console.log("═══ 描述里的声明（声称了就必须真）═══");
 
 const slots = await import(pathToFileURL(path.join(ROOT, "scripts/lib/section-slots.mjs")).href);
 const ov = await import(pathToFileURL(path.join(ROOT, "scripts/lib/section-overrides.mjs")).href);
 const idx = read("index.js");
 const clip = read("client.js");
 
-/** 从描述里抠出它声称的**段落数**（中英任一版写了就核）。 */
-const claimedNumbers = [];
-for (const [lang, text] of [["en", en], ["zh", zh]]) {
-  for (const m of text.matchAll(/\b(\d+)\s+(?:named\s+)?sections\b/gi)) claimedNumbers.push([lang, Number(m[1])]);
-  for (const m of text.matchAll(/(\d+)\s*个(?:具名)?段落/g)) claimedNumbers.push([lang, Number(m[1])]);
-}
-ok(claimedNumbers.length > 0, "描述里写了段落数", claimedNumbers.map(([l, n]) => l + "=" + n).join(", ") || "（没写）");
-for (const [lang, n] of claimedNumbers) {
-  ok(
-    n === slots.SECTION_SLOTS.length,
-    "  **" + lang + " 里的段落数对得上代码**",
-    n + " vs SECTION_SLOTS.length=" + slots.SECTION_SLOTS.length,
-  );
-}
-if (claimedNumbers.length === 2) {
-  ok(claimedNumbers[0][1] === claimedNumbers[1][1], "中英两版的数字一致");
+/** 「某能力被声称了吗」—— 中英任一版提到就算。 */
+const claims = (re) => re.test(en) || re.test(zh);
+
+/**
+ * 一条声明：`描述里怎么算声称` → `去代码哪儿找证据`。
+ *
+ * ⚠️ 加新声明时**两条都要写清楚**，别只写一半 ——
+ *    只写「声称」不写「证据」的话，这个表就成了摆设。
+ */
+const CLAIMS = [
+  {
+    label: "段落数",
+    said: () => /\b(\d+)\s+(?:named\s+)?sections\b/i.test(en) || /(\d+)\s*个(?:具名)?段落/.test(zh),
+    verify: () => {
+      // 抠出数字，逐个跟代码对
+      const nums = [];
+      for (const m of en.matchAll(/\b(\d+)\s+(?:named\s+)?sections\b/gi)) nums.push(["en", Number(m[1])]);
+      for (const m of zh.matchAll(/(\d+)\s*个(?:具名)?段落/g)) nums.push(["zh", Number(m[1])]);
+      const wrong = nums.filter(([, n]) => n !== slots.SECTION_SLOTS.length);
+      return {
+        pass: wrong.length === 0,
+        detail: nums.map(([l, n]) => l + "=" + n).join(", ") + " vs 代码 " + slots.SECTION_SLOTS.length,
+      };
+    },
+  },
+  {
+    label: "改写 / 关闭段落",
+    said: () => claims(/replace|disable|rewrite/i) || claims(/改写|关闭/),
+    verify: () => ({
+      pass: ov.OVERRIDE_ACTIONS.includes("replace") && ov.OVERRIDE_ACTIONS.includes("disable"),
+      detail: "OVERRIDE_ACTIONS=" + JSON.stringify(ov.OVERRIDE_ACTIONS),
+    }),
+  },
+  {
+    label: "存成预设",
+    // ⚠️ 不能只写 `/preset|预设/` —— 那个词描述里到处都有（"applies one preset"），
+    //    于是删掉「存成预设」这个声明也红不了。要卡在**这个声明**的粒度上。
+    said: () => claims(/as a preset|save[ds]? (?:the|it as|them as)|存成预设|存为预设/i),
+    verify: () => ({
+      pass: /normalizePresets|capturePreset/.test(idx),
+      detail: "index.js 有 normalizePresets / capturePreset",
+    }),
+  },
+  {
+    label: "个人提示词",
+    said: () => claims(/personal prompts?/i) || claims(/个人提示词/),
+    verify: () => {
+      const pre = read("scripts/lib/presets.mjs");
+      return { pass: /prompts/.test(pre), detail: "预设里有 prompts 字段" };
+    },
+  },
+  {
+    label: "修改系统提示词",
+    said: () => claims(/system[- ]prompt (?:edit|change|modif)/i) || claims(/修改系统提示词|系统提示词改动/),
+    verify: () => {
+      const pre = read("scripts/lib/presets.mjs");
+      return { pass: /sections/.test(pre), detail: "预设里有 sections 字段" };
+    },
+  },
+  {
+    label: "全局范围",
+    said: () => claims(/\bglobal\b/i) || claims(/全局/),
+    verify: () => ({
+      pass: /global/i.test(idx) && /presetId/.test(idx),
+      detail: "index.js 有 global.presetId",
+    }),
+  },
+  {
+    label: "单独会话",
+    said: () => claims(/session/i) || claims(/会话/),
+    verify: () => ({ pass: /assignments/.test(idx), detail: "index.js 有 assignments" }),
+  },
+  {
+    label: "预览",
+    said: () => claims(/preview/i) || claims(/预览/),
+    verify: () => ({ pass: /assemble/.test(idx), detail: "index.js 真的调 assemble()" }),
+  },
+];
+
+for (const c of CLAIMS) {
+  if (!c.said()) {
+    console.log("  ○ " + c.label + "：描述里没声称（不算错，只是没提）");
+    continue;
+  }
+  const r = c.verify();
+  ok(r.pass, "声称了「" + c.label + "」→ **代码里真有**", r.detail);
 }
 
-/** 断言「某能力被声称」—— 中英任一版提到就算声称。 */
-const says = (re) => re.test(en) || re.test(zh);
-
-// ② 改写 / 关闭段落
-ok(says(/replace|disable|rewrite/i) || says(/改写|关闭/), "描述了「改写 / 关闭段落」");
-ok(
-  ov.OVERRIDE_ACTIONS.includes("replace") && ov.OVERRIDE_ACTIONS.includes("disable"),
-  "  **两个动作代码里都有**",
-  JSON.stringify(ov.OVERRIDE_ACTIONS),
-);
-
-// ③ 存成预设
+// 反向也要核一条：描述**不许声称**我们往草稿塞文字
+// —— 那会跟列表里 13 个「塞文字」的同类插件混淆，而我们确实不做这件事。
 //
-// ⚠️ 判据不能用 `/preset/` —— 那个词在描述里到处都有（「applies one preset」），
-//    于是「去掉『存成预设』这个声明」这种注入**红不了**（实测过）。
-//    要核的是**「把组合存成预设」这个声明**，所以匹配的得是那个短语。
-ok(says(/as a preset|save[ds]? the combination|存成预设|存为预设/i), "描述了「把组合存成预设」");
-ok(/normalizePresets|capturePreset/.test(idx), "  代码里真的有预设模型");
-
-// ④ 按会话或全局挂载
-ok(says(/per session|session/i) || says(/按会话|会话/), "描述了「按会话」");
-ok(/assignments/.test(idx), "  代码里有 assignments（按会话）");
-ok(says(/global/i) || says(/全局/), "描述了「全局」");
-ok(/global/i.test(idx) && /presetId/.test(idx), "  代码里有 global.presetId（全局）");
-
-// ⑤ 预览拼装结果
-ok(says(/preview/i) || says(/预览/), "描述了「预览」");
-ok(/assemble/.test(idx), "  代码里真的调 assemble()");
-
-// ⑥ 最要紧的那句差异点：**改的是系统提示词，不是草稿**
+// ⚠️ **判据怎么写的，以及它的边界**：
 //
-//    这是跟列表里那 13 个「塞文字」的插件唯一的区别，所以必须成立。
-ok(says(/not what you type/i) || says(/不是.*打的话|不是草稿/), "描述了「不是改草稿」这个差异点");
+//    一开始我枚举动词（`insert …` / `fill …`），结果 `Fills saved prompts
+//    into the composer` 认不出来 —— 中间隔了词。**枚举动词永远枚举不完。**
+//
+//    改成「写入动作 + 任意内容 + 草稿/输入框」之后覆盖面够了。
+//    但它终究是**按关键词认的** —— 换个完全不提「草稿/输入框」的说法
+//    （比如「把它变成你消息的一部分」）还是可能漏。
+//
+//    为什么还留着：它拦得住**直白的**错误声称，比没有强。
+//    而真正的保证是**我不去那么写** —— 这个脚本只是最后一道网。
+const DRAFT_WORDS = String.raw`(?:draft|composer|input box|输入框|草稿|对话框)`;
+const DRAFT_VERBS = String.raw`(?:insert|fill|put|paste|drop|add|inject|write|place|填|插|塞|写)`;
+const saysDraft =
+  new RegExp(DRAFT_VERBS + String.raw`[^.]{0,60}?` + DRAFT_WORDS, "i").test(en) ||
+  new RegExp(DRAFT_VERBS + String.raw`[^。]{0,30}?` + DRAFT_WORDS, "i").test(zh);
 const insertsIntoDraft = /draft\.insert|composer\.insert|insertText\(/.test(clip);
-ok(!insertsIntoDraft, "  **客户端确实不往草稿里塞文字**（这句声明成立）");
+ok(!saysDraft || insertsIntoDraft, "没有声称「往草稿里塞文字」（客户端确实不做这件事）");
 
 // ── 截图声明 ───────────────────────────────────────────────────────────
 console.log("");
@@ -184,5 +249,5 @@ console.log("  □ 建 Release v" + pkg.version + "，把 dsh-prompt-easymanager
 console.log("  □ 开 PR，加 data/plugins/XialerMoies__dsh-prompt-easymanager.yml");
 
 console.log("");
-console.log(bad === 0 ? "✅ 全部核实通过" : "❌ " + bad + " 条不实 —— 去改 entry 或代码");
+console.log(bad === 0 ? "✅ 全部核实通过（描述里说的都是真的）" : "❌ " + bad + " 条不实 —— 去改 entry 或代码");
 process.exit(bad === 0 ? 0 : 1);
