@@ -1096,10 +1096,105 @@ const renderEditor = (props = {}) =>
         loadPresets: () => {},
         flash: () => {},
         doPreset: () => Promise.resolve({}),
-        setActivePrompts: () => {},
+        // ⚠️ 段落草稿（勾选区那组「系统提示词」tag 用）。
+        //    不给的话那一组**整组不显示**（拿不到 presetSections → 当成空组），不报错。
+        presetSections: {},
+        setPresetSections: () => {},
+        sectionsData: { globalOverrides: {} },
       },
       over,
     );
+
+// ── 5z. 勾选区那组「系统提示词」tag ────────────────────────────────────────
+//
+// 用户原话：「勾选**个人提示词与系统提示词 tag**」。
+//
+// ⚠️ 这一组语义跟个人提示词那组**不同**：
+//      个人提示词 → 勾 = 这条加进预设
+//      系统提示词 → 勾 = 这段的**改动**留在预设里
+//                    取消勾 = 回到原生（从预设的 sections 去掉）
+//    「取消勾」**不是**「关掉这段提示词」—— 那是系统提示词那栏 disable 干的事。
+{
+  // ① 预设里带一段改动 + 全局另改一段 → 两个 tag，一个勾一个没勾
+  {
+    const tags = [];
+    const el = shims.render(
+      comboBox.ComboBlock,
+      comboProps({
+        presetSections: { "harness:identity": { action: "replace", text: "x" } },
+        setPresetSections: () => {},
+        sectionsData: {
+          globalOverrides: {
+            "harness:identity": { action: "replace", text: "x" },
+            "tool:bash": { action: "disable" },
+          },
+        },
+      }),
+    );
+    findEl(el, (n) => {
+      if (n.type === "input" && n.props && n.props["data-section-tag"]) tags.push(n);
+      return false;
+    });
+    eq(tags.length, 2, "**有改动痕迹的两段都列出来了**（预设里 1 段 + 全局另 1 段）");
+    const byName = {};
+    for (const t of tags) byName[t.props["data-section-tag"]] = t.props.checked;
+    eq(byName["harness:identity"], true, "**预设里带着的那段是勾着的**");
+    eq(byName["tool:bash"], false, "**只有全局改过的那段没勾**（勾上 = 收进这条预设）");
+  }
+
+  // ② 一段都没改 → **整组不显示**
+  {
+    const el = shims.render(
+      comboBox.ComboBlock,
+      comboProps({
+        presetSections: {},
+        setPresetSections: () => {},
+        sectionsData: { globalOverrides: {} },
+      }),
+    );
+    const found = [];
+    findEl(el, (n) => {
+      if (n.props && n.props["data-section-tag"]) found.push(n);
+      return false;
+    });
+    eq(found.length, 0, "**一段都没改时不显示这一组**（列没改过的会让人以为勾上就能改）");
+  }
+
+  // ③ 取消勾 → 只改草稿，**不发请求**
+  {
+    const got = [];
+    const posts = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => {
+      if (init && init.method === "POST") posts.push(String(url));
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    };
+    const el = shims.render(
+      comboBox.ComboBlock,
+      comboProps({
+        presetSections: { "harness:identity": { action: "replace", text: "x" } },
+        setPresetSections: (next) => got.push(next),
+        sectionsData: { globalOverrides: {} },
+      }),
+    );
+    const one = [];
+    findEl(el, (n) => {
+      if (n.props && n.props["data-section-tag"] === "harness:identity") one.push(n);
+      return false;
+    });
+    eq(one.length, 1, "找得到那段的 tag");
+    if (one[0]) one[0].props.onChange();
+    eq(got.length, 1, "**取消勾只改草稿**");
+    eq(
+      Object.prototype.hasOwnProperty.call(got[0] || {}, "harness:identity"),
+      false,
+      "**那一段从草稿里移除了**（= 回到原生）",
+    );
+    eq(posts.length, 0, "**不立刻发请求** —— 保存时才写盘");
+    globalThis.fetch = realFetch;
+  }
+}
+
 
   const spy = [];
   const el = shims.render(
@@ -1240,6 +1335,10 @@ const renderEditor = (props = {}) =>
       //    原来那条路打的是**已退役的 /defaults**（回 410）。
       //    这个守卫当场点名了「实际……draftSt……，期望……」。
       "draftSt",
+      // ⚠️ `preSecSt` = 段落草稿（序号 16）—— 勾选区那组「系统提示词」tag 用它。
+      //    加它的时候我把它也命名成 `secDraftSt`，**跟已有的段落编辑草稿撞了名** ——
+      //    这个守卫把两串都打出来，一眼看出重复（它第二次救场）。
+      "preSecSt",
       "enSt",
       "catSt",
       "rnSt",
@@ -3243,13 +3342,15 @@ function makeSectionsData(over = {}) {
     // ⚠️ presetDraft（勾选草稿，序号 15）—— 漏了这一格的话后面全错位，
     //    而 `withEnabled` 改的就是错位后的那一格（踩过）。
     [],
+    // ⚠️ preSecSt（段落草稿，序号 16）
+    null,
     null, // enabledDraft ← 序号 16，就是它
   ];
   /** 把 enabledDraft（最后一位）换成 v，返回完整状态表。 */
   // ⚠️ **别用 `slice(0, -1)`** —— 那只在「enabledDraft 是最后一个 state」时成立。
   //    加了 presetDraft 之后末尾是 rnDraftSt，改末尾等于没改开关
   //    （踩过：「关闭时说明还有什么在生效」红，而开关其实一直是开着的）。
-  const ENABLED_AT = 16; // enabledDraft 的下标（见文件上方那张表）
+  const ENABLED_AT = 17; // enabledDraft 的下标（见文件上方那张表）
   const withEnabled = (v) => base.map((x, i) => (i === ENABLED_AT ? v : x));
 
   shims.setStates(withEnabled(true));

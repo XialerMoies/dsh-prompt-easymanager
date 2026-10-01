@@ -182,6 +182,12 @@ window.__ModuleLoader__.load({
         var draftSt = react.useState(null);
         var presetDraft = draftSt[0];
         var setPresetDraft = draftSt[1];
+
+        // ⚠️ **段落草稿**：跟勾选草稿一样，改动先攒着，保存才写进预设。
+        //    勾选区那组「系统提示词」tag 改的就是它。
+        var preSecSt = react.useState(null);
+        var presetSections = preSecSt[0];
+        var setPresetSections = preSecSt[1];
         /** 总开关的本地态（带乐观更新 —— 拨一下立刻变色，失败再回滚） */
         var enSt = react.useState(null);
         var enabledDraft = enSt[0];
@@ -347,6 +353,8 @@ window.__ModuleLoader__.load({
           var id = g && typeof g.presetId === "string" ? g.presetId : "";
           var one = presetById(presetsData, id);
           setPresetDraft(one && Array.isArray(one.prompts) ? one.prompts.slice() : []);
+          // 段落草稿跟着一起建 —— 两者都是「这条预设的内容」。
+          setPresetSections(one && one.sections && typeof one.sections === "object" ? Object.assign({}, one.sections) : {});
           // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [presetsData && presetsData.global && presetsData.global.presetId]);
 
@@ -404,13 +412,15 @@ window.__ModuleLoader__.load({
  */
 var saveDraft = react.useCallback(
   function (nextIds, name) {
+  // ⚠️ 段落草稿**一起交上去** —— 不然「tag 收了 / 去了 → 保存」只会存下旧的段落。
+  var sec = presetSections && typeof presetSections === "object" ? presetSections : null;
     var matched =
       presetsData && presetsData.global && typeof presetsData.global.presetId === "string"
         ? presetById(presetsData, presetsData.global.presetId)
         : null;
     if (matched) {
       setPresetsBusy(true);
-      return doPreset({ action: "update", id: matched.id, prompts: nextIds });
+      return doPreset(Object.assign({ action: "update", id: matched.id, prompts: nextIds }, sec ? { sections: sec } : {}));
     }
     var nm = (name || "").trim();
     if (!nm) {
@@ -420,9 +430,9 @@ var saveDraft = react.useCallback(
       return null;
     }
     setPresetsBusy(true);
-    return doPreset({ action: "save", name: nm, prompts: nextIds });
+    return doPreset(Object.assign({ action: "save", name: nm, prompts: nextIds }, sec ? { sections: sec } : {}));
   },
-  [doPreset, flash, presetsData, setRenameDraft, setRenaming],
+  [doPreset, flash, presetsData, presetSections, setRenameDraft, setRenaming],
 );
 
 /** 按 id 在预设表里查一条（表可能是对象也可能是数组）。 */
@@ -689,6 +699,13 @@ function presetById(d, id) {
                     presetDraft: presetDraft,
                     setPresetDraft: setPresetDraft,
                     saveDraft: saveDraft,
+                    // ⚠️ 段落草稿 + 段落数据 —— 勾选区那组「系统提示词」tag 要用。
+                    //    漏了的话那一组**整组不显示**（拿不到 presetSections → 当成空组），不报错。
+                    presetSections: presetSections,
+                    setPresetSections: setPresetSections,
+                    // ⚠️ 变量名是 sections（不是 sectionsData）—— 传错了会 ReferenceError，
+                    //    渲染期整棵子树被卸载（不是静默失败，但报错位置离原因很远）。
+                    sectionsData: sections,
                     // ⚠️ 开关随 ComboBlock 一起递下去 —— 它渲染在组合卡的行首。
                     //    漏了的话开关**静默消失**（ComboBlock 拿不到组件就渲染 null），不报错。
                     MasterSwitch: props.MasterSwitch,

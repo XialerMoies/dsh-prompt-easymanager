@@ -805,6 +805,18 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
     };
 
     /** 勾那一列 —— 固定宽度，免得没勾的行跟有勾的行对不齐。 */
+    /** 段落 tag —— 一行小胶囊，多个自动换行。 */
+    var TAG = {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "4px",
+      padding: "1px 8px",
+      border: "1px solid rgba(128,128,128,.35)",
+      borderRadius: "999px",
+      cursor: "pointer",
+      fontSize: "12px",
+    };
+
     var ROW_MARK = {
       flex: "none",
       width: "14px",
@@ -825,6 +837,7 @@ const ROUTE_GLOBAL = "/api/prompt-manager/global";
             ROW: ROW,
             ROW_ACTIVE: ROW_ACTIVE,
             ROW_MARK: ROW_MARK,
+            TAG: TAG,
             BTN: BTN,
             BTN_BUSY: BTN_BUSY,
             BTN_ERR: BTN_ERR,

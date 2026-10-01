@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var SELECT_SM = api.style.SELECT_SM;
       var STATUS_LINE = api.style.STATUS_LINE;
+      var TAG = api.style.TAG;
 
       /**
        * 卡片体的内容：勾选网格（已选的排前面）。
@@ -61,6 +62,55 @@ window.__ModuleLoader__.load({
           if (list[i] && list[i].id === d.global.presetId) return list[i];
         }
         return null;
+      }
+
+      /**
+       * 「系统提示词」那组 tag 要列哪些段落、各自勾没勾。
+       *
+       * ⚠️ 来源**两处合并**：
+       *      预设自己带的（presetSections）        → 勾着
+       *      全局改写里的（globalOverrides）        → 只有不在预设里才算「没勾」
+       *
+       *    只认第二处的话，预设里存着的改动在重开之后就不显示了。
+       */
+      function sectionTagRows(props) {
+        var seen = {};
+        var out = [];
+        var presetSec = props.presetSections;
+        var globalOv = (props.sectionsData && props.sectionsData.globalOverrides) || {};
+        function push(name, on) {
+          if (!name || seen[name]) return;
+          seen[name] = true;
+          out.push({ name: name, on: on });
+        }
+        if (presetSec && typeof presetSec === "object") {
+          for (var a in presetSec) {
+            if (Object.prototype.hasOwnProperty.call(presetSec, a)) push(a, true);
+          }
+        }
+        for (var b in globalOv) {
+          if (Object.prototype.hasOwnProperty.call(globalOv, b)) push(b, false);
+        }
+        out.sort(function (x, y) {
+          return x.name < y.name ? -1 : x.name > y.name ? 1 : 0;
+        });
+        return out;
+      }
+
+      /** 收进 / 移出这一段（只改草稿，保存才写盘）。 */
+      function toggleSection(props, name) {
+        var cur =
+          props.presetSections && typeof props.presetSections === "object" ? props.presetSections : {};
+        var next = {};
+        for (var k in cur) {
+          if (Object.prototype.hasOwnProperty.call(cur, k) && k !== name) next[k] = cur[k];
+        }
+        if (!Object.prototype.hasOwnProperty.call(cur, name)) {
+          // 原来不在里面 → 现在要收进来。值取全局改写里那份（有就用，没有给个空对象占位）。
+          var ov = (props.sectionsData && props.sectionsData.globalOverrides) || {};
+          next[name] = Object.prototype.hasOwnProperty.call(ov, name) ? ov[name] : {};
+        }
+        props.setPresetSections(next);
       }
 
       function renderPickerBody(props) {
@@ -160,7 +210,7 @@ window.__ModuleLoader__.load({
           })(ordered[oi]);
         }
 
-        return react.createElement(
+        var grid = react.createElement(
           "div",
           {
             key: "grid",
@@ -173,6 +223,56 @@ window.__ModuleLoader__.load({
           },
           rows,
         );
+
+        // ── 系统提示词 tag ────────────────────────────────────────────────
+        //
+        // ⚠️ 取消勾 = 这一段**回到原生**（从预设的 sections 里去掉），
+        //    不是「关掉这段提示词」—— 那是「系统提示词」那栏的 disable 干的事。
+        var tagRows = sectionTagRows(props);
+        if (tagRows.length === 0) return grid;
+        var tagEls = [];
+        for (var ti = 0; ti < tagRows.length; ti++) {
+          (function (row) {
+            tagEls.push(
+              react.createElement(
+                "label",
+                {
+                  key: "s-" + row.name,
+                  title: row.on
+                    ? "这段的改动留在预设里（取消勾 = 回到原生）"
+                    : "有一段改动还没进这条预设（勾上 = 收进来）",
+                  style: TAG,
+                },
+                [
+                  react.createElement("input", {
+                    key: "cb",
+                    type: "checkbox",
+                    checked: row.on,
+                    disabled: props.presetsBusy,
+                    "data-section-tag": row.name,
+                    onChange: function () {
+                      toggleSection(props, row.name);
+                    },
+                  }),
+                  react.createElement("span", { key: "n", style: { fontSize: "12px" } }, row.name),
+                ],
+              ),
+            );
+          })(tagRows[ti]);
+        }
+        return react.createElement("div", null, [
+          react.createElement(
+            "div",
+            { key: "l", style: Object.assign({}, STATUS_LINE, { fontWeight: 600 }) },
+            "系统提示词",
+          ),
+          react.createElement(
+            "div",
+            { key: "t", style: { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px" } },
+            tagEls,
+          ),
+          grid,
+        ]);
       }
 
       /**
