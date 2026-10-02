@@ -132,8 +132,10 @@ function args(over) {
 
 // ── ④ 写不进去**不能影响插件** ────────────────────────────────────────
 {
-  // 用一个不可能建出来的路径（盘符不存在）
-  const bad = "Z:\\definitely-not-a-drive\\x\\heartbeat.json";
+  // 目标路径本身是目录：跨平台稳定触发原子写和回退写失败。
+  const badBase = fs.mkdtempSync(path.join(os.tmpdir(), "pm-hb-bad-"));
+  const bad = path.join(badBase, "heartbeat.json");
+  fs.mkdirSync(bad);
   let threw = false;
   let result;
   try {
@@ -143,6 +145,7 @@ function args(over) {
   }
   eq(threw, false, "**写不进去也不抛**（它是诊断工具，不能拖垮插件）");
   eq(result, false, "返回 false 让人知道没写成");
+  fs.rmSync(badBase, { recursive: true, force: true });
 }
 
 // ── ⑤ 读不存在的 / 坏的，返回 null 而不是抛 ────────────────────────────
