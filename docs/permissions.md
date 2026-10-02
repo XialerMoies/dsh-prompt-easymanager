@@ -219,12 +219,43 @@ dsh plugin --profile <profile> remove dsh-prompt-easymanager
 ① 隔离的 DSH_HOME（临时目录）
 ② dsh plugin --profile evidence add <tgz>          exit 0
 ③ dsh --profile evidence --dump-config             exit 0   dump 里有本插件
-④ 加载一次，看心跳落不落盘
+④ 真启动一次，看心跳落不落盘
      → 落盘了：version = 0.3.5（跟 package.json 一致）
-     → 且**不含任何用户数据**
+     → 且**不含任何用户数据**（逐项核过：没有 text / prompt /
+       content / sessionId / cwd / username / apiKey）
+     → phase 停在 "starting"（见下面的说明 —— **这是预期**）
 ⑤ dsh plugin --profile evidence remove …           exit 0
 ⑥ 卸载后：插件目录没了，心跳文件**还在**（数据不被卸载删掉）
+⑦ 心跳里同时报 stateFile 和 stateWriteFile 两个路径
+     （老用户升级后是「读老的、写新的」，只报一个分不清）
 ```
+
+> ⚠️ **④ 里 `phase` 停在 `starting` 是预期的，不是失败。**
+>
+> 空白 profile 里 dsh 会打印：
+>
+> ```
+> dsh: warning: 1 entry did not activate
+> dsh-prompt-easymanager: pending (waiting for service: connection)
+> ```
+>
+> 那是 **dsh 自己的插件激活状态** —— 它在等它的连接层，而**连接层要等有会话**。
+> 空白 profile 一个会话都没有，所以 `apply()` 一直没被调用
+> （心跳的 `starting` 是**模块加载时**写的，`ready` 才是 `apply` 里写的）。
+>
+> ⚠️ **这一条**（`phase: ready`）**在隔离环境里验不了**，别在这儿写 ✔。
+> 本插件**没有声明任何服务依赖**（`cordis.patch.yml` 里没有 `inject`，
+> `apply` 里也没有 `ctx.inject`），所以那个 `pending` 不是本插件要求的。
+>
+> 真实 profile（有会话）里的心跳是 `phase: ready / ok: true` ——
+> 那是本插件 `ready` 路径的**实测证据**。
+>
+> ⚠️ **中途踩过**：一开始给真启动那步设了 25 秒固定超时，拿到 `starting`
+> 就以为「插件挂了」。**那是脚本没等对。** 现在轮询到 ready/failed 才停。
+>
+> ⚠️ **杀进程必须 `taskkill /T /F`**：Windows 上 `child.kill("SIGTERM")`
+> 对 `shell: true` 起的进程树**不生效** —— 子进程活着、管道不关，
+> 父进程退不出去（脚本挂死过一次）。
 
 > ⚠️ **③ 为什么用 `--dump-config` 而不是真启动**：真启动要占
 > `127.0.0.1:3080`，端口被别处占用就是 `EADDRINUSE`（退出码 1），
