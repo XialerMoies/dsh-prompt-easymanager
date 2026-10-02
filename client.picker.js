@@ -332,6 +332,42 @@ window.__ModuleLoader__.load({
           !(s.sections && typeof s.sections === "object" && Object.keys(s.sections).length > 0);
       }
 
+      function stablePresetValue(value, key) {
+        // 这些字段用于升级/诊断，不会改变最终注入文本；副本保存时间不同
+        // 也不应让内容相同的预设继续重复显示。
+        if (key === "savedAt" || key === "originalHash" || key === "original") return undefined;
+        if (Array.isArray(value)) return value.map(function (item) { return stablePresetValue(item); });
+        if (!value || typeof value !== "object") return value;
+        var out = {};
+        Object.keys(value).sort().forEach(function (key) {
+          var normalized = stablePresetValue(value[key], key);
+          if (normalized !== undefined) out[key] = normalized;
+        });
+        return out;
+      }
+
+      /** 内容完全一致的预设只保留一项；优先保留当前正在使用的 id。 */
+      function mergeEquivalentPresets(list, preferredId) {
+        var out = [];
+        var positions = {};
+        for (var i = 0; i < list.length; i++) {
+          var p = list[i];
+          if (!p) continue;
+          var key = JSON.stringify(stablePresetValue({
+            prompts: Array.isArray(p.prompts) ? p.prompts : [],
+            sections: p.sections && typeof p.sections === "object" ? p.sections : {},
+            selection: p.selection && typeof p.selection === "object" ? p.selection : {},
+          }));
+          if (!(key in positions)) {
+            positions[key] = out.length;
+            out.push(p);
+          } else if (p.id === preferredId) {
+            out[positions[key]] = p;
+          }
+        }
+        return out;
+      }
+
       /** 给同名预设加序号，避免不同 id 在选择器里看起来像重复项。 */
       function presetDisplayLabel(list, index) {
         var p = list[index] || {};
@@ -379,10 +415,17 @@ window.__ModuleLoader__.load({
         // 带一份**带 label 的预设数组**和 session / effective。
         // props.data（/state）里那份预设表没有 label，只有这边有。
         var ex = props.extras || null;
-        if (list.length === 0 && ex && Array.isArray(ex.presets)) {
+        // /presets?session= 返回完整 selection，是选择器的权威数据源；
+        // /state 只在它尚未加载时作为首屏回退，否则改写段落会被丢掉。
+        if (ex && Array.isArray(ex.presets)) {
           list = ex.presets.filter(Boolean);
         }
         list = list.filter(function (p) { return !isNativePreset(p); });
+        var preferredId = d && d.global && typeof d.global.presetId === "string" ? d.global.presetId : null;
+        if (!preferredId && d && d.assignments && typeof d.assignments === "object" && props.sessionId) {
+          preferredId = d.assignments[props.sessionId];
+        }
+        list = mergeEquivalentPresets(list, preferredId);
         // 统一用预设的实际名字，并为同名副本加序号。
         for (var li = 0; li < list.length; li++) {
           list[li] = Object.assign({}, list[li], { label: presetDisplayLabel(list, li) });
@@ -623,7 +666,12 @@ window.__ModuleLoader__.load({
           data.global.enabled === true &&
           typeof data.global.presetId === "string"
         ) {
-          var list = Array.isArray(data.presets) ? data.presets.filter(function (p) { return !isNativePreset(p); }) : [];
+          var list = Array.isArray(data.presets)
+            ? mergeEquivalentPresets(
+                data.presets.filter(function (p) { return !isNativePreset(p); }),
+                data.global && data.global.presetId,
+              )
+            : [];
           for (var i = 0; i < list.length; i++) {
             if (list[i] && list[i].id === data.global.presetId) label = list[i].name || list[i].label;
           }
@@ -726,7 +774,10 @@ window.__ModuleLoader__.load({
         var d = props.data;
         var g = (d && d.global) || {};
         var list = d && Array.isArray(d.presets)
-          ? d.presets.filter(function (p) { return !isNativePreset(p); })
+          ? mergeEquivalentPresets(
+              d.presets.filter(function (p) { return !isNativePreset(p); }),
+              g.presetId,
+            )
           : [];
         var rows = [
           react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [

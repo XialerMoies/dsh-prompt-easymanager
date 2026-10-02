@@ -739,8 +739,23 @@ const editorBox = modEditor.create(strict.api);
     //    （跟面板那次「要先点开」是同一个坑：这些测试不跑异步。）
     const HERO_DATA = {
       presets: [
-        { id: "写代码", name: "写代码", label: "写代码", summary: "自设 2 条" },
-        { id: "翻译", name: "翻译", label: "翻译", summary: "自设 1 条" },
+        { id: "写代码", name: "写代码", prompts: ["a"], label: "写代码", summary: "自设 2 条" },
+        {
+          id: "翻译",
+          name: "翻译",
+          prompts: ["b"],
+          selection: { sections: { "harness:identity": { text: "同一段", savedAt: "a" } } },
+          label: "翻译",
+          summary: "自设 1 条",
+        },
+        {
+          id: "翻译副本",
+          name: "翻译副本",
+          prompts: ["b"],
+          selection: { sections: { "harness:identity": { text: "同一段", savedAt: "b" } } },
+          label: "翻译副本",
+          summary: "内容相同",
+        },
       ],
       global: { enabled: true, presetId: "写代码" },
       session: null,
@@ -778,6 +793,7 @@ const editorBox = modEditor.create(strict.api);
     ok(panelRoots.length > 0, "面板通过 portal 渲染出来了");
     ok(panelText.includes("翻译"), "面板里列得出别的预设");
     ok(panelText.includes("翻译"), "**那条预设按 label 显示**");
+    ok(!panelText.includes("翻译副本"), "内容一致的预设在选择器里合并成一项");
     ok(target.length > 0, "找得到「翻译」那个选项");
     if (target[0]) target[0].props.onClick();
 
@@ -1437,6 +1453,10 @@ const renderEditor = (props = {}) =>
   const po = fnOf(picker, "pickOption");
   ok(!!seg && seg.length > 200, "抠得出 PresetDropdown（实际 " + (seg ? seg.length : 0) + " 字符）");
   ok(!!po, "抠得出 pickOption");
+  ok(
+    /if \(ex && Array\.isArray\(ex\.presets\)\)/.test(picker),
+    "预设接口加载后优先使用带完整 selection 的 /presets 响应",
+  );
 
   // ── 核心：**两个面板要一样** ──────────────────────────────────────────
   //
