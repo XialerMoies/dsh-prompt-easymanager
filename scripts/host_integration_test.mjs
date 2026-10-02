@@ -1526,8 +1526,9 @@ const TMP_ID = "zz-test-only";
     ok(!list1.json.presets.some((p) => p.id === "代码"), "**旧 id 不在了**（改名要删旧的，不是复制一份）");
     // ⚠️ 内容要**原样保留** —— update 只给了 name，没给 prompts/sections，
     //    实现里如果无条件覆盖，这里会把内容清空。
+    const renamedPreset = list1.json.presets.find((p) => p.id === "代码（v2）");
     eq(
-      list1.json.presets[0].prompts,
+      renamedPreset?.prompts,
       ["format-contract"],
       "**只改名时内容不许被清空**",
     );
