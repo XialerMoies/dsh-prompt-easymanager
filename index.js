@@ -1284,24 +1284,89 @@ const jsonOf = (body, status) =>
         if (request.method === "GET") {
           const found = await injector.listSections(sessionId);
           const state = readState();
-          const plan = planOverrides({
-            overrides: state.sectionOverrides,
-            globalSections: found.sections,
+
+          // ⚠️ **这里从这一版起走新模型（勾选清单），不再读那两张退休的表。**
+          //
+          //    老版本算的是 `planOverrides({ overrides: state.sectionOverrides, ... })`。
+          //    段落改写现在由预设承载，那张表不再被读 —— 继续读它的后果是
+          //    「界面显示的还是改之前的样子」，而且 `availableNative` 也拿不到
+          //    （三块文件夹需要它才知道原生段有哪些）。
+          const foundPreset = presetForSession({
+            sessionId,
+            assignments: state.assignments,
+            global: state.global,
+            presets: state.presets,
           });
+          const selNow = foundPreset?.preset?.selection ?? null;
+          const projected = projectSelection({
+            native: found.sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
+            selection: selNow,
+          });
+
+          /**
+           * 把新模型的投影结果**翻译成老形状**的行。
+           *
+           * ⚠️ 界面在这一版还没改完，仍在读 `applied` / `drifted` / `stale` /
+           *    `untouched`。翻译层让两边都能用；等界面改完就可以直接换掉。
+           */
+          const liveOf = (nm) => found.sections.find((s) => s.name === nm)?.text ?? "";
+          const asRow = (row, status) => {
+            const ov = selNow?.sections?.[row.name];
+            return {
+              name: row.name,
+              index: found.sections.findIndex((s) => s.name === row.name),
+              status,
+              drifted: row.drifted === true,
+              driftAcknowledged: false,
+              original: liveOf(row.name),
+              originalHash: "",
+              basedOn: ov?.original ?? "",
+              basedOnHash: "",
+              action: status === "apply" ? "replace" : null,
+              text: row.text ?? "",
+              savedAt: ov?.savedAt ?? "",
+            };
+          };
+          const appliedRows = projected.plan
+            .filter((r) => r.mode === "edited" || r.mode === "dropped")
+            .map((r) => asRow(r, "apply"));
+          const untouchedRows = projected.plan
+            .filter((r) => r.mode === "native")
+            .map((r) => asRow(r, "untouched"));
+          const staleRows = (projected.stale ?? []).map((r) => asRow(r, "stale"));
+
           diag.lastSections = found.outcome;
           return jsonOf({
               outcome: found.outcome,
               error: found.error ?? null,
               agentId: found.agentId ?? null,
-              summary: summarizePlan(plan),
+              summary:
+                appliedRows.length > 0 ? `改 ${appliedRows.length} 段` : "全部原生",
               /** 会被应用的（含「官方已更新」的） */
-              applied: plan.apply,
+              applied: appliedRows,
               /** apply 里「官方改过这段」的那些（子集，界面上标红） */
-              drifted: plan.drifted,
+              drifted: appliedRows.filter((r) => r.drifted),
               /** 名字已不存在，保留数据但不应用 */
-              stale: plan.stale,
+              stale: staleRows,
               /** 用户没动过的 */
-              untouched: plan.untouched,
+              untouched: untouchedRows,
+              /**
+               * 当前能用的原生段名 —— 界面要拿它去判断「空清单」。
+               *
+               * ⚠️ 保存预设时界面得把它递回来（`availableNative`）：
+               *    「一张清单是不是空」取决于**当前有哪些原生段**，
+               *    服务端在别的上下文里不知道这件事，只能问界面。
+               *    递不了就不拦（fail-open）—— 见 `emptySelectionProblem`。
+               */
+              availableNative: found.sections.map((s) => s.name),
+              /**
+               * 被排除掉的段名（清单里 `excluded` 那些）。
+               *
+               * ⚠️ 界面要它才能把「系统提示词」那块的勾选框画对：
+               *    没排除的勾着、排除的空着。光看 `applied` 分不出来 ——
+               *    「没改过」和「明确不要」在那边长得一样。
+               */
+              excludedSections: Array.isArray(selNow?.excluded) ? selNow.excluded : [],
               /**
                * dsh 预留了、但**这次没有被注册**的位置 —— 界面显示成灰色卡片，
                * 让用户知道「为什么 bash 不在」而不是以为列表出错了。
@@ -1319,18 +1384,19 @@ const jsonOf = (body, status) =>
                *   globalOverrides   全局默认（所有会话都用）
                *   sessionOverrides  当前会话的（**盖住全局**）
                *   effective         两者合并后实际生效的（= 上面 plan 算的那张）
+               *
+               * ⚠️ 这三个字段这一版**故意留着**（值为空），只为了让还没改完的
+               *    界面不崩。它们反映的是那两张**已退休**的表，读到的永远是空。
+               *    界面改完之后删掉。
                */
-              globalOverrides: state.sectionOverrides,
-              sessionOverrides: sessionId ? state.sessionSectionOverrides[sessionId] ?? {} : {},
-              effectiveOverrides: resolveOverrides(
-                state.sectionOverrides,
-                sessionId ? state.sessionSectionOverrides[sessionId] : undefined,
-              ),
+              globalOverrides: {},
+              sessionOverrides: {},
+              effectiveOverrides: {},
               counts: {
-                applied: plan.apply.length,
-                drifted: plan.drifted.length,
-                stale: plan.stale.length,
-                untouched: plan.untouched.length,
+                applied: appliedRows.length,
+                drifted: appliedRows.filter((r) => r.drifted).length,
+                stale: staleRows.length,
+                untouched: untouchedRows.length,
                 total: found.sections.length,
               },
               actions: OVERRIDE_ACTIONS,
@@ -1568,6 +1634,23 @@ const jsonOf = (body, status) =>
               drifted: allApplied.filter((r) => r.drifted),
               stale: staleRows,
               untouched: untouchedRows,
+              /**
+               * 当前能用的原生段名 —— 界面要拿它去判断「空清单」。
+               *
+               * ⚠️ 保存预设时界面得把它递回来（`availableNative`）：
+               *    「一张清单是不是空」取决于**当前有哪些原生段**，
+               *    服务端在别的上下文里不知道这件事，只能问界面。
+               *    递不了就不拦（fail-open）—— 见 `emptySelectionProblem`。
+               */
+              availableNative: found2.sections.map((s) => s.name),
+              /**
+               * 被排除掉的段名（清单里 `excluded` 那些）。
+               *
+               * ⚠️ 界面要它才能把「系统提示词」那块的勾选框画对：
+               *    没排除的勾着、排除的空着。光看 `applied` 分不出来 ——
+               *    「没改过」和「明确不要」在那边长得一样。
+               */
+              excludedSections: Array.isArray(selAfter?.excluded) ? selAfter.excluded : [],
               // 改完一段后空槽位也要重算 —— 通常不会变，但保持两个响应形状一致
               emptySlots: findEmptySlots(found2.sections),
               counts: {

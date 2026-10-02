@@ -1662,51 +1662,57 @@ const renderEditor = (props = {}) =>
   eq(JSON.parse((posts[0] && posts[0].body) || "{}").presetId, "测试t-2", "带的是「测试t-2」");
 
   globalThis.fetch = realFetch;
-}
-//
-// 用户原话：「勾选**个人提示词与系统提示词 tag**」。
-//
-// ⚠️ 这一组语义跟个人提示词那组**不同**：
-//      个人提示词 → 勾 = 这条加进预设
-//      系统提示词 → 勾 = 这段的**改动**留在预设里
-//                    取消勾 = 回到原生（从预设的 sections 去掉）
-//    「取消勾」**不是**「关掉这段提示词」—— 那是系统提示词那栏 disable 干的事。
-{
-  // ① 预设里带一段改动 + 全局另改一段 → 两个 tag，一个勾一个没勾
+  //
+  // 用户原话：「勾选**个人提示词与系统提示词 tag**」。
+  //
+  // ⚠️ **这一组整个重写过**（三块勾选清单那版）。
+  //
+  //    老版本验的是「预设自己的改动 + 全局那份改动」拼出 tag 列表 ——
+  //    也就是那个已退休的两层模型。新模型里没有「全局那份改写」了：
+  //    段落改写**由预设承载**，所以 tag 只有两个来源：
+  //
+  //        改过的段（presetSections）        → 勾着
+  //        原生段（sectionsData.availableNative）→ 默认勾着，被排除的没勾
   {
-    const tags = [];
-    const el = shims.render(
-      comboBox.ComboBlock,
-      comboProps({
-        presetSections: { "harness:identity": { action: "replace", text: "x" } },
-        setPresetSections: () => {},
-        sectionsData: {
-          globalOverrides: {
-            "harness:identity": { action: "replace", text: "x" },
-            "tool:bash": { action: "disable" },
+    // ① 改过一段 + 原生三段（其中一段被排除）→ 勾选状态各不相同
+    {
+      const tags = [];
+      const el = shims.render(
+        comboBox.ComboBlock,
+        comboProps({
+          presetSections: { "harness:identity": { action: "replace", text: "x" } },
+          setPresetSections: () => {},
+          sectionsData: {
+            // ⚠️ 服务端在 `/sections` 的响应里回这两个 —— 三块文件夹靠它们
+            availableNative: ["harness:identity", "tool:bash", "plan:policy"],
+            excludedSections: ["plan:policy"],
           },
-        },
-      }),
-    );
-    findEl(el, (n) => {
-      if (n.type === "input" && n.props && n.props["data-section-tag"]) tags.push(n);
-      return false;
-    });
-    eq(tags.length, 2, "**有改动痕迹的两段都列出来了**（预设里 1 段 + 全局另 1 段）");
-    const byName = {};
-    for (const t of tags) byName[t.props["data-section-tag"]] = t.props.checked;
-    eq(byName["harness:identity"], true, "**预设里带着的那段是勾着的**");
-    eq(byName["tool:bash"], false, "**只有全局改过的那段没勾**（勾上 = 收进这条预设）");
+        }),
+      );
+      findEl(el, (n) => {
+        if (n.type === "input" && n.props && n.props["data-section-tag"]) tags.push(n);
+        return false;
+      });
+      eq(tags.length, 3, "**原生段全列出来了**（改过的那段只出现一次，不重复）");
+      const byName = {};
+      for (const t of tags) byName[t.props["data-section-tag"]] = t.props.checked;
+      eq(byName["harness:identity"], true, "**改过的那段是勾着的**（它归「改动提示词」那块）");
+      eq(byName["tool:bash"], true, "没动过的原生段**默认勾着**（= 用 dsh 原版）");
+      eq(byName["plan:policy"], false, "**被排除的那段没勾**（= 不进提示词）");
+    }
   }
 
-  // ② 一段都没改 → **整组不显示**
+  // ② 一段都没改、**也没有原生段可列** → 整组不显示
+  //
+  // ⚠️ `availableNative` 必须给空数组。不给的话新模型会去列原生段 ——
+  //    那是**对的**行为（32 段原生都该列出来），红的就是夹具不是实现。
   {
     const el = shims.render(
       comboBox.ComboBlock,
       comboProps({
         presetSections: {},
         setPresetSections: () => {},
-        sectionsData: { globalOverrides: {} },
+        sectionsData: { globalOverrides: {}, availableNative: [] },
       }),
     );
     const found = [];
@@ -1714,7 +1720,25 @@ const renderEditor = (props = {}) =>
       if (n.props && n.props["data-section-tag"]) found.push(n);
       return false;
     });
-    eq(found.length, 0, "**一段都没改时不显示这一组**（列没改过的会让人以为勾上就能改）");
+    eq(found.length, 0, "**没有原生段、也没改过时不显示这一组**（列空的会让人以为坏了）");
+  }
+
+  // ②b **「关掉」按钮不许长回来** —— 新模型里它就是「不勾」。
+  //
+  //     ⚠️ 这是一条**反向断言**。用户明确说过「关闭段落」这个动作要删掉：
+  //        段落的三种状态是「改过的 / 取消勾选 / 没提到」，
+  //        「不进提示词」用**不勾**表达，比一个按钮留下的状态清楚得多。
+  //
+  //     判据是源码里不许再出现那个动作调用 —— 只看渲染结果抓不住，
+  //     因为按钮在**展开卡片**时才出现。
+  {
+    const src = readFileSync(join(HERE, "..", "client.editor.sections.js"), "utf8");
+    const calls = [...src.matchAll(/applySection\([^)]*"disable"/g)].map((m) => m[0]);
+    eq(
+      calls.join(","),
+      "",
+      "**段落卡片里没有「关掉」按钮了**（新模型里「不勾」就是关闭）",
+    );
   }
 
   // ③ 取消勾 → 只改草稿，**不发请求**

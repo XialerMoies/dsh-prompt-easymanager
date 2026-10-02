@@ -362,10 +362,28 @@ window.__ModuleLoader__.load({
           function (payload) {
             setPresetsBusy(true);
             var url = ROUTE_PRESETS;
+            // ⚠️ **保存/更新预设时，把「当前有哪些原生段」一起递过去。**
+            //
+            //    服务端要用它判断「这张清单是不是空」（该有的原生段全被排除了）。
+            //    「有哪些原生段」只有界面知道 —— 它刚从 `/sections` 读到。
+            //    递不了就不拦（服务端 fail-open），所以这里拿不到也不会出错。
+            //
+            //    ⚠️ 放在 `doPreset` 里而不是各个调用点：它是**所有**预设写入的
+            //       必经之路，在这儿补一处就够，不会有漏的。
+            var body = payload;
+            if (
+              (payload.action === "save" || payload.action === "update") &&
+              !payload.availableNative
+            ) {
+              var avail = sections && sections.availableNative;
+              if (Array.isArray(avail) && avail.length > 0) {
+                body = Object.assign({}, payload, { availableNative: avail });
+              }
+            }
             return fetch(url, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify(payload),
+              body: JSON.stringify(body),
             })
               .then(function (res) {
                 return res.json().then(function (j) {

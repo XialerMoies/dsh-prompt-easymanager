@@ -241,22 +241,21 @@ window.__ModuleLoader__.load({
                   },
                   changed && row.action === "replace" ? "继续编辑" : "改写",
                 ),
-                react.createElement(
-                  "button",
-                  {
-                    key: "d",
-                    type: "button",
-                    className: "pm-btn",
-                    style: props.sectionsBusy || (changed && row.action === "disable") ? BTN_BUSY : BTN_DANGER,
-                    disabled: props.sectionsBusy || (changed && row.action === "disable"),
-                    title: "让这一段完全不出现（注册为空正文，dsh 会丢弃空段落）",
-                    onClick: function (e) {
-                      e.stopPropagation();
-                      props.applySection(row.name, "disable");
-                    },
-                  },
-                  "关掉",
-                ),
+                // ⚠️ **「关掉」按钮已删** —— 新模型里它就是**「不勾」**。
+                //
+                //    老模型把「关闭一段」做成一个独立的动作（`action: "disable"`，
+                //    正文注册成空、dsh 丢弃空段落）。新模型里段落的三种状态是：
+                //
+                //        改过的     →  用你改的那份
+                //        取消勾选   →  不进提示词     ← 「关闭」现在就是这个
+                //        都没提到   →  用 dsh 原版
+                //
+                //    所以不需要单独一个按钮 —— 上面「📁 系统提示词」那块
+                //    把勾去掉就行，而且那样**一眼能看出哪些没进提示词**，
+                //    比一个按钮留下的状态清楚得多。
+                //
+                //    ⚠️ 后端的 `disable` 动作**保留**（老客户端 / 第三方调用还用），
+                //       它现在等价于「取消勾选」。
                 changed
                   ? react.createElement(
                       "button",

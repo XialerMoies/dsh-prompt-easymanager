@@ -145,15 +145,23 @@ window.__ModuleLoader__.load({
           if (!picked[usable[ri].id]) ordered.push(usable[ri]);
         }
 
+        // ⚠️ **库里一条提示词都没有时，不能整个 return。**
+        //
+        //    老版本在这儿直接返回「库里还没有可选的提示词」——
+        //    于是**段落那一块也跟着不渲染了**（它以 grid 为兄弟节点）。
+        //    新模型要求三块一直可见（个人提示词 / 改动提示词 / 系统提示词），
+        //    所以改成：个人提示词那块显示成一句提示，**段落照常渲染**。
+        var rows = [];
         if (usable.length === 0) {
-          return react.createElement(
-            "div",
-            { style: STATUS_LINE },
-            "库里还没有可选的提示词 —— 在下面「新建」加一条。",
+          rows.push(
+            react.createElement(
+              "div",
+              { key: "no-prompts", style: STATUS_LINE },
+              "库里还没有可选的提示词 —— 在下面「新建」加一条。",
+            ),
           );
         }
 
-        var rows = [];
         for (var oi = 0; oi < ordered.length; oi++) {
           (function (p) {
             var on = !!picked[p.id];
@@ -224,55 +232,155 @@ window.__ModuleLoader__.load({
           rows,
         );
 
-        // ── 系统提示词 tag ────────────────────────────────────────────────
+        // ── 三个文件夹的 tag 区域 ─────────────────────────────────────────
         //
-        // ⚠️ 取消勾 = 这一段**回到原生**（从预设的 sections 里去掉），
-        //    不是「关掉这段提示词」—— 那是「系统提示词」那栏的 disable 干的事。
-        var tagRows = sectionTagRows(props);
-        if (tagRows.length === 0) return grid;
-        var tagEls = [];
-        for (var ti = 0; ti < tagRows.length; ti++) {
-          (function (row) {
-            tagEls.push(
-              react.createElement(
-                "label",
-                {
-                  key: "s-" + row.name,
-                  title: row.on
-                    ? "这段的改动留在预设里（取消勾 = 回到原生）"
-                    : "有一段改动还没进这条预设（勾上 = 收进来）",
-                  style: TAG,
-                },
-                [
-                  react.createElement("input", {
-                    key: "cb",
-                    type: "checkbox",
-                    checked: row.on,
-                    disabled: props.presetsBusy,
-                    "data-section-tag": row.name,
-                    onChange: function () {
-                      toggleSection(props, row.name);
-                    },
-                  }),
-                  react.createElement("span", { key: "n", style: { fontSize: "12px" } }, row.name),
-                ],
-              ),
+        // 用户要的就这一句：**预设 = 从三个文件夹里勾出来的清单。**
+        //
+        //     📁 个人提示词        你写的那些
+        //     📁 改动提示词        你改过的段落
+        //     📁 系统提示词        dsh 原生的那些段
+        //
+        // ⚠️ **「改动」和「原始」分成两块，靠的是「原始」那份快照。**
+        //    没有它的话，用户只能看到「改过的那几段」，看不到
+        //    「还有哪些原生段在、哪些被排除了」—— 而后者正是这次要补的视野。
+        var sectionsArea = function () {
+          var tagRows = sectionTagRows(props);
+          var sd = props.sectionsData || {};
+          var avail = Array.isArray(sd.availableNative) ? sd.availableNative : [];
+          // ⚠️ **`excluded` 要从服务端给的名单来。**
+          //    光看 `applied` 分不出「没改过」和「明确不要」—— 那边长得一样。
+          //    服务端在 `/sections` 的响应里回 `excludedSections`。
+          var excluded = {};
+          var exList = Array.isArray(sd.excludedSections) ? sd.excludedSections : [];
+          for (var xi = 0; xi < exList.length; xi++) excluded[exList[xi]] = true;
+          var edited = {};
+          for (var ti2 = 0; ti2 < tagRows.length; ti2++) {
+            if (tagRows[ti2].on) edited[tagRows[ti2].name] = true;
+          }
+
+          var mkTag = function (name, on, keyPrefix, title) {
+            return react.createElement(
+              "label",
+              {
+                key: keyPrefix + "-" + name,
+                title: title,
+                style: TAG,
+              },
+              [
+                react.createElement("input", {
+                  key: "cb",
+                  type: "checkbox",
+                  checked: on,
+                  disabled: props.presetsBusy,
+                  "data-section-tag": name,
+                  onChange: function () {
+                    toggleSection(props, name);
+                  },
+                }),
+                react.createElement("span", { key: "n", style: { fontSize: "12px" } }, name),
+              ],
             );
-          })(tagRows[ti]);
-        }
-        return react.createElement("div", null, [
-          react.createElement(
-            "div",
-            { key: "l", style: Object.assign({}, STATUS_LINE, { fontWeight: 600 }) },
-            "系统提示词",
-          ),
-          react.createElement(
-            "div",
-            { key: "t", style: { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px" } },
-            tagEls,
-          ),
-          grid,
-        ]);
+          };
+
+          var rowStyle = { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" };
+          var headStyle = Object.assign({}, STATUS_LINE, { fontWeight: 600 });
+
+          // ① 个人提示词 —— 勾了哪几条（列表本身在下面的 grid 里）
+          //
+          // ⚠️ 优先看**草稿**（用户正在勾的那份）；没有草稿才回落到
+          //    全局那条预设存的条数。看错的话数字会跟下面清单对不上。
+          var personalOn = 0;
+          if (Array.isArray(props.presetDraft)) {
+            personalOn = props.presetDraft.length;
+          } else {
+            var gp = globalPresetOf(props.presetsData);
+            personalOn = gp && Array.isArray(gp.prompts) ? gp.prompts.length : 0;
+          }
+
+          // ② 改动提示词 —— `tagRows` 里勾着的那些
+          var editedEls = [];
+          for (var ei = 0; ei < tagRows.length; ei++) {
+            if (tagRows[ei].on) {
+              editedEls.push(
+                mkTag(
+                  tagRows[ei].name,
+                  true,
+                  "edited",
+                  "这段的改动留在预设里（取消勾 = 回到原生）",
+                ),
+              );
+            }
+          }
+
+          // ③ 系统提示词 —— **全部原生段都列出来**，没动的也列
+          var nativeEls = [];
+          for (var ni = 0; ni < avail.length; ni++) {
+            var nm = avail[ni];
+            if (edited[nm]) continue; // 改过的归上一块
+            nativeEls.push(
+              mkTag(nm, !excluded[nm], "native", "这段用 dsh 原生的（取消勾 = 不要它）"),
+            );
+          }
+
+          var groups = [
+            react.createElement("div", { key: "g1" }, [
+              react.createElement(
+                "div",
+                { key: "l", style: headStyle },
+                "📁 个人提示词" + (personalOn > 0 ? "（勾了 " + personalOn + " 条）" : "（一条没勾）"),
+              ),
+              react.createElement(
+                "div",
+                { key: "h", style: Object.assign({}, STATUS_LINE, { marginBottom: "8px" }) },
+                personalOn > 0 ? "要注入的提示词在下面的清单里打勾。" : "下面清单里打勾就会加进来。",
+              ),
+            ]),
+          ];
+
+          groups.push(
+            react.createElement("div", { key: "g2" }, [
+              react.createElement(
+                "div",
+                { key: "l", style: headStyle },
+                "📁 改动提示词" + (editedEls.length > 0 ? "（" + editedEls.length + " 段）" : "（还没改过）"),
+              ),
+              editedEls.length > 0
+                ? react.createElement("div", { key: "t", style: rowStyle }, editedEls)
+                : react.createElement(
+                    "div",
+                    { key: "h", style: Object.assign({}, STATUS_LINE, { marginBottom: "12px" }) },
+                    "在下面「系统提示词」那一栏改一段，它就会挪到这儿。",
+                  ),
+            ]),
+          );
+
+          groups.push(
+            react.createElement("div", { key: "g3" }, [
+              react.createElement(
+                "div",
+                { key: "l", style: headStyle },
+                "📁 系统提示词（原生 " + nativeEls.length + " 段）",
+              ),
+              nativeEls.length > 0
+                ? react.createElement("div", { key: "t", style: rowStyle }, nativeEls)
+                : react.createElement(
+                    "div",
+                    { key: "h", style: Object.assign({}, STATUS_LINE, { marginBottom: "12px" }) },
+                    "读不到原生段落 —— 先开一个会话再回来。",
+                  ),
+              react.createElement(
+                "div",
+                { key: "sum", style: Object.assign({}, STATUS_LINE, { marginBottom: "12px" }) },
+                "预设 = 上面三块里勾出来的一份清单。" +
+                  "勾着的段用 dsh 原版，改过的用你改的那份，取消勾的**不进提示词**。",
+              ),
+            ]),
+          );
+
+          return react.createElement("div", { key: "sections-area" }, groups);
+        };
+
+        return react.createElement("div", null, [grid, sectionsArea()]);
       }
 
       /**
