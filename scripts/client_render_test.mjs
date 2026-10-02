@@ -3243,6 +3243,67 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   );
 }
 
+// ── 9b. **每个用到的 ROUTE_* 都在本文件里拿过**（防「漏拿一个」）──────────────
+//
+// ⚠️ 这条是补出来的，起因是一个**真机上才发现的 bug**：
+//
+//      Uncaught ReferenceError: ROUTE_GLOBAL is not defined
+//          at Object.onToggle (client.editor.js:272)
+//
+//    `client.editor.js` 顶部从 `api.route` 拿了 4 个路由，
+//    **漏了 `ROUTE_GLOBAL`** —— 于是「全局注入」那个开关一点就炸。
+//
+//    为什么现有机制都挡不住：
+//      · `node --check` 查不出来（语法没错，运行期才炸）
+//      · 影子层测试查不出来（真实浏览器才报）
+//      · 那个 chunk 是**独立作用域**（`create()` 工厂里），
+//        看不见 `client.js` 里同名的常量 —— 所以「别处有定义」不算数
+//
+//    判据：**按文件**扫 —— 文件里用到 `ROUTE_XXX`，这个文件顶部就必须有
+//    `var ROUTE_XXX =`。（跨文件共享不算数，这正是 bug 的成因。）
+{
+  // ⚠️ **只查 chunk，不查 `client.js`。**
+  //    `client.js` 是**宿主**，那些常量就是在那儿定义、通过 `api.route`
+  //    发出去的 —— 它的缩进跟 chunk 不一样，扫它只会报一堆假缺失。
+  //    要防的是**chunk 里漏拿**。
+  const CHUNKS = [
+    "client.editor.js",
+    "client.editor.sections.js",
+    "client.editor.combo.js",
+    "client.editor.switch.js",
+    "client.editor.library.js",
+    "client.picker.js",
+    "client.preview.js",
+  ];
+  const problems = [];
+  for (const file of CHUNKS) {
+    let src;
+    try {
+      src = readFileSync(join(HERE, "..", file), "utf8");
+    } catch {
+      continue; // 文件不在就算了（守卫不该因为少个文件而红）
+    }
+    // ⚠️ **先去掉注释再扫。** 不去的话会报一堆假缺失 ——
+    //    注释里常提到 `ROUTE_ASSIGN`（讲「以前拿过，后来删了」）
+    //    和 `ROUTE_XXX`（当占位符举例），那些不是真的在用。
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, " ") // 块注释
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1 "); // 行注释（避开 http:// 那种）
+    const defined = new Set(
+      [...code.matchAll(/^ {4,10}var (ROUTE_[A-Z0-9_]+) =/gm)].map((m) => m[1]),
+    );
+    const used = new Set([...code.matchAll(/\b(ROUTE_[A-Z0-9_]+)\b/g)].map((m) => m[1]));
+    for (const name of used) {
+      if (!defined.has(name)) problems.push(file + " 用了没拿: " + name);
+    }
+  }
+  eq(
+    problems.join(" | "),
+    "",
+    "**每个用到的 ROUTE_* 都在本文件里拿过**（跨文件共享不算数 —— chunk 是独立作用域）",
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // 「系统提示词」区块（v0.4.0 新增）
 // ══════════════════════════════════════════════════════════════════════════

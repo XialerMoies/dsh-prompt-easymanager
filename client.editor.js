@@ -95,6 +95,21 @@ window.__ModuleLoader__.load({
       var ROUTE_STATE = api.route.ROUTE_STATE;
       var ROUTE_SECTIONS = api.route.ROUTE_SECTIONS;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
+      // ⚠️ **`ROUTE_GLOBAL` 以前漏了拿，于是「全局注入」那个开关一点就炸：**
+      //
+      //        Uncaught ReferenceError: ROUTE_GLOBAL is not defined
+      //            at Object.onToggle (client.editor.js:272)
+      //
+      //    原因是这个 chunk 是**独立作用域**（`create()` 工厂里），
+      //    它**看不见** `client.js` 里那个同名常量 —— 必须像上面四个一样
+      //    从 `api.route` 现取一份。
+      //
+      //    ⚠️ 这个坑很隐蔽：其它路由都拿了，只有它漏了；
+      //       而且 `node --check` 查不出来（语法没错，是运行期才炸）。
+      //       影子层测试也查不出来（真实浏览器才会报）。
+      //       所以下面同时补了一条**静态扫描**守卫（见 client_render_test.mjs）：
+      //       凡是 `fetch(ROUTE_XXX` 用到的，顶部必须有对应的 `var ROUTE_XXX =`。
+      var ROUTE_GLOBAL = api.route.ROUTE_GLOBAL;
             // ⚠️ 这里原来还拿了 `ROUTE_ASSIGN`（按会话分配），但设置面板只写全局层，
       //    所以那份从删掉 sectionScope 起就没人用了 —— 一并删掉。
       //    会话页的 picker 自己拿自己那份，两边互不影响。
