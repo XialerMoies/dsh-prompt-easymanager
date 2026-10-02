@@ -1530,7 +1530,7 @@ const TMP_ID = "zz-test-only";
     eq(
       renamedPreset?.prompts,
       ["format-contract"],
-      "**只改名时内容不许被清空**：" + JSON.stringify(list1.json.presets),
+      "**只改名时内容不许被清空**",
     );
     // 改回去，后面的用例还用「代码」这个 id
     const back = await call(ctx8, PRESETS_PATH, {
