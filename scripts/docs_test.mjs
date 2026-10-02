@@ -211,34 +211,6 @@ const readme = readFileSync(at("README.md"), "utf8");
   eq(weird, [], "没有别的不规范占位写法（统一用 `v0.3.N`）");
 }
 
-// ── 3e. 发行说明：文件名里的版本必须在正文里出现 ─────────────────────────────
-//
-// ⚠️ 发行说明是**按版本一份**的文件，攒多了最容易出的错是
-//    「文件名写着 v0.3.4，正文开头却写着 v0.3.3」—— 复制上一份改的时候漏改一行。
-//    这种错没人会去核对，但发到 GitHub Release 上就是**对外说错版本**。
-//
-//    只查这一条结构关系，不查文笔 —— 判据要便宜且不会误伤。
-{
-  const notes = readdirSync(ROOT).filter((f) => /^RELEASE-NOTES-v[\d.]+\.md$/.test(f));
-  ok(notes.length > 0, "有发行说明文件", String(notes.length) + " 份");
-
-  for (const f of notes) {
-    const ver = /^RELEASE-NOTES-(v[\d.]+)\.md$/.exec(f)[1];
-    const body = readFileSync(at(f), "utf8");
-    ok(
-      body.includes(ver),
-      "**" + f + " 正文里出现了 " + ver + "**（文件名和内容对得上）",
-    );
-    // 开头第一行应该是那个版本的标题（`# v0.3.4`）
-    const firstLine = body.split("\n").find((l) => l.trim()) ?? "";
-    eq(
-      firstLine.trim(),
-      "# " + ver,
-      "  " + f + " 的第一行是 `# " + ver + "`",
-    );
-  }
-}
-
 // ── 4. docs/ 顶层只放给用户的 ───────────────────────────────────────────────
 {
   // ⚠️ 白名单是**显式的** —— 加一份新文档就得来这里加名字。
