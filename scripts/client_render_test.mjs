@@ -1693,12 +1693,17 @@ const renderEditor = (props = {}) =>
         if (n.type === "input" && n.props && n.props["data-section-tag"]) tags.push(n);
         return false;
       });
-      eq(tags.length, 3, "**原生段全列出来了**（改过的那段只出现一次，不重复）");
+      eq(tags.length, 4, "**原生段全列出来了**（改过的段仍与原生段并列显示）");
       const byName = {};
       for (const t of tags) byName[t.props["data-section-tag"]] = t.props.checked;
       eq(byName["harness:identity"], true, "**改过的那段是勾着的**（它归「改动提示词」那块）");
       eq(byName["tool:bash"], true, "没动过的原生段**默认勾着**（= 用 dsh 原版）");
       eq(byName["plan:policy"], false, "**被排除的那段没勾**（= 不进提示词）");
+      eq(
+        tags.filter((t) => t.props["data-section-tag"] === "harness:identity").length,
+        2,
+        "**改动副本和原生段是两个独立 tag**（同名也不互相隐藏）",
+      );
     }
   }
 

@@ -50,17 +50,14 @@ const THREE = native(
   eq(withJunk.excluded, ["c"], "excluded 去重、丢非字符串");
   eq(Object.keys(withJunk.sections), ["a"], "sections 丢掉坏记录和空名字");
 
-  // ⚠️ 同一个名字既 listed 又 excluded → 以 excluded 为准
-  //
-  //    「不要它」是更明确的意图；listed 可能只是没清理干净的历史。
-  //    两个都在的话，判定就会自相矛盾（既进又不进）。
+  // 同名的原生段和改写副本是两套独立勾选：可以同时 listed + excluded。
   const both = normalizeSelection({ listed: ["x"], excluded: ["x"] });
   eq(both.excluded, ["x"], "两边都有 → excluded 生效");
-  eq(both.listed, [], "excluded 优先（从 listed 里清掉）");
+  eq(both.listed, ["x"], "改写副本仍保持 listed");
   eq(
     normalizeSelection({ listed: ["x"], excluded: ["x"], sections: { x: { text: "t" } } }).sections,
-    {},
-    "  被排除的段不保留正文（省地方，也不会被误用）",
+    { x: { text: "t", original: "", originalHash: "e3b0c44298fc1c14", savedAt: "" } },
+    "  改写副本正文独立保留",
   );
 }
 
@@ -163,7 +160,7 @@ const THREE = native(
   );
 }
 
-// ── 7. 改段 + 排除：排除优先（不留正文） ──────────────────────────────────
+// ── 7. 改段 + 排除：原生排除不影响改写副本 ────────────────────────────────
 {
   const sel = applySelectionEdit({
     native: THREE,
@@ -172,8 +169,13 @@ const THREE = native(
     action: "exclude",
   });
   eq(sel.excluded, ["tool:bash"], "排进去了");
-  eq(sel.listed, [], "从 listed 里拿掉");
+  eq(sel.listed, ["tool:bash"], "原生排除不取消改写副本的勾选");
   eq(sel.sections["tool:bash"].text, "我改的", "**取消勾选不丢改写副本**（之后可以重新勾回）");
+  eq(
+    projectSelection({ native: THREE, selection: sel }).plan.find((r) => r.name === "tool:bash").mode,
+    "edited",
+    "原生取消勾选后，仍勾选的改写副本继续注入",
+  );
 }
 
 // ── 8. 勾上 / 不勾：两个名单的语义 ────────────────────────────────────────

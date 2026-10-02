@@ -112,7 +112,6 @@ window.__ModuleLoader__.load({
         var excluded = Array.isArray(current.excluded) ? current.excluded.slice() : [];
         var isListed = listed.indexOf(name) >= 0;
         listed = listed.filter(function (x) { return x !== name; });
-        excluded = excluded.filter(function (x) { return x !== name; });
         if (!isListed) listed.push(name);
         var setter = props.setPresetSelection || function (next) {
           if (props.setPresetSections) props.setPresetSections(next.sections || {});
@@ -128,7 +127,6 @@ window.__ModuleLoader__.load({
       function toggleNativeSection(props, name) {
         var current = props.presetSelection || { listed: [], excluded: [], sections: {}, known: [] };
         var excluded = Array.isArray(current.excluded) ? current.excluded.slice() : [];
-        var listed = Array.isArray(current.listed) ? current.listed.filter(function (x) { return x !== name; }) : [];
         var at = excluded.indexOf(name);
         if (at >= 0) excluded.splice(at, 1);
         else excluded.push(name);
@@ -136,7 +134,7 @@ window.__ModuleLoader__.load({
           if (props.setPresetSections) props.setPresetSections(next.sections || {});
         };
         setter({
-          listed: listed,
+          listed: Array.isArray(current.listed) ? current.listed.slice() : [],
           excluded: excluded,
           sections: Object.assign({}, current.sections || {}),
           known: Array.isArray(current.known) ? current.known.slice() : [],
@@ -283,8 +281,6 @@ window.__ModuleLoader__.load({
           var excluded = {};
           var exList = Array.isArray(sd.excludedSections) ? sd.excludedSections : [];
           for (var xi = 0; xi < exList.length; xi++) excluded[exList[xi]] = true;
-          var edited = {};
-          for (var ti2 = 0; ti2 < tagRows.length; ti2++) edited[tagRows[ti2].name] = true;
 
           var mkTag = function (name, on, keyPrefix, title, onToggle) {
             return react.createElement(
@@ -338,11 +334,12 @@ window.__ModuleLoader__.load({
             );
           }
 
-          // ③ 系统提示词 —— **全部原生段都列出来**，没动的也列
+          // ③ 系统提示词 —— **全部原生段都列出来**。
+          //    改写副本和原生段是两个独立 tag；同名是有意的：一个控制
+          //    原生正文，一个控制改写正文，不能因为改写过就把原生段藏掉。
           var nativeEls = [];
           for (var ni = 0; ni < avail.length; ni++) {
             var nm = avail[ni];
-            if (edited[nm]) continue; // 改过的归上一块
             nativeEls.push(
             (function (nativeName) {
               return mkTag(

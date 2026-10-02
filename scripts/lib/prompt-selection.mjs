@@ -61,10 +61,8 @@ export function emptySelection() {
 /**
  * 校验一份清单。坏数据丢掉，不抛。
  *
- * ⚠️ 处理顺序要紧：**先 `excluded`，再 `listed`**。
- *    反过来的话「同一个名字两边都有」就判错了 —— 先收进 listed 的话，
- *    excluded 那一轮会因为「已经在 listed 里」被跳过，结果两个名单都留着它，
- *    投影时自相矛盾。
+ * `listed` 和 `excluded` 是两套独立勾选：同一个名字可以同时存在，分别
+ * 代表「注入改写副本」和「不注入原生副本」。投影时改写副本优先。
  */
 export function normalizeSelection(raw) {
   const out = emptySelection();
@@ -78,10 +76,10 @@ export function normalizeSelection(raw) {
     out.excluded.push(name);
   }
 
-  // ② 再收勾选名单，**把已排除的滤掉**
+  // ② 改写副本的勾选名单。不要过滤 excluded：两套 tag 必须独立。
   const seen = new Set();
   for (const name of Array.isArray(raw.listed) ? raw.listed : []) {
-    if (typeof name !== "string" || !name || seen.has(name) || exSeen.has(name)) continue;
+    if (typeof name !== "string" || !name || seen.has(name)) continue;
     seen.add(name);
     out.listed.push(name);
   }
@@ -90,7 +88,6 @@ export function normalizeSelection(raw) {
   if (raw.sections && typeof raw.sections === "object" && !Array.isArray(raw.sections)) {
     for (const [name, ov] of Object.entries(raw.sections)) {
       if (typeof name !== "string" || !name) continue;
-      if (exSeen.has(name)) continue;
       const norm = normalizeKeptOverride(ov);
       if (norm !== null) out.sections[name] = norm;
     }
@@ -178,7 +175,7 @@ export function applySelectionEdit({ native, selection, name, action, edit }) {
   }
 
   // ── 有 action：按它调整两个名单 ──────────────────────────────────────
-  next.listed = next.listed.filter((n) => n !== name);
+  if (action !== "exclude") next.listed = next.listed.filter((n) => n !== name);
   next.excluded = next.excluded.filter((n) => n !== name);
 
   if (action === "exclude") {
@@ -252,16 +249,10 @@ export function projectSelection({ native, selection }) {
   for (const s of sections) {
     const live = typeof s.text === "string" ? s.text : "";
 
-    if (excluded.has(s.name)) {
-      plan.push({ name: s.name, mode: "dropped", text: "", drifted: false });
-      dropped += 1;
-      continue;
-    }
-
     const ov = sel.sections[s.name];
-    // A saved edit is only active when it is also listed in the preset.
-    // An empty `listed` is the default "all native sections" state, so an
-    // unlisted edit falls back to the current native text.
+    // Native and edited copies have independent checkboxes. A listed edited
+    // copy wins even when the native copy is excluded; excluding native must
+    // not silently disable the user's separately selected rewrite.
     if (ov && listed.has(s.name)) {
       // 改过的段：用改的那份，并报「官方后来动过没有」
       const drifted = ov.original ? ov.original !== live : false;
@@ -269,6 +260,16 @@ export function projectSelection({ native, selection }) {
       edited += 1;
       continue;
     }
+
+    if (excluded.has(s.name)) {
+      plan.push({ name: s.name, mode: "dropped", text: "", drifted: false });
+      dropped += 1;
+      continue;
+    }
+
+    // A saved edit is only active when it is also listed in the preset.
+    // An empty `listed` is the default "all native sections" state, so an
+    // unlisted edit falls back to the current native text.
 
     plan.push({ name: s.name, mode: "native", text: live, drifted: false });
   }
