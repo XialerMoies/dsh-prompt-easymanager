@@ -279,7 +279,12 @@ window.__ModuleLoader__.load({
           //    光看 `applied` 分不出「没改过」和「明确不要」—— 那边长得一样。
           //    服务端在 `/sections` 的响应里回 `excludedSections`。
           var excluded = {};
-          var exList = Array.isArray(sd.excludedSections) ? sd.excludedSections : [];
+          // Native checkbox state follows the local preset draft. The server
+          // value is only the initial fallback; using it on every render makes
+          // a click appear to do nothing until the preset is saved.
+          var exList = props.presetSelection && Array.isArray(props.presetSelection.excluded)
+            ? props.presetSelection.excluded
+            : (Array.isArray(sd.excludedSections) ? sd.excludedSections : []);
           for (var xi = 0; xi < exList.length; xi++) excluded[exList[xi]] = true;
 
           var mkTag = function (name, on, keyPrefix, title, onToggle) {

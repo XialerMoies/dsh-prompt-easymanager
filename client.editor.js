@@ -556,7 +556,7 @@ function presetById(d, id) {
                       ? "已关掉"
                       : action === "restore"
                         ? "已还原成官方原文"
-                        : "知道了") + "：" + name + (useScope === "session" ? "（仅本会话）" : "（全局）"),
+                    : "知道了") + "：" + name + "（全局）",
                 );
                 return null;
               })

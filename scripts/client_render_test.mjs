@@ -1807,6 +1807,25 @@ const renderEditor = (props = {}) =>
     eq(nextSelections.length, 1, "取消原生段只更新段落草稿");
     eq(nextSelections[0].excluded, ["tool:bash"], "取消原生段只写入 excluded");
     eq(Object.keys(nextSelections[0].sections || {}).length, 0, "取消原生段不创建改动副本");
+
+    const excludedEl = shims.render(
+      comboBox.ComboBlock,
+      comboProps({
+        presetSelection: { listed: [], excluded: ["tool:bash"], sections: {}, known: [] },
+        sectionsData: {
+          availableNative: ["harness:identity", "tool:bash"],
+          // 模拟服务端还没重读到本地草稿。
+          excludedSections: [],
+        },
+      }),
+    );
+    const excludedNative = [];
+    findEl(excludedEl, (n) => {
+      if (n.props && n.props["data-section-tag"] === "tool:bash") excludedNative.push(n);
+      return false;
+    });
+    eq(excludedNative.length, 1, "排除的原生段仍显示在原生栏");
+    eq(excludedNative[0] && excludedNative[0].props.checked, false, "原生草稿状态优先于服务端快照");
   }
 }
 
