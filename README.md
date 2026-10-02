@@ -25,10 +25,10 @@ dsh 的系统提示词是很多段拼起来的：persona、AGENTS.md、技能、
 从 GitHub 装（**推荐**）：
 
 ```powershell
-dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.4
+dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.5
 ```
 
-`#v0.3.4` 是版本标签 —— 换个标签就是换个版本，装哪个版本一目了然。
+`#v0.3.5` 是版本标签 —— 换个标签就是换个版本（最新标签见 [Releases](https://github.com/XialerMoies/dsh-prompt-easymanager/releases)）。
 
 装完**重启 DSH Web**。
 

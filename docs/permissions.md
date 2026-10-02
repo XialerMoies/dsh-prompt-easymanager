@@ -101,7 +101,7 @@ dsh 的安装目录、你的项目文件、任何别的地方。
   "ok": true,
   "phase": "ready",          // starting / ready / failed
   "at": "2026-10-02T05:46:01.418Z",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "dsh": "0.1.7-rc.2",
   "node": "v22.23.2",
   "paths": { "state": "…", "prompts": "…", "catalog": "…" },
@@ -213,14 +213,14 @@ dsh plugin --profile <profile> remove dsh-prompt-easymanager
 在一份**隔离的** `DSH_HOME` 里从 tarball 装、加载、核对、卸载，全程不碰真实配置。
 
 **实测环境**：DSH `0.1.7-rc.2` / Node `22.23.2` / Windows x64。
-**包**：`dsh-prompt-easymanager-0.3.4.tgz`。
+**包**：`dsh-prompt-easymanager-0.3.5.tgz`。
 
 ```
 ① 隔离的 DSH_HOME（临时目录）
 ② dsh plugin --profile evidence add <tgz>          exit 0
 ③ dsh --profile evidence --dump-config             exit 0   dump 里有本插件
 ④ 加载一次，看心跳落不落盘
-     → 落盘了：version = 0.3.4（跟 package.json 一致）
+     → 落盘了：version = 0.3.5（跟 package.json 一致）
      → 且**不含任何用户数据**
 ⑤ dsh plugin --profile evidence remove …           exit 0
 ⑥ 卸载后：插件目录没了，心跳文件**还在**（数据不被卸载删掉）
