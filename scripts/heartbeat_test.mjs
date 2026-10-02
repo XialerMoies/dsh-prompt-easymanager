@@ -46,6 +46,9 @@ function args(over) {
     dshVersion: "0.1.7-rc.2",
     nodeVersion: process.version,
     stateFile: "/x/state.json",
+    // ⚠️ **读和写是两个路径**（老用户升级后是「读老的、写新的」）。
+    //    故意给一个**不同的值** —— 两个一样的话，「有没有报出来」验不出来。
+    stateWriteFile: "/x/state-new.json",
     stateDir: "/x",
     promptsDir: "/x/prompts",
     catalogPath: "/x/prompts/catalog.json",
@@ -69,7 +72,12 @@ function args(over) {
   eq(back.ok, true, "**ready 时 ok 是 true**（人先看这个字段）");
   eq(back.version, PKG.version, "版本跟 package.json 一致");
   eq(back.dsh, "0.1.7-rc.2", "dsh 版本");
-  eq(back.paths.state, "/x/state.json", "状态文件路径");
+  eq(back.paths.state, "/x/state.json", "状态文件路径（读）");
+  // ⚠️ **这条要真的从写出来的文件里读** —— 不能只验「调用方传了」。
+  //    踩过：`makeHeartbeat` 只挑固定几个字段组装 `paths`，
+  //    我在调用方加了入参、忘了在 `makeHeartbeat` 里挑一下 ——
+  //    于是调用方传了、文件里却没有，而测试**照样绿**（它只验了入参）。
+  eq(back.paths.stateWriteFile, "/x/state-new.json", "**状态文件路径（写）也报出来了**");
   eq(back.paths.catalog, "/x/prompts/catalog.json", "库路径");
   eq(back.registered.routes, 8, "路由数");
   eq(back.registered.sectionSlots, 32, "段落槽数");
