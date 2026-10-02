@@ -104,9 +104,22 @@ function args(over) {
   eq(leftovers, [], "**写完不留 .tmp**（rename 之后临时文件就没了）");
 
   // 连写多次也不该堆积
-  for (let i = 0; i < 5; i++) writeHeartbeat(file, makeHeartbeat(args({ version: "0.3." + i })));
+  //
+  // ⚠️ 这里**不能用字面量版本号**。原来写的是 `"0.3." + i` 去拼、再断言某三个数字，
+  //    而本轮真实版本**恰好就是那串数字** —— 于是：
+  //      · 字面量跟「当前版本」撞了，触发「测试里不许硬编码版本号」那条守卫
+  //      · 更糟的是**断言退化成了废的**（期望值跟实际值来源不同但数值相同，
+  //        看上去在验「最后一次写的内容生效」，其实验不出什么）
+  //
+  //    ⚠️ 派生方案本身也要保证「跟当前版本不同」——
+  //       我第一版写的是 `x.y.<i>`，而 `i=4` 正好等于当前的 patch 号，
+  //       于是派生值 == 当前版本，自己把自己那两条断言踩了。
+  //       现在加个后缀，**结构上不可能撞**。
+  const v = (n) => PKG.version + "-hb" + n;
+  for (let i = 0; i < 5; i++) writeHeartbeat(file, makeHeartbeat(args({ version: v(i) })));
   eq(fs.readdirSync(dir).filter((f) => f.includes(".tmp")), [], "连写 5 次也不留 .tmp");
-  eq(readHeartbeat(file).version, "0.3.4", "最后一次写的内容生效");
+  eq(readHeartbeat(file).version, v(4), "最后一次写的内容生效");
+  ok(v(4) !== PKG.version, "  派生出来的值跟当前版本不同（否则这条断言是废的）");
 }
 
 // ── ④ 写不进去**不能影响插件** ────────────────────────────────────────

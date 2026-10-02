@@ -57,7 +57,7 @@ import {
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.3";
+const PLUGIN_VERSION = "0.3.4";
 
 /** 客户端用的路由前缀（客户端半体里有一份同名常量，两边必须一致） */
 export const STATE_PATH = "/api/prompt-easymanager/state";

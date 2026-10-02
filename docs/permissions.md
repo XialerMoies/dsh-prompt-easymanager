@@ -101,7 +101,7 @@ dsh 的安装目录、你的项目文件、任何别的地方。
   "ok": true,
   "phase": "ready",          // starting / ready / failed
   "at": "2026-10-02T05:46:01.418Z",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "dsh": "0.1.7-rc.2",
   "node": "v22.23.2",
   "paths": { "state": "…", "prompts": "…", "catalog": "…" },
@@ -210,35 +210,46 @@ dsh plugin --profile <profile> remove dsh-prompt-easymanager
 
 ## 一次性 Profile 的验证记录
 
-在一份**隔离的** `DSH_HOME` 里从 tarball 装、启动、卸载，全程不碰真实配置。
+在一份**隔离的** `DSH_HOME` 里从 tarball 装、加载、核对、卸载，全程不碰真实配置。
 
 **实测环境**：DSH `0.1.7-rc.2` / Node `22.23.2` / Windows x64。
+**包**：`dsh-prompt-easymanager-0.3.4.tgz`。
 
 ```
-① 初始化一次性 profile（手写 package.json）        exit 0
+① 隔离的 DSH_HOME（临时目录）
 ② dsh plugin --profile evidence add <tgz>          exit 0
-③ dsh --profile evidence --dump-config             exit 0   条目里有本插件
-④ dsh plugin --profile evidence remove …           exit 0   node_modules 与依赖都清掉
+③ dsh --profile evidence --dump-config             exit 0   dump 里有本插件
+④ 加载一次，看心跳落不落盘
+     → 落盘了：version = 0.3.4（跟 package.json 一致）
+     → 且**不含任何用户数据**
+⑤ dsh plugin --profile evidence remove …           exit 0
+⑥ 卸载后：插件目录没了，心跳文件**还在**（数据不被卸载删掉）
 ```
 
-**装进去的东西**（发布包白名单逐项核对过）：
+> ⚠️ **③ 为什么用 `--dump-config` 而不是真启动**：真启动要占
+> `127.0.0.1:3080`，端口被别处占用就是 `EADDRINUSE`（退出码 1），
+> **那跟插件无关**，混在一起会让这条记录说不清话。
+>
+> ⚠️ **别自己造 profile 目录**：`dsh plugin --profile <名>` 会在
+> `$DSH_HOME/profiles/<名>` 下**自己初始化**一份，跟你手写的那个没关系。
+> 第一次就是这么错的：包装到了 dsh 建的那份，却去自己造的目录里找 ——
+> 于是每一项都报「正确地没有」，**那几个 ✔ 全是假阳性**。
+
+**装进去的东西**（发布包白名单逐项核对过，缺 0 项、多 0 项）：
 
 ```
 ✔ 在        package.json  index.js  client.js  client.editor.js
-            cordis.patch.yml  scripts/lib/session-injection.mjs
-            scripts/lib/library-migration.mjs  docs/permissions.md
-✔ 正确地没有  scripts/lib/test-harness.mjs     （测试脚手架）
-✔ 正确地没有  scripts/client_render_test.mjs   （测试）
-✔ 正确地没有  scripts/bump-client-rev.mjs      （开发工具）
-✔ 正确地没有  prompts                          （运行时数据）
-✔ 正确地没有  assets                           （仓库门面图）
+            cordis.patch.yml  README.md  CHANGELOG.md  LICENSE
+            scripts/lib/session-injection.mjs  scripts/lib/heartbeat.mjs
+            docs/permissions.md  docs/install.md
+✔ 正确地没有  scripts/lib/test-harness.mjs       （测试脚手架）
+✔ 正确地没有  scripts/client_render_test.mjs     （测试）
+✔ 正确地没有  scripts/heartbeat_test.mjs         （测试）
+✔ 正确地没有  scripts/bump-client-rev.mjs        （开发工具）
+✔ 正确地没有  scripts/semver_crosscheck.mjs      （开发工具）
+✔ 正确地没有  prompts                            （运行时数据）
+✔ 正确地没有  assets                             （仓库门面图）
 ```
-
-> ⚠️ **① 为什么是「手写」而不是 `--from-default-profile web`**：
-> 那个开关建完 profile 会**立刻启动它**，而默认 web profile 要占用
-> `127.0.0.1:3080` —— 端口被别处占用就是 `EADDRINUSE`（退出码 1），
-> **那跟插件无关**。手写一份等价的 `package.json` 就不会启动，
-> 退出码也就能解释了。
 
 ---
 
