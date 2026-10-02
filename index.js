@@ -1608,9 +1608,9 @@ const jsonOf = (body, status) =>
                   native: [{ name, text: liveText }],
                   selection: sel,
                   name,
-                  // ⚠️ 「关闭」在新模型里就是**不勾**（进 excluded），
-                  //    不再是一个 `disable` 动作。见 prompt-selection.mjs。
-                  action: action === "disable" ? "exclude" : "include",
+                  // 改写只保存副本，默认不进入 listed；用户在组合草稿里
+                  // 勾上后，点击保存预设才会让它参与注入。
+                  action: action === "disable" ? "exclude" : undefined,
                   edit:
                     action === "disable" ? undefined : { text: body.text, original: liveText },
                 }),

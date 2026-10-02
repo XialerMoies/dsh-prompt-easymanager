@@ -247,6 +247,20 @@ const THREE = native(
   });
   eq(sel2.listed, ["tool:bash"], "**原本勾着的，改完仍在清单里**（改正文不该动名单）");
   eq(sel2.sections["tool:bash"].text, "新改动", "  正文更新了");
+
+  // replace/edit 本身只保存副本，不自动启用；启用由组合草稿的勾选决定。
+  const edited = applySelectionEdit({
+    native: THREE,
+    selection: selectionFromNative(),
+    name: "tool:bash",
+    action: undefined,
+    edit: { text: "新的改写" },
+  });
+  eq(edited.listed, [], "**新改写默认未勾选**");
+  eq(projectSelection({ native: THREE, selection: edited }).plan.find((r) => r.name === "tool:bash").mode,
+    "native",
+    "**未勾选时仍使用原生**",
+  );
 }
 
 // ── 10. 换预设：清单里有、但当前装配没有的段 → 报 stale，**不硬塞回去** ────

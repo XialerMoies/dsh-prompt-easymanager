@@ -1361,7 +1361,7 @@ const TMP_ID = "zz-test-only";
     eq(r.status, 200, "有预设了 → 200");
 
     // 落盘：改动在**预设里**，那两张老表**没被动**
-    const disk = diskState();
+    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
     const p = disk.presets[gp.json.id];
     eq(
       p?.selection?.sections?.["harness:identity"]?.text,
@@ -1383,7 +1383,18 @@ const TMP_ID = "zz-test-only";
       "官方身份",
       "  顺手记下了当时的官方原文（漂移基准）",
     );
-    ok(p?.selection?.listed?.includes("harness:identity"), "  并把它记进了「勾选」名单");
+    ok(!p?.selection?.listed?.includes("harness:identity"), "  改写默认未勾选");
+  }
+
+  // 勾选只是草稿意图；保存预设后才进入注入清单。
+  {
+    const disk = diskState();
+    const selection = disk.presets[gp.json.id].selection;
+    selection.listed = ["harness:identity"];
+    await call(ctx7, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "update", id: gp.json.id, selection },
+    });
   }
 
   // ── ③ 装配时真的生效 ──────────────────────────────────────────────────
@@ -1772,10 +1783,20 @@ const TMP_ID = "zz-test-only";
     });
     eq(sec.status, 200, "有预设之后写段落改写 → 200");
 
-    // 🔑 **开关开着 + 有预设 → 改写生效。**（跟上面「没预设」那一版对照）
+    // 改写刚保存时默认未勾选，所以此刻仍是原生。
     a = await asm();
     await l0(a, {}, async () => a);
-    eq(a.sections[0].text, "我改的身份", "**开关开着且有预设 → 段落改写生效**");
+    eq(a.sections[0].text, "官方身份", "**改写未勾选 → 仍是原生**");
+    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
+    const selection = disk.presets[gp9.json.id].selection;
+    selection.listed = ["harness:identity"];
+    await call(ctx9, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "update", id: gp9.json.id, selection },
+    });
+    a = await asm();
+    await l0(a, {}, async () => a);
+    eq(a.sections[0].text, "我改的身份", "**保存并勾选后 → 改写生效**");
   }
 
   // ⚠️ 编辑器读完 POST 的响应后会立刻重新 GET /edit（load()）。
