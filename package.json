@@ -39,6 +39,7 @@
     "client.js",
     "client.*.js",
     "cordis.patch.yml",
+    "scripts/lib/heartbeat.mjs",
     "scripts/lib/library-migration.mjs",
     "scripts/lib/presets.mjs",
     "scripts/lib/prompt-library.mjs",
@@ -49,13 +50,11 @@
     "CHANGELOG.md",
     "LICENSE",
     "docs/permissions.md",
-    "docs/install.md",
-    "docs/system-prompt.md",
-    "docs/section-overrides-design.md"
+    "docs/install.md"
   ],
   "scripts": {
     "harness:check": "node scripts/check-syntax.mjs && node scripts/check-props.mjs",
-    "test": "node scripts/check-props.mjs && node scripts/presets_test.mjs && node scripts/preset_adapter_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/library_migration_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs && node scripts/docs_test.mjs",
+    "test": "node scripts/check-props.mjs && node scripts/presets_test.mjs && node scripts/preset_adapter_test.mjs && node scripts/section_slots_test.mjs && node scripts/section_override_test.mjs && node scripts/section_order_test.mjs && node scripts/prompt_library_test.mjs && node scripts/prompt_store_test.mjs && node scripts/library_migration_test.mjs && node scripts/heartbeat_test.mjs && node scripts/session_injection_test.mjs && node scripts/host_integration_test.mjs && node scripts/client_render_test.mjs && node scripts/docs_test.mjs",
     "test:client": "node scripts/client_render_test.mjs",
     "test:docs": "node scripts/docs_test.mjs",
     "test:store": "node scripts/prompt_store_test.mjs",

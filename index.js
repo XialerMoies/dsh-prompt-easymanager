@@ -49,6 +49,11 @@ import {
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 import { migrateLibraryOutOfPackage } from "./scripts/lib/library-migration.mjs";
+import {
+  writeHeartbeat,
+  makeHeartbeat,
+  cleanupStaleTmp,
+} from "./scripts/lib/heartbeat.mjs";
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
@@ -69,6 +74,14 @@ export const PRESETS_PATH = "/api/prompt-easymanager/presets";
  *    新模型里全局也得指向一条预设，所以这个入口叫 global 更贴切。
  */
 export const GLOBAL_PATH = "/api/prompt-easymanager/global";
+
+/**
+ * 注册了几条路由 —— 心跳里报一个。
+ *
+ * ⚠️ 从上面的常量**手数**，不用运行时集合：心跳是**模块加载时**就要写的，
+ *    那时路由还没注册。数错的话心跳会说谎，所以下面有条测试盯着它。
+ */
+const ROUTE_COUNT = 8;
 
 const STATE_DIR = process.env.DSH_HOME || join(homedir(), ".dsh");
 const STATE_FILE = join(STATE_DIR, "dsh-prompt-easymanager-state.json");
@@ -159,6 +172,71 @@ const LIBRARY_MIGRATION = migrateLibraryOutOfPackage({
 });
 
 /**
+ * 加载心跳的落点。
+ *
+ * ⚠️ **跟状态文件分开放** —— 心跳是诊断信息（每次加载重写、随便删），
+ *    状态文件是用户数据（删了配置就没了）。分开放，删心跳永远不会误伤配置。
+ */
+const HEARTBEAT_FILE = join(STATE_DIR, "dsh-prompt-easymanager-heartbeat.json");
+
+/**
+ * 读 dsh 的版本 —— 心跳里记一个，版本对不上时很多「怪问题」一句话就解释完。
+ *
+ * ⚠️ **不能用固定的相对路径猜**（第一版就是 `../../@deepseek-ai/dsh/package.json`，
+ *    在真实安装位置下猜不中，结果字段一直是 null）。
+ *    从插件自己的目录**往上走**找 `node_modules/@deepseek-ai/dsh`，
+ *    这样不管装在哪（profile 的 node_modules / 本地 link / monorepo）都能找到。
+ */
+function dshVersion() {
+  try {
+    let dir = HERE;
+    for (let up = 0; up < 8; up++) {
+      const p = join(dir, "node_modules", "@deepseek-ai", "dsh", "package.json");
+      if (existsSync(p)) return JSON.parse(readFileSync(p, "utf8")).version ?? null;
+      const parent = dirname(dir);
+      if (parent === dir) break; // 到根了
+      dir = parent;
+    }
+  } catch {
+    /* 读不到就算了 */
+  }
+  return null;
+}
+
+/** 心跳的公共字段（starting / ready 都用这套）。 */
+function heartbeatBase(phase, extra) {
+  return makeHeartbeat({
+    phase,
+    pluginId: PLUGIN_ID,
+    version: PLUGIN_VERSION,
+    dshVersion: dshVersion(),
+    nodeVersion: process.version,
+    stateFile: stateFilePath(),
+    stateDir: STATE_DIR,
+    promptsDir: PROMPTS_DIR,
+    catalogPath: CATALOG_PATH,
+    routeCount: ROUTE_COUNT,
+    sectionCount: SECTION_SLOTS.length,
+    libraryMigration: LIBRARY_MIGRATION,
+    ...extra,
+  });
+}
+
+/**
+ * 写心跳。
+ *
+ * ⚠️ **先写 `starting`，`apply()` 成功后再写 `ready`。**
+ *    「加载了」和「生效了」不是一回事 —— 模块 import 成功但 apply 抛错的话，
+ *    进程还在、文件也读了，可功能是死的。只写一次的话这两种情况看起来一样，
+ *    而那恰恰是最难查的一种失败。
+ *
+ *    ⚠️ 心跳失败**绝不影响插件**（writeHeartbeat 内部已经吞掉了）。
+ */
+function beat(phase, extra) {
+  writeHeartbeat(HEARTBEAT_FILE, heartbeatBase(phase, extra));
+}
+
+/**
  * 老版本内置的那条哨兵提示词的 id。
  *
  * 它叫「不注入」，作用是让用户能在库里点一个选项来表达「什么都不挂」——
@@ -169,6 +247,15 @@ const LIBRARY_MIGRATION = migrateLibraryOutOfPackage({
  * 这个常量只用来**清理老状态里的悬挂 id** —— 见 readState 里的迁移。
  */
 const NONE_SENTINEL = "none";
+
+// 顺手清掉上次被强杀留下的 `.tmp`（原子写理论上不留，被杀在中间的会留）
+cleanupStaleTmp(HEARTBEAT_FILE);
+
+// ── 心跳第一次落盘：**模块活着** ─────────────────────────────────────────
+//
+// 这一刻只知道「文件被 import 了、路径解析成什么、库迁移做了什么」。
+// 真正生效要等 apply()，那时会再写一次 `ready`。
+beat("starting");
 
 /**
  * 找到「这次请求该用哪个注入器」。
@@ -775,7 +862,24 @@ const promptTool = {
 export const name = PLUGIN_ID;
 export const inject = ["tools", "systemPrompt", "connection", "agents"];
 
-export function apply(ctx) {
+/** 心跳里报几个数 —— 「库读出来了吗、几条」一眼可见。 */
+function heartbeatCounts(library) {
+  try {
+    const list = library.list();
+    return { prompts: list.length, errors: list.errors?.length ?? 0 };
+  } catch (err) {
+    return { prompts: null, errors: null, listError: String(err) };
+  }
+}
+
+/**
+ * 真正的 apply 实现。
+ *
+ * ⚠️ 它被外面那层 `apply` 包着，**只是为了写心跳**（出错时把错误落盘）。
+ *    不直接把 try/catch 塞进来，是因为那要给近千行重新缩进 ——
+ *    那种大范围改动最容易改坏东西，能不做就不做。
+ */
+function applyInner(ctx) {
   // ── 提示词库 ──────────────────────────────────────────────────────────────
   const library = createPromptLibrary({ catalogPath: CATALOG_PATH, baseDir: PROMPTS_DIR });
   activeLibrary = library;
@@ -1755,4 +1859,30 @@ const jsonOf = (body, status) =>
   ctx.effect(() => {
     ctx.tools.register(promptTool);
   });
+
+  // ── 心跳第二次落盘：**真的生效了** ───────────────────────────────────────
+  //
+  // ⚠️ 只有跑到这一行才算数。上面的代码抛错的话，心跳会**停在 `starting`**，
+  //    而且磁盘上那份会写明错误（见 catch）——
+  //    「加载了但没生效」这种最难查的情况，从此一眼可辨。
+  beat("ready", { counts: heartbeatCounts(library) });
+}
+
+/**
+ * 插件入口。
+ *
+ * ⚠️ 包一层**只为心跳**：apply 里任何地方抛错，都把错误落盘再往上抛。
+ *
+ *    为什么值得：
+ *      「插件加载了但没生效」是最难查的一种失败 —— 进程在、日志可能没刷出来、
+ *      界面上就是没反应。有了这条，磁盘上那份心跳会直接写明**哪一步炸了、炸在哪**，
+ *      而且错误**继续往上抛**（不吞）—— dsh 该报错还是报错。
+ */
+export function apply(ctx) {
+  try {
+    applyInner(ctx);
+  } catch (err) {
+    beat("failed", { error: err });
+    throw err;
+  }
 }

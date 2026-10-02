@@ -1,6 +1,6 @@
-# DSH提示词管理 · dsh-prompt-easymanager
+# 个人提示词 · dsh-prompt-easymanager
 
-可以自行选择全局范围/单独会话中增加个人提示词或修改系统提示词进行工作。
+为 DeepSeek Harness 的**每个会话**挂载任意几条系统提示词，并直接看到**模型实际收到的**最终结果。
 
 ---
 
@@ -40,7 +40,6 @@ dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.3
 CLI 看不到也没法批。GitHub 直装不受影响。
 
 **装不上、要更新、要卸载？** 见 **[docs/install.md](docs/install.md)**。
-
 **装之前想确认它碰什么？** 见 **[docs/permissions.md](docs/permissions.md)** ——
 读写哪些文件、连什么网络、坏了会怎样、卸载后留什么。摘要：
 **零运行时依赖、零外部服务、不执行任何命令、不碰任何凭据。**
@@ -75,7 +74,8 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-easymanager" -Target $src
 ## 用法
 
 > `order` 插在哪、什么时候生效、目录格式怎么写 —— 都在
-> **[docs/system-prompt.md](docs/system-prompt.md)**，这里只说怎么点。
+> **[system-prompt.md](https://github.com/XialerMoies/dsh-prompt-easymanager/blob/main/docs/system-prompt.md)**，
+> 这里只说怎么点。那份不进发布包，装了插件想看点上面那个链接。
 
 ### 会话头部
 
@@ -178,7 +178,8 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-easymanager" -Target $src
 除了「挂自己的提示词」，还能**单独改写 dsh 原生段落**：改正文、临时关掉、一键还原官方原文。
 官方更新了某一段会标「官方已更新」，你可以选跟随新原文或保留自己的改写。
 
-设计取舍写在 [docs/section-overrides-design.md](docs/section-overrides-design.md)。
+设计取舍写在
+[section-overrides-design.md](https://github.com/XialerMoies/dsh-prompt-easymanager/blob/main/docs/section-overrides-design.md)（同样不进发布包）。
 
 ---
 
@@ -213,7 +214,5 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-easymanager" -Target $src
 下一轮更贵。别在一轮对话里反复切。
 
 ---
-
-## 许可
 
 MIT

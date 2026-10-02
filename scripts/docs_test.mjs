@@ -435,6 +435,106 @@ const readme = readFileSync(at("README.md"), "utf8");
   // ③ 一个都不许是旧的短前缀（改名前的残留）
   const stale = [...idxPaths, ...cliPaths].filter((p) => /^\/api\/prompt-manager\//.test(p));
   eq(stale, [], "**没有改名前的旧前缀残留**");
+
+  // ④ ⚠️ 心跳里报的**路由数**是手数的常量，会漂 —— 盯住它
+  //
+  //    心跳是**模块加载时**写的，那时路由还没注册，所以只能手数。
+  //    数错的话心跳会说谎，而用户正是拿它来判断「注册成功没有」。
+  const declared = Number(/const ROUTE_COUNT = (\d+);/.exec(idx)?.[1] ?? -1);
+  const actual = (idx.match(/^export const \w+_PATH = /gm) ?? []).length;
+  ok(declared > 0, "index.js 里有 ROUTE_COUNT 常量", String(declared));
+  eq(declared, actual, "**ROUTE_COUNT 跟实际路由数一致**（心跳不能报错数）");
+}
+
+// ── 12. 心跳文件 ──────────────────────────────────────────────────────────
+//
+// 它是**诊断工具** —— 用户 `cat` 一下就知道「插件加载了没、读到哪个文件」。
+// 坏掉的话它会**自信地告诉用户错的东西**，而用户正是拿它来查问题的。
+//
+// ⚠️ 它不含用户数据，所以可以放心让用户贴出来求助。
+{
+  const idx = readFileSync(at("index.js"), "utf8");
+  const hb = readFileSync(at("scripts", "lib", "heartbeat.mjs"), "utf8");
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+
+  // ① 跟状态文件分开放 —— 删心跳永远不会误伤配置
+  ok(/heartbeat\.json/.test(idx), "心跳文件名里带 heartbeat");
+  ok(
+    /"dsh-prompt-easymanager-heartbeat\.json"/.test(idx),
+    "**心跳文件名跟状态文件名不一样**（一个诊断、一个用户数据）",
+  );
+
+  // ② 三种状态都要写 —— 「加载了」和「生效了」不是一回事
+  ok(/beat\("starting"\)/.test(idx), "模块加载时写 `starting`");
+  ok(/beat\("ready"/.test(idx), "apply 成功时写 `ready`");
+  ok(/beat\("failed"/.test(idx), "apply 抛错时写 `failed`");
+  ok(
+    /beat\("failed", \{ error: err \}\);\s*throw err;/.test(idx),
+    "**failed 之后继续往外抛**（不吞错误 —— dsh 该报错还是得报错）",
+  );
+
+  // ③ 心跳失败不能影响插件
+  ok(
+    /export function writeHeartbeat[\s\S]*?catch \{[\s\S]*?return false;/.test(hb),
+    "**writeHeartbeat 内部吞掉异常、返回 false**（诊断工具不能拖垮插件）",
+  );
+
+  // ④ 原子写
+  ok(/renameSync/.test(hb), "**用 rename 做原子写**（用户 cat 时不会看到半截 JSON）");
+
+  // ⑤ 心跳里不许出现用户数据 —— 它会被用户贴出来求助
+  ok(!/presetId|assignments|promptIds/.test(hb), "**心跳里没有用户数据字段**");
+
+  // ⑥ 要进发布包（apply 会 import 它）
+  ok(
+    (pkg.files ?? []).includes("scripts/lib/heartbeat.mjs"),
+    "**heartbeat.mjs 在发布包白名单里**（漏了就是装了跑不起来）",
+  );
+}
+
+// ── 13. README 里的相对链接，目标必须真的在发布包里 ────────────────────
+//
+// ⚠️ 这条是踩出来的：把两份设计文档从 `files` 白名单里去掉之后，
+//    README 里那两个相对链接在**包内视图**下就断了 ——
+//    而 README 是装了包的人唯一会读的东西。
+//
+//    注意是**相对链接**才受这个约束：绝对 URL（`https://github.com/…`）
+//    指向仓库，包外也照样能打开，不受白名单影响。
+{
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+  const readme = readFileSync(at("README.md"), "utf8");
+  const files = pkg.files ?? [];
+
+  /** `files` 是 glob 白名单 —— 简单实现一下 `*` 和精确匹配。 */
+  const inPackage = (rel) =>
+    files.some((pattern) => {
+      if (pattern === rel) return true;
+      if (!pattern.includes("*")) return false;
+      const re = new RegExp("^" + pattern.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*") + "$");
+      return re.test(rel);
+    });
+
+  const relative = [];
+  for (const m of readme.matchAll(/\]\(([^)#\s]+\.md)(?:#[^)]*)?\)/g)) {
+    const target = m[1];
+    if (/^https?:/i.test(target)) continue; // 绝对 URL：不受白名单约束
+    relative.push(target);
+  }
+
+  ok(relative.length > 0, "README 里有相对链接要检查", String(relative.length) + " 个");
+
+  const missing = relative.filter((rel) => !existsSync(at(rel)));
+  eq(missing, [], "**README 里的相对链接，文件真的在仓库里**");
+
+  const notInPackage = relative.filter((rel) => existsSync(at(rel)) && !inPackage(rel));
+  eq(
+    notInPackage,
+    [],
+    "**README 里的相对链接，目标也在发布包里**（否则包内视图是断链）",
+  );
+
+  // ⚠️ README 自己也得在包里 —— 不然前面那些检查全都没意义了
+  ok(inPackage("README.md"), "**README 自己在发布包里**");
 }
 
 // ── 断言描述不许在同一个文件里重复 ──────────────────────────────────────

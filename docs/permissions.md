@@ -47,6 +47,7 @@ peerDependencies 无
 | 路径 | 做什么 |
 |---|---|
 | `$DSH_HOME/dsh-prompt-easymanager-state.json` | 读写。预设、会话选了什么、段落改写记录 |
+| `$DSH_HOME/dsh-prompt-easymanager-heartbeat.json` | **只写**。加载心跳（见下） |
 | `$DSH_HOME/prompts/catalog.json` | 读写。提示词库的条目元数据 |
 | `$DSH_HOME/prompts/<id>.md` | 读写。每条提示词的正文 |
 
@@ -54,6 +55,35 @@ peerDependencies 无
 
 **不碰的东西**：插件自己的包目录（只在升级时**读**一次旧位置做迁移）、
 dsh 的安装目录、你的项目文件、任何别的地方。
+
+#### 加载心跳是什么
+
+一份**诊断信息**，每次启动重写，随时可以删。排查「插件到底加载了没、
+读到哪个文件、为什么没生效」的时候，`cat` 一下就行，不用开 F12 翻控制台。
+
+```jsonc
+{
+  "ok": true,
+  "phase": "ready",          // starting / ready / failed
+  "at": "2026-10-02T05:46:01.418Z",
+  "version": "0.3.3",
+  "dsh": "0.1.7-rc.2",
+  "node": "v22.23.2",
+  "paths": { "state": "…", "prompts": "…", "catalog": "…" },
+  "registered": { "routes": 8, "sectionSlots": 32 },
+  "libraryMigration": { "moved": false, "reason": "新位置已有库" },
+  "counts": { "prompts": 3, "errors": 0 }
+}
+```
+
+- **`ok: false` + `phase: "starting"`** = 插件被加载了，但 `apply()` **没跑完** —— 功能是死的
+- **`ok: true` + `phase: "ready"`** = 真的起来了
+- **`phase: "failed"`** = `apply()` 抛错了，`error` 字段里有原因和堆栈
+
+> ⚠️ **心跳里没有任何用户数据**（没有预设名、没有提示词正文），
+> 所以你可以放心把它贴出来求助。
+>
+> ⚠️ **它跟状态文件是两个文件**，故意的 —— 删心跳永远不会误伤配置。
 
 > ⚠️ v0.3.2 之前库在**包内**（`<包>/prompts/`）。那一版会在首次启动时
 > 把库**复制**到 `$DSH_HOME/prompts/`，**原文件保留**。

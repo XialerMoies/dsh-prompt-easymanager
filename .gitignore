@@ -14,6 +14,9 @@ DEV.md
 # 上架到 awesome-dsh-plugin 的照做清单 —— 自用
 上架清单.md
 
+# 浏览器 MCP 的排查记录 —— 自用
+浏览器MCP为什么难用.md
+
 # 本地运行时产生的
 *.log
 .dsh-prompt-easymanager-state.json
