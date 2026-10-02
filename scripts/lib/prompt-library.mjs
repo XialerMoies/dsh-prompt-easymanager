@@ -183,7 +183,9 @@ export function createPromptLibrary({ catalogPath, baseDir }) {
   function readTextOf(entry) {
     if (entry.mode === "none" || !entry.source) return "";
     if (entry.source.kind === "inline") return entry.source.value;
-    const full = join(baseDir, entry.source.value);
+    // `file` comes from catalog.json and is user-editable; keep reads inside
+    // the prompt library just like the write/delete paths below.
+    const full = safeJoin(baseDir, entry.source.value, "正文文件");
     return readFileSync(full, "utf8");
   }
 

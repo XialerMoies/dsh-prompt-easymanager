@@ -96,6 +96,13 @@ ok(
   "错误里有 id 重复",
 );
 
+// catalog.json 里的 file 字段不可信，读取也必须拒绝越出 prompts/。
+writeFileSync(join(dir, "outside.md"), "不应被读取");
+writeCatalog({ prompts: [{ id: "escape", mode: "append", file: "../outside.md" }] });
+lib = createPromptLibrary({ catalogPath, baseDir: promptsDir });
+eq(lib.size(), 0, "越界正文不加载");
+ok(lib.errors().some((e) => e.includes("之外")), "越界读取错误说明目录边界");
+
 // ── 3. catalog 本身坏掉 ──────────────────────────────────────────────────────
 writeFileSync(catalogPath, "{ 这不是 JSON");
 lib = createPromptLibrary({ catalogPath, baseDir: promptsDir });
