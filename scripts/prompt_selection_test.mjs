@@ -260,8 +260,8 @@ const THREE = native(
   });
   eq(edited.listed, [], "**新改写默认未勾选**");
   eq(projectSelection({ native: THREE, selection: edited }).plan.find((r) => r.name === "tool:bash").mode,
-    "native",
-    "**未勾选时仍使用原生**",
+    "pending",
+    "**未勾选时仍使用原生，但保留改写副本供界面展示**",
   );
 }
 

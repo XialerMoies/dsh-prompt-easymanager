@@ -1391,7 +1391,7 @@ const jsonOf = (body, status) =>
               originalHash: "",
               basedOn: ov?.original ?? "",
               basedOnHash: "",
-              action: status === "apply" ? "replace" : null,
+              action: status === "apply" || status === "pending" ? "replace" : null,
               text: row.text ?? "",
               savedAt: ov?.savedAt ?? "",
             };
@@ -1399,6 +1399,9 @@ const jsonOf = (body, status) =>
           const appliedRows = projected.plan
             .filter((r) => r.mode === "edited" || r.mode === "dropped")
             .map((r) => asRow(r, "apply"));
+          const pendingRows = projected.plan
+            .filter((r) => r.mode === "pending")
+            .map((r) => asRow(r, "pending"));
           const untouchedRows = projected.plan
             .filter((r) => r.mode === "native")
             .map((r) => asRow(r, "untouched"));
@@ -1413,6 +1416,8 @@ const jsonOf = (body, status) =>
                 appliedRows.length > 0 ? `改 ${appliedRows.length} 段` : "全部原生",
               /** 会被应用的（含「官方已更新」的） */
               applied: appliedRows,
+              /** 已改写但尚未勾选：展示正文，但不参与注入。 */
+              pending: pendingRows,
               /** apply 里「官方改过这段」的那些（子集，界面上标红） */
               drifted: appliedRows.filter((r) => r.drifted),
               /** 名字已不存在，保留数据但不应用 */
@@ -1677,7 +1682,7 @@ const jsonOf = (body, status) =>
               originalHash: "",
               basedOn: ov?.original ?? "",
               basedOnHash: "",
-              action: status === "apply" ? "replace" : null,
+              action: status === "apply" || status === "pending" ? "replace" : null,
               text: row.text ?? "",
               savedAt: ov?.savedAt ?? "",
             };
@@ -1685,6 +1690,9 @@ const jsonOf = (body, status) =>
           const appliedRows = projected.plan
             .filter((r) => r.mode === "edited")
             .map((r) => asRow(r, "apply"));
+          const pendingRows = projected.plan
+            .filter((r) => r.mode === "pending")
+            .map((r) => asRow(r, "pending"));
           const droppedRows = projected.plan
             .filter((r) => r.mode === "dropped")
             .map((r) => asRow(r, "apply"));
@@ -1715,6 +1723,7 @@ const jsonOf = (body, status) =>
                     ? "全部原生"
                     : "",
               applied: allApplied,
+              pending: pendingRows,
               drifted: allApplied.filter((r) => r.drifted),
               stale: staleRows,
               untouched: untouchedRows,

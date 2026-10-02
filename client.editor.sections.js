@@ -54,6 +54,7 @@ window.__ModuleLoader__.load({
 
       function sectionBadge(row) {
         if (row.status === "stale") return { text: "已失效", style: BADGE_WARN };
+        if (row.status === "pending") return { text: "已改写，未勾选", style: BADGE_OFF };
         if (row.status === "untouched") return { text: "官方原文", style: BADGE_MUTED };
         if (row.action === "disable") return { text: "未勾选", style: BADGE_OFF };
         if (row.drifted && !row.driftAcknowledged) return { text: "官方已更新", style: BADGE_WARN };
@@ -64,10 +65,12 @@ window.__ModuleLoader__.load({
         var badge = sectionBadge(row);
         var isOpen = props.openSection === row.name;
         // 显示什么：改写过的显示用户的，否则显示官方原文
-        var shown = row.status === "apply" && row.action === "replace" ? row.text : row.original;
+        var shown = (row.status === "apply" || row.status === "pending") && row.action === "replace"
+          ? row.text
+          : row.original;
         var draft = props.sectionDrafts[row.name];
         var editing = typeof draft === "string";
-        var changed = row.status === "apply";
+        var changed = row.status === "apply" || row.status === "pending";
 
         var cardChildren = [
           react.createElement(
@@ -394,7 +397,8 @@ window.__ModuleLoader__.load({
         // 改动过的排前面，方便一眼看到自己动过什么
         var ordered = []
           .concat(props.sections.applied || [])
-          .concat(props.sections.stale || [])
+            .concat(props.sections.pending || [])
+            .concat(props.sections.stale || [])
           .concat(props.sections.untouched || []);
         for (var si = 0; si < ordered.length; si++) items.push(renderSectionCard(ordered[si], props));
 

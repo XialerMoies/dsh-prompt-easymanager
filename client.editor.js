@@ -541,6 +541,7 @@ function presetById(d, id) {
                 setSections(function (prev) {
                   return Object.assign({}, prev || {}, {
                     applied: d.applied,
+                    pending: d.pending,
                     drifted: d.drifted,
                     stale: d.stale,
                     untouched: d.untouched,

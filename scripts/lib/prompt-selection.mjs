@@ -244,6 +244,7 @@ export function projectSelection({ native, selection }) {
   const plan = [];
   let edited = 0;
   let dropped = 0;
+  let pending = 0;
 
   // ── ① 当前装配里的每一段 ─────────────────────────────────────────────
   for (const s of sections) {
@@ -258,6 +259,14 @@ export function projectSelection({ native, selection }) {
       const drifted = ov.original ? ov.original !== live : false;
       plan.push({ name: s.name, mode: "edited", text: ov.text, drifted });
       edited += 1;
+      continue;
+    }
+
+    // Keep an unchecked rewrite visible to the editor while leaving native
+    // text active for injection until the rewrite tag is selected and saved.
+    if (ov) {
+      plan.push({ name: s.name, mode: "pending", text: ov.text, drifted: false });
+      pending += 1;
       continue;
     }
 
@@ -292,9 +301,10 @@ export function projectSelection({ native, selection }) {
     plan: plan.concat(stale),
     counts: {
       total: plan.length,
-      native: plan.length - edited - dropped,
+      native: plan.length - edited - dropped - pending,
       edited,
       dropped,
+      pending,
       unlisted: unlisted.length,
     },
     stale,
@@ -325,7 +335,7 @@ export function applyProjection(sections, projected) {
   }
   const byName = new Map();
   for (const row of projected.plan) {
-    if (row.mode === "stale") continue;
+    if (row.mode === "stale" || row.mode === "pending") continue;
     byName.set(row.name, row.text);
   }
   let changed = 0;
