@@ -309,10 +309,45 @@ window.__ModuleLoader__.load({
        */
       function presetLabelOf(p) {
         if (!p) return "系统提示词";
+        // 预设是用户明确命名的配置。即使它只包含系统段落，也要显示这个名字，
+        // 否则会和“系统提示词（原生）”混成同一项，选中后无法确认自己用的是哪套。
+        if (typeof p.name === "string" && p.name.trim()) return p.name.trim();
         var ps = Array.isArray(p.prompts) ? p.prompts : [];
         if (ps.length > 0) return p.name || "（无名预设）";
         var n = p.sections && typeof p.sections === "object" ? Object.keys(p.sections).length : 0;
         return n > 0 ? "系统提示词 · 改" : "系统提示词";
+      }
+
+      /** 纯原生预设与选择器里的“系统提示词（原生）”是同一个效果，隐藏重复项。 */
+      function isNativePreset(p) {
+        // 只隐藏内置默认预设。用户新建的空配置也许有自己的名字，不能因为内容
+        // 恰好为空就从选择器里抹掉。
+        if (!p || (p.name !== "系统提示词（原生）" && p.name !== "系统提示词")) return false;
+        if (!p || (Array.isArray(p.prompts) && p.prompts.length > 0)) return false;
+        if (p.sections && typeof p.sections === "object" && Object.keys(p.sections).length > 0) return false;
+        var s = p.selection;
+        if (!s || typeof s !== "object") return true;
+        return !(Array.isArray(s.listed) && s.listed.length > 0) &&
+          !(Array.isArray(s.excluded) && s.excluded.length > 0) &&
+          !(s.sections && typeof s.sections === "object" && Object.keys(s.sections).length > 0);
+      }
+
+      /** 给同名预设加序号，避免不同 id 在选择器里看起来像重复项。 */
+      function presetDisplayLabel(list, index) {
+        var p = list[index] || {};
+        var base = presetLabelOf(p);
+        var total = 0;
+        var order = 0;
+        for (var i = 0; i < list.length; i++) {
+          if (presetLabelOf(list[i]) === base) {
+            total++;
+            if (i <= index) order++;
+          }
+        }
+        // 选择器另有一条“系统提示词（原生）”入口；即使预设刚好也叫这个名字，
+        // 也要明确标出它是预设，避免出现两个一模一样的选项。
+        if (base === "系统提示词（原生）") base += " · 预设";
+        return total > 1 ? base + "（" + order + "）" : base;
       }
       function metaOf(props) {
         var d = props.data;
@@ -346,6 +381,11 @@ window.__ModuleLoader__.load({
         var ex = props.extras || null;
         if (list.length === 0 && ex && Array.isArray(ex.presets)) {
           list = ex.presets.filter(Boolean);
+        }
+        list = list.filter(function (p) { return !isNativePreset(p); });
+        // 统一用预设的实际名字，并为同名副本加序号。
+        for (var li = 0; li < list.length; li++) {
+          list[li] = Object.assign({}, list[li], { label: presetDisplayLabel(list, li) });
         }
         var g = (ex && ex.global) || d.global || {};
         // ⚠️ 会话自己选的那条：
@@ -576,16 +616,16 @@ window.__ModuleLoader__.load({
         //    新会话什么都不挂。只判 `presetId` 是字符串的话，开关关掉之后
         //    它**仍然指着上次选的那条**，于是显示成「测试t-1」（用户报的
         //    「初始会话页显示的预设是测试t-1」就是这么来的）。
-        var label = "系统提示词";
+        var label = "系统提示词（原生）";
         if (
           data &&
           data.global &&
           data.global.enabled === true &&
           typeof data.global.presetId === "string"
         ) {
-          var list = Array.isArray(data.presets) ? data.presets : [];
+          var list = Array.isArray(data.presets) ? data.presets.filter(function (p) { return !isNativePreset(p); }) : [];
           for (var i = 0; i < list.length; i++) {
-            if (list[i] && list[i].id === data.global.presetId) label = list[i].label || list[i].name;
+            if (list[i] && list[i].id === data.global.presetId) label = list[i].name || list[i].label;
           }
         }
 
@@ -685,7 +725,9 @@ window.__ModuleLoader__.load({
 
         var d = props.data;
         var g = (d && d.global) || {};
-        var list = d && Array.isArray(d.presets) ? d.presets : [];
+        var list = d && Array.isArray(d.presets)
+          ? d.presets.filter(function (p) { return !isNativePreset(p); })
+          : [];
         var rows = [
           react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
             react.createElement("span", { key: "t", style: MENU_LABEL }, "新会话用哪套"),
@@ -735,7 +777,7 @@ window.__ModuleLoader__.load({
             },
             [
               react.createElement("span", { key: "g", style: MENU_MARK }, nativeOn ? "✓" : ""),
-              react.createElement("span", { key: "l", style: MENU_TEXT }, "系统提示词"),
+              react.createElement("span", { key: "l", style: MENU_TEXT }, "系统提示词（原生）"),
               react.createElement("span", { key: "s", style: MENU_HINT }, "不挂任何自设提示词"),
             ],
           ),
@@ -776,7 +818,7 @@ window.__ModuleLoader__.load({
               },
               [
                 react.createElement("span", { key: "g", style: MENU_MARK }, active ? "✓" : ""),
-                react.createElement("span", { key: "l", style: MENU_TEXT }, p.label || p.name),
+                react.createElement("span", { key: "l", style: MENU_TEXT }, presetDisplayLabel(list, i)),
                 p.summary ? react.createElement("span", { key: "s", style: MENU_HINT }, p.summary) : null,
               ],
             ),

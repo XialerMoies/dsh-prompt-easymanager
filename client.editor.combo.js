@@ -39,6 +39,9 @@ window.__ModuleLoader__.load({
       var SELECT_SM = api.style.SELECT_SM;
       var STATUS_LINE = api.style.STATUS_LINE;
       var TAG = api.style.TAG;
+      // 只在前端草稿里使用的哨兵：选中「新建」后，当前内容会作为新预设保存，
+      // 不会误覆盖当前已选中的那条预设。
+      var NEW_PRESET_SENTINEL = "__new_preset__";
 
       /**
        * 卡片体的内容：勾选网格（已选的排前面）。
@@ -314,7 +317,7 @@ window.__ModuleLoader__.load({
           var rowStyle = { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" };
           var headStyle = Object.assign({}, STATUS_LINE, { fontWeight: 600 });
 
-          // ① 个人提示词 —— 勾了哪几条（列表本身在下面的 grid 里）
+          // ① 个人提示词 —— 勾了哪几条（列表放在这个标题下面）
           //
           // ⚠️ 优先看**草稿**（用户正在勾的那份）；没有草稿才回落到
           //    全局那条预设存的条数。看错的话数字会跟下面清单对不上。
@@ -363,13 +366,14 @@ window.__ModuleLoader__.load({
               react.createElement(
                 "div",
                 { key: "l", style: headStyle },
-                "📁 个人提示词" + (personalOn > 0 ? "（勾了 " + personalOn + " 条）" : "（一条没勾）"),
+                "个人提示词" + (personalOn > 0 ? "（勾了 " + personalOn + " 条）" : "（一条没勾）"),
               ),
               react.createElement(
                 "div",
                 { key: "h", style: Object.assign({}, STATUS_LINE, { marginBottom: "8px" }) },
                 personalOn > 0 ? "要注入的提示词在下面的清单里打勾。" : "下面清单里打勾就会加进来。",
               ),
+              grid,
             ]),
           ];
 
@@ -378,7 +382,7 @@ window.__ModuleLoader__.load({
               react.createElement(
                 "div",
                 { key: "l", style: headStyle },
-                "📁 改动提示词" + (editedEls.length > 0 ? "（" + editedEls.length + " 段）" : "（还没改过）"),
+                "改动提示词" + (editedEls.length > 0 ? "（" + editedEls.length + " 段）" : "（还没改过）"),
               ),
               editedEls.length > 0
                 ? react.createElement("div", { key: "t", style: rowStyle }, editedEls)
@@ -395,7 +399,7 @@ window.__ModuleLoader__.load({
               react.createElement(
                 "div",
                 { key: "l", style: headStyle },
-                "📁 系统提示词（原生 " + nativeEls.length + " 段）",
+                "系统提示词（原生 " + nativeEls.length + " 段）",
               ),
               nativeEls.length > 0
                 ? react.createElement("div", { key: "t", style: rowStyle }, nativeEls)
@@ -419,7 +423,7 @@ window.__ModuleLoader__.load({
           return react.createElement("div", { key: "sections-area" }, groups);
         };
 
-        return react.createElement("div", null, [grid, sectionsArea()]);
+        return react.createElement("div", null, [sectionsArea()]);
       }
 
       /**
@@ -438,9 +442,24 @@ window.__ModuleLoader__.load({
       function renderCombo(props) {
         var matched = globalPresetOf(props);
         var list = (props.presetsData && props.presetsData.presets) || [];
-        var currentId = matched ? matched.id : "";
-        var currentName = matched ? matched.name : "未保存的配置";
+        var newPresetMode = props.presetName === NEW_PRESET_SENTINEL;
+        var currentId = matched && !newPresetMode ? matched.id : "";
+        var currentName = newPresetMode ? "新建预设" : matched ? matched.name : "未保存的配置";
         var bus = props.presetsBusy || !props.presetsData;
+
+        function presetOptionName(p, index) {
+          var base = p && p.name ? String(p.name) : "未命名预设";
+          var total = 0;
+          var order = 0;
+          for (var i = 0; i < list.length; i++) {
+            if (list[i] && String(list[i].name || "未命名预设") === base) {
+              total++;
+              if (i <= index) order++;
+            }
+          }
+          if (base === "系统提示词（原生）") base += " · 预设";
+          return total > 1 ? base + "（" + order + "）" : base;
+        }
 
         // ⚠️ 这里原来先算了一遍「已选 N 条 · 共 X tokens」给卡片头用。
         //    用户说那些数字不需要，头里就不显示了 —— 计算也跟着删掉，
@@ -465,7 +484,8 @@ window.__ModuleLoader__.load({
               if (ev.key === "Escape") props.setRenaming(false);
             },
             onBlur: function () {
-              props.setRenaming(false);
+              // 新建时保留输入框，避免点击「保存」前被 blur 抢先收起。
+              if (!newPresetMode) props.setRenaming(false);
             },
           });
         } else {
@@ -539,6 +559,23 @@ window.__ModuleLoader__.load({
                   "✎",
                 )
               : null,
+            react.createElement(
+              "button",
+              {
+                key: "new",
+                type: "button",
+                className: "pm-btn",
+                style: bus ? BTN_BUSY : BTN,
+                disabled: bus,
+                title: "以当前勾选内容新建一套预设",
+                onClick: function () {
+                  props.setPresetName(NEW_PRESET_SENTINEL);
+                  props.setRenameDraft("");
+                  props.setRenaming(true);
+                },
+              },
+              "新建",
+            ),
             // 弹簧：把下面那一组动作推到最右
             react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
             // ── 动作**成组** ──────────────────────────────────────────────
@@ -572,8 +609,8 @@ window.__ModuleLoader__.load({
                     list.length === 0
                       ? react.createElement("option", { key: "__empty", value: "" }, "（还没有预设）")
                       : null,
-                    list.map(function (p) {
-                      return react.createElement("option", { key: p.id, value: p.id }, p.name);
+                    list.map(function (p, pIndex) {
+                      return react.createElement("option", { key: p.id, value: p.id }, presetOptionName(p, pIndex));
                     }),
                   ],
                 ),
@@ -712,20 +749,25 @@ window.__ModuleLoader__.load({
     // ⚠️ 草稿要**一起交上去** —— 不然「勾了几条 → 保存」只会存下预设的旧内容。
     var draft = Array.isArray(props.presetDraft) ? props.presetDraft : null;
     var selection = props.presetSelection || null;
-        var matched = globalPresetOf(props);
+        var matched = props.presetName === NEW_PRESET_SENTINEL ? null : globalPresetOf(props);
         if (matched) {
           props.doPreset(Object.assign({ action: "save", name: matched.name }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {}));
           return;
         }
-        var name = props.presetName.trim();
+        var name = (props.renameDraft || props.presetName || "").trim();
+        if (name === NEW_PRESET_SENTINEL) name = "";
         if (!name) {
           props.flash("先给它起个名字");
           props.setRenaming(true);
           props.setRenameDraft("");
           return;
         }
-        props.doPreset(Object.assign({ action: "save", name: name }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {})).then(function () {
+        props.doPreset(Object.assign({ action: "save", name: name }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {})).then(function (saved) {
           props.setPresetName("");
+          props.setRenaming(false);
+          // 新建完成后立即把新预设设为当前项，用户能马上看到名字和生效状态。
+          // 已有预设的“保存”仍然只覆盖当前项，不改变选择。
+          if (saved && saved.id) props.doPreset({ action: "apply", id: saved.id });
         });
       }
 

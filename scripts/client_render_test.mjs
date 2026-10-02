@@ -2303,8 +2303,8 @@ const renderEditor = (props = {}) =>
   ok(text.includes("跟随全局"), "**有「跟随全局」这个选项**（跟「什么都不挂」不是一回事）");
   ok(text.includes("写代码"), "列出各条预设（用 label 显示）");
   ok(
-    text.includes("系统提示词 · 改"),
-    "**只改了系统提示词的那种预设显示成「系统提示词 · 改」**（用户的场景②）",
+    text.includes("全局那条"),
+    "**系统段落预设显示用户给它起的名字**（不能和「系统提示词（原生）」混成一项）",
   );
   globalThis.fetch = realFetch;
 }
