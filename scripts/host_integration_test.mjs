@@ -1256,22 +1256,92 @@ const TMP_ID = "zz-test-only";
   /** 那张退休的表**这一刻**长什么样 —— 用来验「这次写没写它」。 */
   const legacyBefore = JSON.stringify(diskState().sectionOverrides ?? {});
 
-  // ── ① 没有生效的预设 → **409**，并说清怎么办 ──────────────────────────
+  // ── ① 退无可退 → **409**，并说清怎么办 ────────────────────────────────
   //
-  // ⚠️ 这一条是核心：改动总得有地方存。没有预设时就明确拒绝，
+  // ⚠️ 这一条是核心：改动总得有地方存。退无可退时就明确拒绝，
   //    而不是悄悄写进一个没人读的地方（老模型就是这么干的）。
+  //
+  // ⚠️ **「退无可退」= 全局那一层也没有预设。** 第一版没把全局清掉，
+  //    于是 `ensureDefaultPreset` 造的那条默认预设接住了 → 200，
+  //    红的反而是夹具（踩过一次）。
   {
+    // 先把全局指空 —— 制造真正的「退无可退」
+    await call(ctx7, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+    const clear = await call(ctx7, GLOBAL_PATH, { method: "POST", body: { presetId: null } });
+    eq(clear.status, 200, "把全局指空 → 200");
+
     const r = await call(ctx7, SECTIONS_PATH, {
       method: "POST",
       search: "session=session-A",
       body: { name: "harness:identity", action: "replace", text: "无处可存" },
     });
-    eq(r.status, 409, "**没有生效的预设时改段落 → 409**（不静默丢弃）");
+    eq(r.status, 409, "**全局也没预设时改段落 → 409**（不静默丢弃）");
     eq(r.json.outcome, "no-active-preset", "结论说清是「没有生效的预设」");
     ok(
       typeof r.json.error === "string" && r.json.error.includes("先在会话页选一条预设"),
       "  并告诉用户怎么办",
     );
+    // ⚠️ 错误响应里 **没有** `wroteTo`（不是 `null` —— 那个字段只在写成功时才回）。
+    //    第一版我写成期望 `null`，红了。判据用 `undefined`。
+    eq(r.json.wroteTo, undefined, "  错误响应里没有 wroteTo（什么都没写）");
+  }
+
+  // ── ①b **全局有货时，带 session 也该退到全局**（真机上复现过的不一致）──
+  //
+  // ⚠️ 起因：真机上同一个动作，带不带 `session` 参数结果不一样 ——
+  //
+  //        POST /sections            （不带） →  200，写进全局预设
+  //        POST /sections?session=X  （X 设了「不注入」）→  409
+  //
+  //    设置页那一栏**本来就只管全局层**（界面上没有「这一栏写给谁」这个选择），
+  //    所以带上 session 时不该被那个会话的「不注入」挡住。
+  //
+  //    ⚠️ 但**会话自己选了预设时不许退** —— 那是用户明确的选择，
+  //       退到全局会让「改 A 会话的段落」悄悄改了所有会话。见 ①c。
+  {
+    const gp0 = await call(ctx7, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "save", name: "七号全局-退路", prompts: [] },
+    });
+    eq(gp0.status, 200, "先造一条全局预设");
+    const setG = await call(ctx7, GLOBAL_PATH, { method: "POST", body: { presetId: gp0.json.id, enabled: true } });
+    eq(setG.status, 200, "把全局指到它 → 200");
+    eq(setG.json?.global?.presetId, gp0.json.id, "  全局确实指向它了");
+
+    // 让这个会话显式「不注入」—— 于是它自己没有生效预设
+    await call(ctx7, ASSIGN_PATH, {
+      method: "POST",
+      body: { sessionId: "session-A", presetId: null },
+    });
+
+    const r = await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "harness:identity", action: "replace", text: "退到全局了" },
+    });
+    eq(r.status, 200, "**会话没生效预设、但全局有 → 200**（原来这里 409）");
+    if (r.status !== 200) {
+      console.log("  [DEBUG] 实际响应: " + JSON.stringify(r.json));
+      console.log("  [DEBUG] 盘上 global: " + JSON.stringify(diskState().global));
+      console.log("  [DEBUG] 盘上 assignments: " + JSON.stringify(diskState().assignments));
+    }
+    eq(r.json.wroteTo && r.json.wroteTo.fellBack, true, "**并且如实回报「退到了全局」**");
+    eq(r.json.wroteTo && r.json.wroteTo.presetId, gp0.json.id, "  落到的是全局那条预设");
+
+    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
+    eq(
+      disk.presets?.[gp0.json.id]?.selection?.sections?.["harness:identity"]?.text,
+      "退到全局了",
+      "  改动真的写进了全局预设",
+    );
+
+    // 收尾：撤掉这条改写，别影响后面的用例
+    await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "harness:identity", action: "restore" },
+    });
+    await call(ctx7, ASSIGN_PATH, { method: "POST", body: { sessionId: "session-A", follow: true } });
   }
 
   // ── ② 给全局选一条预设之后，改写**写进那条预设** ──────────────────────
@@ -2174,6 +2244,78 @@ rmSync(DSH_HOME, { recursive: true, force: true });
   } finally {
     if (existed) writeFileSync(stateFile, backup, "utf8");
     else if (existsSync(stateFile)) unlinkSync(stateFile);
+  }
+}
+
+// ── 4g. **老文件名迁移：读老名字、写新名字** ────────────────────────────────
+//
+// ⚠️ 这一节是补出来的，起因是**真机验证时发现心跳和日志对不上**：
+//
+//     启动日志：从旧状态文件读取配置（…-manager-state.json），
+//               **下次写入会落到新文件**
+//     心跳：    stateFile 报的是**旧文件**
+//
+//    挖下去发现是 `writeState` 用的也是「读哪个」那个函数 ——
+//    于是**只要老文件还在，就永远写回老文件**，新文件永远长不出来。
+//    **日志说了两年的话，代码没做。**
+//
+//    为什么一直没有测试发现：`.mjs` 里搜 `dsh-prompt-manager-state`
+//    一条都没有 —— 这条路径**从来没被测过**。
+//
+// 语义（写下来免得以后又走偏）：
+//
+//     读   有老文件 → 读老的（老用户升级后配置不丢）
+//     写   **一律写新的** → 第一次写就完成迁移
+//     老文件 **保留不动** → 用户后悔了还能翻回去
+{
+  const NEW_FILE = join(DSH_HOME, "dsh-prompt-easymanager-state.json");
+  const OLD_FILE = join(DSH_HOME, "dsh-prompt-manager-state.json");
+  const existed = { new: existsSync(NEW_FILE), old: existsSync(OLD_FILE) };
+  const backup = {
+    new: existed.new ? readFileSync(NEW_FILE, "utf8") : null,
+    old: existed.old ? readFileSync(OLD_FILE, "utf8") : null,
+  };
+  try {
+    mkdirSync(DSH_HOME, { recursive: true });
+    // 清掉新文件、只留老的 —— 模拟「老用户刚升级上来」
+    if (existsSync(NEW_FILE)) unlinkSync(NEW_FILE);
+    writeFileSync(
+      OLD_FILE,
+      JSON.stringify({ version: 1, assignments: {}, defaults: [], sectionOverrides: {}, enabled: false }, null, 2),
+      "utf8",
+    );
+
+    // 读一次 → 应该读的是**老文件**（配置不丢）
+    const before = await call(ctx, STATE_PATH, { method: "GET" });
+    eq(before.status, 200, "只有老文件时也能读（升级后配置不丢）");
+
+    // 触发一次写
+    await call(ctx, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+
+    // ⚠️ **关键断言：新文件必须长出来**
+    ok(
+      existsSync(NEW_FILE),
+      "**写一次之后新文件长出来了**（原来永远写回老文件，新文件永远不出现）",
+    );
+
+    // 老文件**保留不动** —— 用户后悔了还能翻回去
+    const oldNow = JSON.parse(readFileSync(OLD_FILE, "utf8"));
+    eq(oldNow.version, 1, "**老文件保留不动**（内容没被改写）");
+
+    // 再读一次 → 这次该读新文件了（迁移幂等）
+    const after = await call(ctx, STATE_PATH, { method: "GET" });
+    eq(after.status, 200, "迁移后还能读");
+    const diskNew = JSON.parse(readFileSync(NEW_FILE, "utf8"));
+    eq(
+      typeof diskNew.global === "object" && diskNew.global !== null,
+      true,
+      "**新文件里是完整的新结构**（不是半个）",
+    );
+  } finally {
+    if (existed.new) writeFileSync(NEW_FILE, backup.new, "utf8");
+    else if (existsSync(NEW_FILE)) unlinkSync(NEW_FILE);
+    if (existed.old) writeFileSync(OLD_FILE, backup.old, "utf8");
+    else if (existsSync(OLD_FILE)) unlinkSync(OLD_FILE);
   }
 }
 

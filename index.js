@@ -107,7 +107,7 @@ const STATE_FILE = join(STATE_DIR, "dsh-prompt-easymanager-state.json");
  */
 const LEGACY_STATE_FILE = join(STATE_DIR, "dsh-prompt-manager-state.json");
 
-/** 这次请求该读哪个状态文件。 */
+/** 这次请求该**读**哪个状态文件。 */
 function stateFilePath() {
   try {
     if (existsSync(STATE_FILE)) return STATE_FILE;
@@ -133,6 +133,30 @@ function stateFilePath() {
   return STATE_FILE;
 }
 let legacyNoticeDone = false;
+
+/**
+ * 这次请求该**写**哪个状态文件。
+ *
+ * ⚠️ **写一律写新名字 —— 不跟读那条走。**
+ *
+ *    原来 `writeState` 用的也是 `stateFilePath()`，于是**只要老文件还在，
+ *    就永远写回老文件**，新文件永远长不出来。而启动时那句日志说的是
+ *    「下次写入会落到新文件」—— **日志跟代码不一致，日志在骗人。**
+ *
+ *    （真机验证时发现的：心跳里 `paths.state` 报的是老文件名，
+ *      而启动日志说会迁到新文件。两者对不上才挖出来。）
+ *
+ *    现在的语义：
+ *
+ *        读   有老文件 → 读老的（老用户升级后配置不丢）
+ *        写   **一律写新的** → 第一次写就完成迁移
+ *        老文件 **保留不动** → 用户后悔了还能翻回去看
+ *
+ *    迁移是幂等的：新文件一旦出现，`stateFilePath()` 就只读它了。
+ */
+function stateWritePath() {
+  return STATE_FILE;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -218,7 +242,18 @@ function heartbeatBase(phase, extra) {
     version: PLUGIN_VERSION,
     dshVersion: dshVersion(),
     nodeVersion: process.version,
+    /**
+     * ⚠️ **读和写是两个路径，要分开报。**
+     *
+     *    老用户升级后是「读老的、写新的」—— 只报一个的话，
+     *    看心跳的人分不清「配置从哪读的」和「改动会落到哪」。
+     *
+     *    真机验证时踩过：心跳只报了老路径，而启动日志说「下次写入会落到新文件」，
+     *    两者对不上，我以为是心跳报错了 —— 实际是**写那条路一直没走对**
+     *    （`writeState` 跟着读的路径走，于是永远写回老文件）。
+     */
     stateFile: stateFilePath(),
+    stateWriteFile: stateWritePath(),
     stateDir: STATE_DIR,
     promptsDir: PROMPTS_DIR,
     catalogPath: CATALOG_PATH,
@@ -693,7 +728,7 @@ function ensureDefaultPreset(out) {
 }
 
 /**
- * 把一份「勾选清单」的改动**写进这会话生效的那条预设**。
+ * 把一份「勾选清单」的改动**写进该落的那条预设**。
  *
  * ⚠️ **这是老 `/sections` 路由跟新模型的桥。**
  *
@@ -708,20 +743,50 @@ function ensureDefaultPreset(out) {
  *    注入验证逮到的：把「没有预设就返回 null」注入掉之后，测试**照样全绿**，
  *    因为桥接把老改写塞回来了。
  *
+ * ⚠️ **`fallbackToGlobal`：带 session 但那个会话没有生效预设时，退到全局那条。**
+ *
+ *    真机上复现出来的（一个真 bug）：
+ *
+ *        POST /sections           （不带 session） →  200，写进全局预设
+ *        POST /sections?session=X （X 设了「不注入」）→  409，写不了
+ *
+ *    同一个逻辑动作，带不带参数结果不一样 —— 而设置页那一栏**本来就只管全局层**
+ *    （界面上没有「这一栏是写给谁的」这个选择）。所以带上 session 时
+ *    不该被那个会话的「不注入」挡住。
+ *
+ *    ⚠️ **但会话自己选了预设时不许退** —— 那是用户明确的选择，
+ *       退到全局会让「改 A 会话的段落」悄悄改了所有会话。
+ *
  * @param {object} args
- * @param {string} args.sessionId
- * @param {number} [args.expectRevision]  没用上，留个位（写盘是整表覆盖）
+ * @param {string} [args.sessionId]
+ * @param {boolean} [args.fallbackToGlobal]  没有生效预设时退到全局那条
  * @param {(sel: object) => object} args.edit  收一份清单、返回改完的清单
- * @returns {{ok: true, presetId: string} | {ok: false, outcome: string, error: string}}
+ * @returns {{ok: true, presetId: string, via: string, fellBack?: boolean}
+ *          | {ok: false, outcome: string, error: string}}
  */
-function editActivePresetSelection({ sessionId, edit }) {
+function editActivePresetSelection({ sessionId, fallbackToGlobal = false, edit }) {
   const s = readState();
-  const found = presetForSession({
+  let found = presetForSession({
     sessionId,
     assignments: s.assignments,
     global: s.global,
     presets: s.presets,
   });
+  let fellBack = false;
+
+  if (fallbackToGlobal && (!found || !found.preset)) {
+    // 退到全局那条 —— 但**只在全局这一层确实有一条**的时候。
+    // 全局没指预设（或指的那条不在了）时给一个说得清的错误。
+    const gp =
+      typeof s.global?.presetId === "string" && s.presets[s.global.presetId]
+        ? s.presets[s.global.presetId]
+        : null;
+    if (gp) {
+      found = { id: s.global.presetId, preset: gp, source: "global" };
+      fellBack = true;
+    }
+  }
+
   if (!found || !found.preset) {
     return {
       ok: false,
@@ -738,7 +803,9 @@ function editActivePresetSelection({ sessionId, edit }) {
     return { ok: false, outcome: "bad-preset", error: "改完之后预设不合法（名字丢了？）" };
   }
   writeState({ presets: { ...s.presets, [found.id]: next } });
-  return { ok: true, presetId: found.id };
+  // ⚠️ `via` / `fellBack` 要回传 —— 界面得能说清「这条改动写到哪儿去了」。
+  //    退了的话尤其要说，不然用户以为改的是当前会话。
+  return { ok: true, presetId: found.id, via: found.source ?? "unknown", fellBack };
 }
 
 /**
@@ -887,8 +954,10 @@ function writeState(state) {
       hasLoaded: onDisk.hasLoaded === true,
       updatedAt: new Date().toISOString(),
     };
-    // ⚠️ 写**一律写新名字** —— 这样读一次就迁过来了，老文件留着不动。
-writeFileSync(stateFilePath(), JSON.stringify(merged, null, 2), "utf8");
+    // ⚠️ 写**一律写新名字**（`stateWritePath()`）—— 这样第一次写就完成迁移。
+    //    跟着 `stateFilePath()` 走的话，只要老文件还在就永远写回老文件，
+    //    新文件永远长不出来（而日志说会迁移 —— 那就是日志在骗人）。
+    writeFileSync(stateWritePath(), JSON.stringify(merged, null, 2), "utf8");
   } catch {
     /* 持久化失败不影响本次会话内的效果 */
   }
@@ -1419,6 +1488,15 @@ const jsonOf = (body, status) =>
             return jsonOf({ error: "缺少 name" }, 400);
           }
 
+          /**
+           * 这条改动**写到哪儿去了**（由下面的 `commit` 填）。
+           *
+           * ⚠️ **必须声明在这一层**，不能在下面那个 `{}` 块里 ——
+           *    响应是在块**外面**拼的，块里声明的它看不见。
+           *    （写的时候踩过：`ReferenceError: wroteTo is not defined`。）
+           */
+          let wroteTo = null;
+
           // ── ⚠️ 从这一版起，这里**写进预设**，不再写 `sectionOverrides` ──
           //
           //    新模型里段落改写由预设承载（`selection`），那张独立的表不再被读。
@@ -1484,35 +1562,31 @@ const jsonOf = (body, status) =>
               }
             }
 
-            // ── 到这里参数和段落都验过了，再看改动有没有地方存 ──────────────
-            const state0 = readState();
-            const found0 = presetForSession({
-              sessionId,
-              assignments: state0.assignments,
-              global: state0.global,
-              presets: state0.presets,
-            });
-            if (!found0 || !found0.preset) {
-              diag.lastSections = "no-active-preset";
-              return jsonOf(
-                {
-                  ok: false,
-                  outcome: "no-active-preset",
-                  error:
-                    "这个会话没有生效的预设，段落改动无处可存 —— " +
-                    "先在会话页选一条预设，或者把全局注入打开并选一条。",
-                },
-                409,
-              );
-            }
+            // ── 「改动有没有地方存」交给下面的 `commit` 判 ────────────────────
+            //
+            // ⚠️ **这里原来有个早返回的检查，它把 fallback 整个绕过去了。**
+            //
+            //    写这个 fallback 时踩过：在路由里先判一次「有没有生效的预设」，
+            //    没有就 409 —— 而 `editActivePresetSelection` 里那个
+            //    「退到全局」的兜底根本轮不到执行。
+            //    表现是：加完 fallback，测试**一条都没变绿**。
+            //
+            //    判据只能有**一处**。这里不判，让 `commit`（它带 fallback）去判 ——
+            //    它判完还会把「写到哪儿去了」回报上来，比这儿判信息更全。
 
             /** 把一份改好的清单写回那条预设；失败就返回响应对象。 */
+            //
+            // ⚠️ **`fallbackToGlobal: true`** —— 带 session 但那个会话没有生效预设时，
+            //    退到全局那条。理由见 `editActivePresetSelection` 的注释：
+            //    真机上复现过「同一个动作带不带 session 参数结果不一样」。
+            //    设置页那一栏本来就只管全局层，不该被某个会话的「不注入」挡住。
             const commit = (editFn) => {
-              const r = editActivePresetSelection({ sessionId, edit: editFn });
+              const r = editActivePresetSelection({ sessionId, fallbackToGlobal: true, edit: editFn });
               if (!r.ok) {
                 diag.lastSections = r.outcome;
                 return jsonOf({ ok: false, outcome: r.outcome, error: r.error }, 409);
               }
+              wroteTo = r;
               return null;
             };
 
@@ -1624,6 +1698,16 @@ const jsonOf = (body, status) =>
               ok: true,
               action,
               name,
+              /**
+               * 这条改动**写到哪儿去了**。
+               *
+               * ⚠️ 界面要能说清这件事 —— 尤其 `fellBack` 为真时：
+               *    用户带着某个会话来改，而改动落到了**全局那条**预设上，
+               *    不说的话他会以为只影响当前会话。
+               */
+              wroteTo: wroteTo
+                ? { presetId: wroteTo.presetId, via: wroteTo.via, fellBack: wroteTo.fellBack === true }
+                : null,
               summary:
                 allApplied.length > 0
                   ? `改 ${allApplied.length} 段`
