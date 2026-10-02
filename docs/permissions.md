@@ -255,14 +255,14 @@ dsh plugin --profile <profile> remove dsh-prompt-easymanager
 
 ## 测试能保证什么、不能保证什么
 
-`npm test` 跑 **13 个套件**（跑一下会打印实际条数 —— 这里不写死数字，
+`npm test` 跑 **14 个套件**（跑一下会打印实际条数 —— 这里不写死数字，
 写死了每次改动都要来改文档，然后就没人改了）。
 
 **套件分三类，保证的东西不一样：**
 
 | 类别 | 套件（各对应 `scripts/<名字>_test.mjs`） | 在什么上跑 | 能保证 |
 |---|---|---|---|
-| **纯逻辑** | `presets` · `preset_adapter` · `section_slots` · `section_override` · `section_order` · `prompt_library` · `prompt_store` · `library_migration` · `heartbeat` | 无 —— 纯函数，进出都是值 | 算法、边界、坏数据处理 |
+| **纯逻辑** | `presets` · `preset_adapter` · `section_slots` · `section_override` · `section_order` · `prompt_selection` · `prompt_library` · `prompt_store` · `library_migration` · `heartbeat` | 无 —— 纯函数，进出都是值 | 算法、边界、坏数据处理 |
 | **宿主集成** | `session_injection` · `host_integration` | 一份**进程内的桩**，不是真 dsh | 路由契约、装配顺序、状态读写、错误路径 |
 | **界面** | `client_render` | **最小的 react / react-dom 影子层**，不是浏览器 | 组件逻辑、文案、各类畸形数据不炸 |
 | **文档** | `docs` | 读文件 | README 长度/内容边界、包白名单、路由常量一致、版本声明不自相矛盾 |
