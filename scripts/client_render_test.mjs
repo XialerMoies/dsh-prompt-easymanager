@@ -3243,6 +3243,64 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   );
 }
 
+// ── 9a. **UI 字面量里不许有 markdown 星号**（静态扫，比逐个渲染可靠）────────
+//
+// ⚠️ 这条是补出来的，起因是**真机截图里看到了星号**：
+//
+//      「取消勾的**不进提示词**」  ← 那两个星号原样显示在界面上
+//
+//    这个坑**以前踩过两次**（预览面板「**每轮请求都要重算一次**」、
+//    picker 的 logged 块），当时的修法是**在渲染结果里断言**
+//    `!text.includes("**")` —— 但那只覆盖**被渲染到的那两处**。
+//    combo 那块新加的文案没被渲染断言覆盖，于是又漏了一次。
+//
+//    所以改成**静态扫源文件里的字符串字面量**：不管渲染没渲染、测试跑没跑到，
+//    只要源码里有个中文字符串带 `**`，就报出来。
+//
+//    ⚠️ 必须**先剥掉注释** —— 本项目的注释里到处是 `**加粗**`（那是给读代码的人看的），
+//       不剥的话满屏假缺失。
+{
+  const CHUNKS = [
+    "client.js",
+    "client.editor.js",
+    "client.editor.sections.js",
+    "client.editor.combo.js",
+    "client.editor.switch.js",
+    "client.editor.library.js",
+    "client.picker.js",
+    "client.preview.js",
+  ];
+  const bad = [];
+  for (const file of CHUNKS) {
+    let src;
+    try {
+      src = readFileSync(join(HERE, "..", file), "utf8");
+    } catch {
+      continue;
+    }
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, " ") // 块注释
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1 "); // 行注释（避开 http://）
+    // 抓字符串字面量（单双引号、反引号各一份）
+    const lits = [
+      ...code.matchAll(/"((?:[^"\\]|\\.)*)"/g),
+      ...code.matchAll(/'((?:[^'\\]|\\.)*)'/g),
+      ...code.matchAll(/`((?:[^`\\]|\\.)*)`/g),
+    ].map((m) => m[1]);
+    for (const s of lits) {
+      // 只关心**要显示给用户的**：带中文、又带 `**`
+      if (/[\u4e00-\u9fa5]/.test(s) && s.includes("**")) {
+        bad.push(file + ": " + s.slice(0, 60));
+      }
+    }
+  }
+  eq(
+    bad.length === 0 ? "" : bad.join(" | "),
+    "",
+    "**UI 文案里没有 markdown 星号**（纯文本渲染会原样显示出来）",
+  );
+}
+
 // ── 9b. **每个用到的 ROUTE_* 都在本文件里拿过**（防「漏拿一个」）──────────────
 //
 // ⚠️ 这条是补出来的，起因是一个**真机上才发现的 bug**：

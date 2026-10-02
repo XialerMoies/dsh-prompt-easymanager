@@ -1096,7 +1096,9 @@ window.__ModuleLoader__.load({
             parts.push(
               "改写原生 " + overriddenCount + " 段（" + overrideNames.slice(0, 3).join("、") +
                 (overrideNames.length > 3 ? " 等" : "") +
-                "）⚠️这是**全局默认层**，影响所有会话",
+                // ⚠️ **纯文本 UI，不能写 markdown 星号** —— 会原样显示出来。
+                //    这里原来写的是「这是**全局默认层**」，真机上会看到两个星号。
+                "）⚠️这是全局默认层，影响所有会话",
             );
           }
           statusText = parts.join("；");
