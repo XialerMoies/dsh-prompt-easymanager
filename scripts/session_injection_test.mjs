@@ -4,7 +4,7 @@ import { createSessionInjector, sessionKey } from "./lib/session-injection.mjs";
 import { createSuite } from "./lib/test-harness.mjs";
 
 const { ok, eq, done } = createSuite("注入核心测试");
-import { createPromptLibrary } from "./lib/prompt-library.mjs";
+import { createPromptLibrary, estimateTokens } from "./lib/prompt-library.mjs";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -429,6 +429,24 @@ const S = "session-aaaa-1111";
   eq(p.sectionCount, 3, "section 总数");
   eq(p.toolCount, 1, "工具数");
   eq(p.totalTokens, p.sectionTokens + p.contextTokens + p.toolTokens, "totalTokens 是三者和");
+  // 「本插件的增量」—— 相对原生装配多花了多少
+  //
+  // ⚠️ 这组字段是为了回答「我挂的这东西到底花了多少」。
+  //    totalTokens 是**原生 + 我们**的合计，看不出这部分。
+  eq(p.oursSectionCount, 2, "**报出我们自加了几段**");
+  eq(
+    typeof p.oursSectionsTokens,
+    "number",
+    "  并报出那些段落的 token",
+  );
+  ok(p.oursSectionsTokens > 0, "  自加段落的 token 大于 0");
+  // 这个会话没有段落改写 → 改写增量应该是 **0**（不是 null）
+  //
+  // ⚠️ 区别要紧：`null` = 「算不出来，别显示」，`0` = 「算出来了，就是 0」。
+  //    混起来的话界面上会少显示一行，而用户以为没问题。
+  eq(p.overridesDeltaCount, 0, "没改写时改写的处数是 0");
+  eq(p.overridesDeltaTokens, 0, "**没改写时增量是 0，不是 null**（0 和「算不出来」是两回事）");
+  eq(p.overridesSectionsCleared, 0, "没关闭任何段落");
   eq(p.conflict, null, "全追加不报冲突");
   eq(p.logged.ok, true, "会话日志读到了");
   eq(p.logged.text, "模型实际收到的", "日志内容正确");
@@ -680,6 +698,94 @@ rmSync(dir, { recursive: true, force: true });
   const p = await inj.preview("session-logempty");
   eq(p.logged.ok, false, "全空时如实失败");
   ok(p.logged.reason.includes("没有一条带正文"), "原因写清楚，不是含糊的『取不到』");
+}
+
+// ── 21. preview 的「本插件增量」：段落改写那块真的算得对 ────────────────────
+//
+// ⚠️ 上面 18 那个会话没有改写，所以 `overridesDeltaTokens` 是 0 ——
+//    那只能证明「没改写时报 0」，证明不了「有改写时算得对」。
+//    这块是**真会算错**的地方，必须单独钉：
+//
+//      · 改的是 `original`（当前官方原文）还是 `basedOn`（当初依据的旧原文）？
+//        —— 官方改过那段之后这两个不一样，拿错一个数就偏。
+//      · 算法是「分别估算再相减」还是「按字符差换算」？
+//        —— 中文英文的字符/token 比不一样，后者在混排文本上会偏得离谱。
+//      · disable 的记录 text 是空串，增量应该是**负的**。
+{
+  // 两段：一段改写（变长），一段关闭（变空）
+  const LIVE_A = "原生身份说明"; // 6 字 → 约 6 token
+  const NEW_A = "换成了完全不同的、而且明显更长的一段身份说明文字"; // 明显更长
+  const LIVE_B = "很长很长的一段工具用法说明".repeat(8);
+
+  const h = makeAgent(S, {
+    assemble: async () => ({
+      sections: [
+        { name: "harness:identity", text: LIVE_A },
+        { name: "tool:bash", text: LIVE_B },
+      ],
+      contexts: [],
+      tools: [],
+      variables: {},
+    }),
+  });
+
+  const { inj } = freshInjector({
+    // ⚠️ 走真实的数据形状：`resolveOverrides(全局表, 该会话的表)` 的结果。
+    //
+    //    而且**故意让 `original` 和 `basedOn` 不一样** —— 那就是「漂移」：
+    //    用户当初依据 `basedOn` 改的，之后官方更新了那段，现在的原文是 `original`。
+    //    算增量必须比 **`original`**（这次装配实际发生的事），
+    //    比 `basedOn` 就会算错。测试数据里两者一样的话，这个错**验不出来**。
+    getSectionOverrides: () => ({
+      "harness:identity": {
+        action: "replace",
+        text: NEW_A,
+        // 用户当初看到的原文（旧）
+        original: "当初那段很短的原文",
+        // 官方后来更新了 → planOverrides 会用**当前**原文填 `original`
+        originalHash: "hash-a",
+        savedAt: "2026-01-01T00:00:00.000Z",
+      },
+      "tool:bash": {
+        action: "disable",
+        text: "",
+        original: "当初的工具说明（也旧了）",
+        originalHash: "hash-b",
+        savedAt: "2026-01-01T00:00:00.000Z",
+      },
+    }),
+  });
+  inj.seedAgents([h.agent]);
+  const p = await inj.preview(S);
+
+  eq(p.outcome, "ok", "有改写时预览仍然成功");
+  eq(p.overridesDeltaCount, 2, "**报出 2 处改写**");
+  eq(p.overridesSectionsCleared, 1, "**其中 1 处是「关闭」**");
+
+  // ⚠️ 对照必须用 **装配出来的当前原文**（LIVE_A / LIVE_B），
+  //    不是存储里那份旧的 —— 这正是「漂移」要验的点。
+  const t = (s) => estimateTokens(s);
+  const expect = t(NEW_A) - t(LIVE_A) + t("") - t(LIVE_B);
+  eq(p.overridesDeltaTokens, expect, "**增量 = Σ(改写后 − 当前原文)，分别估算再相减**");
+
+  // 再验一次「不是用旧的 basedOn 算的」—— 两个值不同，算错就会露
+  const usingBasedOn = t(NEW_A) - t("当初那段很短的原文") + t("") - t("当初的工具说明（也旧了）");
+  ok(
+    expect !== usingBasedOn,
+    "  对照：用 basedOn 算出来的数**跟正确值不同**（否则这条测不出漂移）",
+  );
+  eq(
+    p.overridesDeltaTokens === expect && p.overridesDeltaTokens !== usingBasedOn,
+    true,
+    "**确认用的是当前原文，不是当初依据的旧原文**",
+  );
+
+  // 关闭那段把很长一段清空了 → 合计必然是负的
+  ok(p.overridesDeltaTokens < 0, "**关闭一大段之后增量是负的**（省了 token）");
+  ok(
+    Math.abs(p.overridesDeltaTokens) >= t(LIVE_B) - t(NEW_A),
+    "  负得够多（至少省下了被关掉那段的量）",
+  );
 }
 
 done();

@@ -39,7 +39,7 @@
 //   dsh 自带的 persona 插件也能设 complete，那是它的事，我们只是把事实报出来。
 
 import { estimateTokens } from "./prompt-library.mjs";
-import { normalizeOverrides } from "./section-overrides.mjs";
+import { normalizeOverrides, planOverrides } from "./section-overrides.mjs";
 
 const SECTION_DEFAULT = "prompt-manager:session-system-prompt";
 
@@ -1090,6 +1090,70 @@ export function createSessionInjector({
       const mySectionNames = new Set(myPrompts.map((p) => p.sectionName));
       const mine = sections.filter((s) => mySectionNames.has(s.name));
 
+      // ── 「我们的增量」：相对**原生装配**多花了多少 ─────────────────────
+      //
+      // ⚠️ 为什么要有这个：总数（totalTokens）是**原生 + 我们**的合计，
+      //    用户看不出「我挂的这东西到底花了多少」。而答案分两块，
+      //    两块都算得出来，不用猜：
+      //
+      //      ① 我们自己的段落：名字是 `prompt-manager:<id>`，
+      //         在 sections 里能直接认出来 —— 这些**整段**都是我们加的
+      //
+      //      ② 段落改写：只改**已有**段落的正文，名字不变，认不出来 ——
+      //         但覆盖记录里存了 `original`（改之前的原文）和 `text`（改写后），
+      //         两者字数之差就是净增量。**这是准确值，不是估算。**
+      //
+      //    ⚠️ 只在能拿到覆盖记录时才算。拿不到就不报这个字段 ——
+      //       宁可没有，也不要给个看着像真的的错数字。
+      const oursSections = mine.reduce((n, s) => n + (s.tokens || 0), 0);
+      const oursSectionCount = mine.length;
+
+      let overridesDelta = null;
+      let overridesDeltaCount = null;
+      let overridesSectionsCleared = null;
+      try {
+        // ⚠️ 这里要**走完整条判定链**，不能只调一半：
+        //
+        //      resolveOverrides(全局表, 该会话的表)   合并两层
+        //        → normalizeOverrides(…)             校验，返回 {name: rec}
+        //        → planOverrides({ overrides, globalSections })   判定
+        //
+        //    第一版我漏了 `planOverrides`，直接拿 `normalizeOverrides` 的返回值
+        //    去取 `.apply` —— 那是个 `{name: rec}` 的字典，根本没有 `.apply`，
+        //    算出来会是 undefined 或垃圾。
+        const merged = normalizeOverrides(
+          typeof getSectionOverrides === "function" ? getSectionOverrides(sessionId) : {},
+        );
+        const plan = planOverrides({
+          overrides: merged,
+          // 官方原文的视图就是这次装配出来的 sections（它们的名字和顺序）
+          globalSections: sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
+        });
+
+        let delta = 0;
+        let n = 0;
+        let cleared = 0;
+        for (const row of plan?.apply ?? []) {
+          // ⚠️ 比的是 **`original`（当前官方原文）** 和 `text`（用户改写后）——
+          //    那才是这次装配实际发生的替换。
+          //    `basedOn` 是「当初依据的旧原文」，官方改过之后它跟现在的不一样，
+          //    拿它算会算错。
+          const before = typeof row.original === "string" ? row.original : "";
+          const after = typeof row.text === "string" ? row.text : "";
+          // ⚠️ **分别估算再相减**，不要用「字符数差」去套估算 ——
+          //    中文 1 字 ≈ 1 token、英文 4 字符 ≈ 1 token，
+          //    拿字符差换算在混排文本上会偏得离谱。
+          delta += estimateTokens(after) - estimateTokens(before);
+          n += 1;
+          if (row.action === "disable") cleared += 1;
+        }
+        overridesDelta = delta;
+        overridesDeltaCount = n;
+        overridesSectionsCleared = cleared;
+      } catch {
+        /* 算不出来就不报 —— 不编一个数 */
+      }
+
       // 替换模式删除后，本插件不可能造成 complete 冲突。
       // 但仍要报一件事：**别的插件**（dsh 自带的 persona）若开启了覆盖，
       // 我们的 section 会整个消失 —— 那时用户看到「挂了却不在结果里」会困惑。
@@ -1123,6 +1187,15 @@ export function createSessionInjector({
         toolTokens,
         totalTokens: sectionTokens + contextTokens + toolTokens,
         sectionsOnlyTokens: sectionTokens,
+        // 「我们的增量」—— 原生装配之上多花的部分。分两块报，因为来源不同：
+        //   oursSectionsTokens   我们**自己加的段落**（整段都是我们的）
+        //   overridesDeltaTokens 段落**改写**带来的净增减（改的可能是原生段落）
+        // ⚠️ 拿不到覆盖记录时 overridesDelta* 是 null —— 不编数字。
+        oursSectionCount,
+        oursSectionsTokens: oursSections,
+        overridesDeltaCount,
+        overridesDeltaTokens: overridesDelta,
+        overridesSectionsCleared,
         sections,
         contexts,
         tools,

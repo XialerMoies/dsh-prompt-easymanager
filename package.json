@@ -25,7 +25,7 @@
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
-    "dsh": ">=0.1.7"
+    "dsh": ">=0.1.7-rc.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0"
   },
   "exports": {
     ".": "./index.js",
@@ -61,7 +61,8 @@
     "test:props": "node scripts/check-props.mjs",
     "test:adapter": "node scripts/preset_adapter_test.mjs",
     "bump:rev": "node scripts/bump-client-rev.mjs",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "test:semver": "node scripts/semver_crosscheck.mjs"
   },
   "publishConfig": {
     "access": "public",
@@ -81,10 +82,11 @@
     },
     "capabilities": {
       "files": {
-        "description": "读写本插件自己的数据目录（$DSH_HOME/dsh-prompt-easymanager-state.json、$DSH_HOME/prompts/）。不读也不写插件包目录以外的其他文件。",
+        "description": "读写本插件自己的数据目录（$DSH_HOME/dsh-prompt-easymanager-state.json、$DSH_HOME/dsh-prompt-easymanager-heartbeat.json、$DSH_HOME/prompts/）。不读也不写插件包目录以外的其他文件。",
         "scope": "plugin-data-only",
         "paths": [
           "$DSH_HOME/dsh-prompt-easymanager-state.json",
+          "$DSH_HOME/dsh-prompt-easymanager-heartbeat.json",
           "$DSH_HOME/prompts/catalog.json",
           "$DSH_HOME/prompts/*.md"
         ]
@@ -110,15 +112,25 @@
         "scope": "session-scoped"
       }
     },
+    "compatibility": {
+      "note": "只声明**有证据**的版本。`tested` = 在这个版本上真跑过；`api-identical` = 没跑过，但我们依赖的两个 dsh 包跟跑过的那个版本**逐字节相同**。没列出的版本不声称能用 —— 可能能用，出了问题欢迎反馈。",
+      "method": "比对这两个包的 lib/index.js（SHA-256 前 16 位）：dsh-system-prompt = FF422AFAC6BA85F8（17395 字节），dsh-agent-instructions = E15B1A6340EA1CB7（53316 字节）。复现：npm pack @deepseek-ai/<包名>@<版本> 后算哈希。",
+      "dshReleases": {
+        "0.1.7-rc.2": "tested",
+        "0.2.0-rc.1": "api-identical",
+        "0.2.0-rc.2": "api-identical"
+      }
+    },
     "data": {
       "location": "$DSH_HOME",
       "files": [
         "dsh-prompt-easymanager-state.json",
+        "dsh-prompt-easymanager-heartbeat.json",
         "prompts/catalog.json",
         "prompts/<id>.md"
       ],
       "survivesUninstall": true,
-      "note": "都是用户数据，卸载**不删**。想清干净就手工删这几个路径。"
+      "note": "都是用户数据，卸载**不删**。心跳那份随时可以删（每次启动会重写）。想清干净就手工删这几个路径。"
     }
   }
 }

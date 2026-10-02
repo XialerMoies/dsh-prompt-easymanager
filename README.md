@@ -211,7 +211,8 @@ New-Item -ItemType Junction -Path "$nm\dsh-prompt-easymanager" -Target $src
 **③ 挂的提示词越多，上下文越贵。**
 
 每条提示词都占 token，而且**改了系统提示词会让模型侧的 prompt cache 失效**，
-下一轮更贵。别在一轮对话里反复切。
+下一轮更贵。别在一轮对话里反复切。它碰什么、测试能保证什么，见
+**[docs/permissions.md](docs/permissions.md)**。
 
 ---
 

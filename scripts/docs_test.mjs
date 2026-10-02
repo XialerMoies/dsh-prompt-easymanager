@@ -537,6 +537,267 @@ const readme = readFileSync(at("README.md"), "utf8");
   ok(inPackage("README.md"), "**README 自己在发布包里**");
 }
 
+// ── 13b. 文档里手抄的值，必须跟真相一致 ───────────────────────────────────
+//
+// ⚠️ **「手抄」是文档最大的腐烂源。** 这一节的由来：
+//
+//    `docs/permissions.md` 的「兼容范围」一节手抄了一份 `engines` JSON，
+//    我改了 `package.json` 的 `engines.dsh`（修预发布版匹配不上的 bug），
+//    **那份手抄的没跟着改** —— 于是文档开始说假话，而且没人会发现。
+//
+//    所以：**凡是文档里出现的、在别处有唯一真相的值，都得有守卫盯着。**
+//    做不到就别抄进去，改成指路（「真相在 package.json」）。
+{
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+  const perms = readFileSync(at("docs", "permissions.md"), "utf8");
+
+  // ① 兼容范围：permissions.md 抄的那份要跟 package.json 一致
+  //
+  // ⚠️ **不能拿 `includes()` 比。** 这条我改过两次：
+  //
+  //    第一版：`ok(perms.includes(pkg.engines.dsh), …)`。
+  //    问题是**子串** —— 把 package.json 改成 `>=0.2.0` 之后，
+  //    文档里 `>=0.2.0-rc.1 <0.3.0-0` 仍然**包含** `>=0.2.0`，
+  //    于是「文档没跟上」这个错**验不出来**。
+  //
+  //    现在改成：从文档的 JSON 块里把 `dsh` 那一行的**值**抠出来，严格相等比对。
+  const jsonBlock = /```json\n([\s\S]*?)```/.exec(perms)?.[1] ?? "";
+  ok(jsonBlock.includes('"engines"'), "文档里有那段 engines JSON 块");
+  const docDsh = /"dsh":\s*"([^"]*)"/.exec(jsonBlock)?.[1] ?? null;
+  const docNode = /"node":\s*"([^"]*)"/.exec(jsonBlock)?.[1] ?? null;
+  eq(docDsh, pkg.engines.dsh, "**permissions.md 里的 engines.dsh 跟 package.json 严格一致**");
+  eq(docNode, pkg.engines.node, "  engines.node 也严格一致");
+
+  // ② 手抄的地方要**明说**自己是手抄的，并指出真相在哪
+  ok(
+    /手抄/.test(perms) && /package\.json/.test(perms),
+    "**文档明说了那是手抄、并指出真相在 package.json**",
+  );
+
+  // ③ 测试套件数：文档说「跑 N 个套件」，N 得对
+  const suiteFiles = readdirSync(at("scripts")).filter((f) => f.endsWith("_test.mjs"));
+  const claimed = Number(/跑 \*\*(\d+) 个套件\*\*/.exec(perms)?.[1] ?? -1);
+  ok(claimed > 0, "文档里写了套件数");
+  eq(claimed, suiteFiles.length, "**文档里的套件数跟实际一致**");
+  // ④ 文档表格里点名的套件，必须真的存在；而且必须**覆盖全部**
+  //
+  //    ⚠️ 这一条**从文档里抠**套件名，不写死一份名单 ——
+  //       写死的话「文档里点了个不存在的套件」根本验不出来（我上一版就是）。
+  //
+  //    ⚠️ 抠的范围要**限定在那一张表里**：整篇文档的反引号词很多
+  //       （`react`、`ctx.systemPrompt.assemble`…），全局抠会抠出一堆不是套件的。
+  //       所以先切出「测试能保证什么」那一节，再只取表格行里的**套件那一列**。
+  const secStart = perms.indexOf("## 测试能保证什么");
+  const secEnd = perms.indexOf("### ⚠️ 它们", secStart);
+  ok(secStart >= 0 && secEnd > secStart, "找得到「测试能保证什么」那一节");
+  const section = perms.slice(secStart, secEnd);
+
+  const fromDoc = new Set();
+  for (const line of section.split("\n")) {
+    if (!line.trim().startsWith("|")) continue; // 只看表格行
+    // ⚠️ **套件名在第二列**（第一列是「类别」）——
+    //    第一版取了 `[1]`，抠出来是空的，还以为是文档格式问题。
+    const suiteCell = line.split("|")[2] ?? "";
+    for (const m of suiteCell.matchAll(/`([a-z][a-z_]+)`/g)) fromDoc.add(m[1]);
+  }
+  ok(fromDoc.size > 0, "从文档表格里抠出了套件名", String(fromDoc.size) + " 个");
+
+  const documented = [...fromDoc].sort();
+  const actual = suiteFiles.map((f) => f.replace("_test.mjs", "")).sort();
+
+  const missing = documented.filter((n) => !actual.includes(n));
+  eq(missing, [], "**文档里点名的套件，实际都存在**（没有指向不存在的东西）");
+
+  const undocumented = actual.filter((n) => !documented.includes(n));
+  eq(undocumented, [], "**每个套件都在文档里被点名了**（新增套件别忘了写进去）");
+}
+
+// ── 14. dsh 版本兼容性声明 ────────────────────────────────────────────────
+//
+// ⚠️ 这一节是**修 bug 修出来的**。
+//
+//    原来 `engines.dsh` 写的是 `>=0.1.7`。看着没问题 —— 直到发现
+//    **semver 的规则是：范围里不含预发布版（`-rc.1` 这种）时，
+//    预发布版本永远匹配不上。** 而我们实际跑的就是 `0.1.7-rc.2`：
+//
+//        semver.satisfies('0.1.7-rc.2', '>=0.1.7')   →   false
+//
+//    也就是说包管理器看到的是「**不兼容当前环境**」。
+//    而且 `>=X` 这种形式**永远够不到下一个预发布版**（0.2.0-rc.1），
+//    所以只能按小版本逐个列：
+//
+//        >=0.1.7-rc.2 <0.2.0-0  ||  >=0.2.0-rc.1
+//
+//    这个语义没法只靠读字符串验 —— 得真的算。所以这里自己实现了一个
+//    **够用的 semver 比较**（只处理 `x.y.z` 和 `x.y.z-pre.n`），
+//    不引第三方依赖（这个包是零依赖的，测试也不该破例）。
+{
+  const pkg = JSON.parse(readFileSync(at("package.json"), "utf8"));
+
+  /** 把 `0.1.7-rc.2` 拆成可比较的元组。预发布标识按 semver 规则比。 */
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(v).trim());
+    if (!m) return null;
+    return {
+      nums: [Number(m[1]), Number(m[2]), Number(m[3])],
+      pre: m[4] ? m[4].split(".") : null,
+    };
+  };
+
+  /** semver 的预发布比较：数字段按数值、字母段按字典，数字 < 字母。 */
+  const cmpPre = (a, b) => {
+    if (a === null && b === null) return 0;
+    if (a === null) return 1; // 正式版 > 预发布版
+    if (b === null) return -1;
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const x = a[i];
+      const y = b[i];
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      const nx = /^\d+$/.test(x);
+      const ny = /^\d+$/.test(y);
+      if (nx && ny) {
+        if (Number(x) !== Number(y)) return Number(x) < Number(y) ? -1 : 1;
+      } else if (nx !== ny) {
+        return nx ? -1 : 1; // 数字标识 < 字母标识
+      } else if (x !== y) {
+        return x < y ? -1 : 1;
+      }
+    }
+    return 0;
+  };
+
+  const cmp = (a, b) => {
+    const A = parse(a);
+    const B = parse(b);
+    for (let i = 0; i < 3; i++) {
+      if (A.nums[i] !== B.nums[i]) return A.nums[i] < B.nums[i] ? -1 : 1;
+    }
+    return cmpPre(A.pre, B.pre);
+  };
+
+  /**
+   * 判断 `version` 是否满足 `range`。
+   *
+   * ⚠️ **含预发布版时的规则**（就是踩的那个坑）：
+   *    预发布版本只有在这个**子句**里、跟它**同一个 x.y.z** 的比较符
+   *    也带预发布标识时才算匹配。
+   *
+   *    第一版我写的是「子句里任何一个比较符带预发布就放行」——
+   *    `scripts/semver_crosscheck.mjs` 拿真 semver 一比就露了：
+   *    对 `>=0.2.0-rc.1` 这个子句，`0.3.0-rc.1` 我判 true、真 semver 判 false。
+   *    虽然当时那个范围下最终结论碰巧一样，但判据不精确就是隐患。
+   */
+  const satisfies = (version, range) => {
+    const V = parse(version);
+    for (const clause of String(range).split("||")) {
+      const parts = clause.trim().split(/\s+/).filter(Boolean);
+      let allOk = true;
+      let preAllowed = false;
+      for (const p of parts) {
+        const m = /^(>=|>|<=|<|=)?\s*(.+)$/.exec(p);
+        const op = m[1] ?? "=";
+        const target = m[2].trim();
+        const T = parse(target);
+        if (!T) {
+          allOk = false;
+          break;
+        }
+        // ⚠️ 必须是**同一个 x.y.z** 才放行预发布版
+        if (T.pre && V.nums[0] === T.nums[0] && V.nums[1] === T.nums[1] && V.nums[2] === T.nums[2]) {
+          preAllowed = true;
+        }
+        const c = cmp(version, target);
+        if (op === ">=" && c < 0) allOk = false;
+        else if (op === ">" && c <= 0) allOk = false;
+        else if (op === "<=" && c > 0) allOk = false;
+        else if (op === "<" && c >= 0) allOk = false;
+        else if (op === "=" && c !== 0) allOk = false;
+        if (!allOk) break;
+      }
+      if (allOk && (V.pre === null || preAllowed)) return true;
+    }
+    return false;
+  };
+
+  // 先验这个自制的比较器本身是对的（不然下面全是空话）
+  eq(satisfies("0.1.7", ">=0.1.7"), true, "比较器：0.1.7 满足 >=0.1.7");
+  eq(satisfies("0.1.7-rc.2", ">=0.1.7"), false, "**比较器：预发布版匹配不上纯数字范围**（就是那个 bug）");
+  eq(satisfies("0.1.7-rc.2", ">=0.1.7-rc.2"), true, "比较器：预发布版匹配同版本的预发布范围");
+  eq(satisfies("0.1.7-rc.1", ">=0.1.7-rc.2"), false, "比较器：rc.1 < rc.2 比得出来");
+  eq(satisfies("0.2.0", ">=0.1.7-rc.2 <0.2.0-0"), false, "比较器：0.2.0 不在 0.2.0-0 之下");
+  eq(satisfies("0.1.8", ">=0.1.7-rc.2 <0.2.0-0"), true, "比较器：0.1.8 在区间内");
+  eq(satisfies("0.2.0-rc.2", ">=0.2.0-rc.1"), true, "比较器：同一 x.y.z 的预发布能比");
+  // ⚠️ 这条是交叉验证逼出来的：不同 x.y.z 的预发布**不该**被放行
+  eq(
+    satisfies("0.3.0-rc.1", ">=0.1.7-rc.2 <0.2.0-0 || >=0.2.0-rc.1"),
+    false,
+    "**比较器：0.3.0-rc.1 不该被 >=0.2.0-rc.1 放行**（跨 x.y.z 的预发布不放行）",
+  );
+
+  const range = pkg.engines?.dsh;
+  ok(typeof range === "string" && range.length > 0, "声明了 engines.dsh", range);
+
+  // ⓪ 当前范围必须**同时**做到：该匹配的匹配、没测过的不放行
+  //
+  //    ⚠️ 这几条是**实测过的版本**（0.1.7-rc.2 上真跑过，0.2.0 的两版
+  //       比对过依赖包哈希）。多放行一个版本 = 声称了没验证过的事。
+  for (const v of ["0.1.7-rc.2", "0.2.0-rc.1", "0.2.0-rc.2"]) {
+    eq(satisfies(v, range), true, "  engines.dsh 覆盖了 " + v);
+  }
+  for (const v of ["0.1.7-rc.1", "0.3.0-rc.1", "0.3.0", "0.0.9"]) {
+    eq(satisfies(v, range), false, "  engines.dsh **没有**放行没测过的 " + v);
+  }
+
+  // ① 声明里列出的版本，必须真的满足 engines.dsh 的范围
+  const listed = Object.keys(pkg.dsh?.compatibility?.dshReleases ?? {});
+  ok(listed.length > 0, "列了兼容版本", String(listed.length) + " 个");
+  const notInRange = listed.filter((v) => !satisfies(v, range));
+  eq(notInRange, [], "**声明兼容的版本都在 engines.dsh 范围内**（否则自相矛盾）");
+
+  // ② 至少有一个是**真跑过**的 —— 全都只是「看着一样」不足以声称兼容
+  const values = Object.values(pkg.dsh.compatibility.dshReleases);
+  ok(
+    values.includes("tested"),
+    "**至少有一个版本标了 `tested`**（全程没跑过就不该声明兼容）",
+    values.join(", "),
+  );
+
+  // ③ 有 `api-identical` 就必须给出**比对方法**，否则那个说法没法复核
+  if (values.includes("api-identical")) {
+    const method = pkg.dsh.compatibility.method ?? "";
+    ok(/SHA-?256|哈希|hash/i.test(method), "**`api-identical` 附了可复核的方法**（哈希怎么算的）");
+    ok(/[0-9A-F]{16}/i.test(method), "  方法里带了**具体哈希值**（不是空口说一样）");
+  }
+
+  // ④ 标了 `tested` 的那个，要是**本机装的那个版本** —— 否则「跑过」从何而来
+  //
+  //    ⚠️ 找不到安装目录就跳过（CI 上可能没有）—— 但**不能静默跳过**，
+  //       要打印出来让人知道这条没验。
+  const nm = join(
+    process.env.USERPROFILE ?? process.env.HOME ?? "",
+    ".dsh",
+    "profiles",
+    "node_modules",
+    "@deepseek-ai",
+    "dsh",
+    "package.json",
+  );
+  if (!existsSync(nm)) {
+    console.log("    ○ 跳过：本机找不到 dsh 安装目录，没法核对 `tested`");
+  } else {
+    const installed = JSON.parse(readFileSync(nm, "utf8")).version;
+    const tested = Object.entries(pkg.dsh.compatibility.dshReleases)
+      .filter(([, v]) => v === "tested")
+      .map(([k]) => k);
+    ok(
+      tested.includes(installed),
+      "**本机装的版本被标了 `tested`**（它就是「跑过」的那个）",
+      "装的 " + installed + " vs 标了 tested 的 " + tested.join(", "),
+    );
+  }
+}
+
 // ── 断言描述不许在同一个文件里重复 ──────────────────────────────────────
 //
 // ⚠️ 描述是断言失败时**唯一的定位信息**。同名两条的话，红了一条你不知道是哪个 ——

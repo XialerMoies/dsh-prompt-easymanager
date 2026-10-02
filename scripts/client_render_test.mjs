@@ -2113,6 +2113,16 @@ const renderEditor = (props = {}) =>
     ["冲突", { outcome: "ok", mode: "replace", sections: [{ name: "x", text: "", tokens: 0, chars: 0 }], conflict: { kind: "k", message: "冲突了", hint: "h" } }],
     ["缺字段", {}],
     ["null 数组项", { outcome: "ok", sections: [null], contexts: [null], tools: [null] }],
+    // ⚠️ 下面三条是「本插件增量」那块的两个边界 —— 踩过：
+    //
+    //    `oursLines()` 一个都报不出来时返回 `null`，而调用处是参数里的展开
+    //    `...oursLines(data)` —— `...null` 会抛
+    //    `TypeError: oursLines is not a function or its return value is not iterable`。
+    //    那句报错**极具误导性**（说 "is not a function"，让人去查作用域），
+    //    实际是返回值不可迭代。这几条钉住「几种情况都不炸」。
+    ["增量：什么都没挂（overridesDeltaTokens 为 null）", { outcome: "ok", sections: [], contexts: [], tools: [], prompts: [], oursSectionsTokens: 0, oursSectionCount: 0, overridesDeltaTokens: null, overridesDeltaCount: null }],
+    ["增量：只有改写、没有自加段落", { outcome: "ok", sections: [], contexts: [], tools: [], prompts: [], oursSectionsTokens: 0, oursSectionCount: 0, overridesDeltaTokens: -85, overridesDeltaCount: 2, overridesSectionsCleared: 1 }],
+    ["增量：有自加段落 + 有改写", { outcome: "ok", sections: [], contexts: [], tools: [], prompts: [{ id: "a", name: "甲", mode: "append", order: 1 }], oursSectionsTokens: 40, oursSectionCount: 1, overridesDeltaTokens: 5, overridesDeltaCount: 1, overridesSectionsCleared: 0 }],
   ];
   for (const [label, previewData] of cases) {
     shims.setStates([data, false, null, previewData, null, null]);
@@ -2122,6 +2132,29 @@ const renderEditor = (props = {}) =>
     } catch (e) {
         ok(false, "卡片渲染不炸: " + label + " —— 抛了 " + e.message);
     }
+  }
+
+  // ── 增量那一行**真的显示出来了**，而且数字对 ──────────────────────────
+  //
+  // ⚠️ 上面那些只保证「不炸」。不炸 ≠ 显示了 —— 返回空数组也能不炸。
+  shims.setStates([data, false, null, {
+    outcome: "ok", sections: [], contexts: [], tools: [], prompts: [],
+    oursSectionsTokens: 40, oursSectionCount: 2,
+    overridesDeltaTokens: -85, overridesDeltaCount: 3, overridesSectionsCleared: 1,
+  }, null, null]);
+  {
+    const text = flattenText(renderPicker({ sessionId: "s1" })).join(" ");
+    ok(text.includes("本插件的增量"), "**显示了「本插件的增量」那一行**");
+    ok(text.includes("自加段落 2 段"), "  报了自加段落的段数");
+    ok(text.includes("40 tokens"), "  报了自加段落的 token");
+    ok(text.includes("段落改写 3 处"), "  报了改写的处数");
+    ok(text.includes("-85 tokens"), "  负数带上了负号（关闭段落会让它变负）");
+    ok(text.includes("含关闭 1 段"), "  说明了里面有几段是「关闭」");
+    // 纯文本 UI 里不能出现 markdown 星号 —— 这条守卫原来只查了 Picker，
+    // 预览面板里漏过一次（「**每轮请求都要重算一次**」会原样显示两个星号）
+    ok(!text.includes("**"), "**预览面板里也没有 markdown 星号**");
+    ok(text.includes("每轮请求都要重算一次"), "讲了「每轮固定成本」这件事");
+    ok(text.includes("KV cache 会失效"), "讲了「改段落会让缓存失效」这件事");
   }
 }
 

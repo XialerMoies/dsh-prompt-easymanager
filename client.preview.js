@@ -62,7 +62,69 @@ window.__ModuleLoader__.load({
       }
 
       // ── 多选面板 ──────────────────────────────────────────────────────────
-      function PreviewPanel(props) {
+      /**
+   * 「我们的增量」那一行。
+   *
+   * ⚠️ **两个来源分开报**，因为性质不同：
+   *
+   *     ① 我们自己加的段落（名字是 `prompt-manager:<id>`，整段都是我们的）
+   *     ② 段落改写的净增减（改的通常是**原生**段落，正文变长变短）
+   *
+   *    合计才是「相对原生装配，本插件多花了多少」。
+   *
+   * ⚠️ 算不出来时（`overridesDeltaTokens === null`）**不显示那一半** ——
+   *    宁可少说，也别给个看着像真的的数字。
+   */
+  function oursLines(data) {
+    var parts = [];
+    var added = data.oursSectionsTokens;
+    if (typeof added === "number") {
+      parts.push("自加段落 " + (data.oursSectionCount || 0) + " 段 = " + fmtTokens(added));
+    }
+    var delta = data.overridesDeltaTokens;
+    var deltaShown = typeof delta === "number";
+    if (deltaShown) {
+      var n = data.overridesDeltaCount || 0;
+      var cleared = data.overridesSectionsCleared || 0;
+      parts.push(
+        "段落改写 " + n + " 处 = " + (delta >= 0 ? "+" : "") + fmtTokens(delta) +
+          (cleared ? "（含关闭 " + cleared + " 段）" : ""),
+      );
+    }
+
+    // ⚠️ **一个都报不出来时返回空数组，不能返回 null。**
+    //
+    //    调用处是 `...oursLines(data)`（参数里的展开）——
+    //    `...null` 会抛 `TypeError: oursLines is not a function or its
+    //    return value is not iterable`。
+    //
+    //    那个报错信息**极具误导性**：它说 "is not a function"，让人以为是作用域问题，
+    //    而实际上函数好好的、只是返回了 null。我为此查了半天作用域。
+    //    这条教训值一条注释：**参数里的展开，空值必须是 `[]`，不能是 `null`。**
+    if (!parts.length) return [];
+
+    var total = (typeof added === "number" ? added : 0) + (deltaShown ? delta : 0);
+    // ⚠️ 返回**数组**（可能 1–2 个 div），调用处用 `rows.push(...oursLines(data))` 展开。
+    //    第一版返回单个元素、调用处直接 push —— 那还好；但两个部分都想分行显示时
+    //    就得返回数组，别让调用处去判断类型。
+    return [
+      react.createElement(
+        "div",
+        { key: "ours-a" },
+        "本插件的增量：" + parts.join("　·　") +
+          (parts.length > 1 ? "　→　合计 " + (total >= 0 ? "+" : "") + fmtTokens(total) : ""),
+      ),
+      !data.prompts || !data.prompts.length
+        ? react.createElement(
+            "div",
+            { key: "ours-b" },
+            "（本会话没挂任何预设，增量只来自段落改写）",
+          )
+        : null,
+    ].filter(Boolean);
+  }
+
+  function PreviewPanel(props) {
         var data = props.data;
         if (!data) return null;
 
@@ -96,6 +158,32 @@ window.__ModuleLoader__.load({
                 "系统提示词 " + (data.sectionCount || 0) + " 段 = " + fmtTokens(data.sectionTokens) +
                   "　·　工具 schema " + (data.toolCount || 0) + " 个 = " + fmtTokens(data.toolTokens) +
                   "　·　运行时上下文 " + (data.contextCount || 0) + " 段 = " + fmtTokens(data.contextTokens),
+              ),
+              // ── 「我们的增量」────────────────────────────────────────────
+              //
+              // ⚠️ 上面的 totalTokens 是**原生 + 我们**的合计，看不出「我挂的这东西
+              //    到底花了多少」。这块专门回答那个问题，分两个来源报，
+              //    因为两者性质不同：
+              //
+              //      ① 我们**自己加的段落**（整段都是我们加的）
+              //      ② 段落**改写**的净增减（改的通常是原生段落）
+              //
+              //    ⚠️ `overridesDeltaTokens` 是 null 时那一半**不显示** ——
+              //       算不出来就别说，别给个看着像真的的数字。
+              ...oursLines(data),
+              react.createElement(
+                "div",
+                { key: "cost", style: MUTED },
+                // 这两句是 dsh 官方文档里的说法（@deepseek-ai/dsh-system-prompt 的
+                // "Token effect" / "KV Cache effect" 两节），不是我们编的：
+                //   · 系统提示词是**每轮请求**的固定成本，不是一次性开销
+                //   · 前缀不变时 KV cache 才有效；改了段落 = 前缀变了 = 缓存失效
+                //
+                // ⚠️ 这是**界面文案**，不能写 markdown 星号 ——
+                //    它不会变粗体，只会原样显示两个 `*`。有一条守卫盯着这个
+                //    （「没有会原样显示的 markdown 星号」），已经抓到过我一次。
+                "这些 token 每轮请求都要重算一次（不是一次性开销）。改了哪一段，" +
+                  "前缀就变了，那一轮之后模型侧的 KV cache 会失效 —— 下一轮更贵。",
               ),
               react.createElement(
                 "div",
