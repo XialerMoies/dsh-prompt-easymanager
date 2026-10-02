@@ -76,14 +76,18 @@ window.__ModuleLoader__.load({
       function sectionTagRows(props) {
         var seen = {};
         var out = [];
-        var selection = props.presetSelection || {
+        var hasSelection = !!(props.presetSelection && typeof props.presetSelection === "object");
+        var selection = hasSelection ? props.presetSelection : {
           listed: props.presetSections && typeof props.presetSections === "object"
             ? Object.keys(props.presetSections)
             : [],
           excluded: [],
           sections: props.presetSections || {},
         };
-        var presetSec = selection.sections || props.presetSections;
+        // Once the new selection shape exists, it is authoritative. Falling
+        // back to the legacy `presetSections` here can turn a native-only
+        // exclusion into a phantom edited tag after a rerender.
+        var presetSec = hasSelection ? selection.sections : props.presetSections;
         var listed = Array.isArray(selection.listed) ? selection.listed : [];
         function push(name, on) {
           if (!name || seen[name]) return;

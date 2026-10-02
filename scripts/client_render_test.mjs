@@ -1774,6 +1774,35 @@ const renderEditor = (props = {}) =>
     eq(posts.length, 0, "**不立刻发请求** —— 保存时才写盘");
     globalThis.fetch = realFetch;
   }
+
+  // ④ 取消原生段只记录 excluded：它仍留在「系统提示词」里，
+  //    不能凭空出现在「改动提示词」里。
+  {
+    const nextSelections = [];
+    const el = shims.render(
+      comboBox.ComboBlock,
+      comboProps({
+        // 传入新模型后，旧的 presetSections 即使残留也不能污染改动栏。
+        presetSections: { "tool:bash": { action: "replace", text: "旧数据" } },
+        presetSelection: { listed: [], excluded: [], sections: {}, known: [] },
+        setPresetSelection: (next) => nextSelections.push(next),
+        sectionsData: {
+          availableNative: ["harness:identity", "tool:bash"],
+          excludedSections: [],
+        },
+      }),
+    );
+    const native = [];
+    findEl(el, (n) => {
+      if (n.props && n.props["data-section-tag"] === "tool:bash") native.push(n);
+      return false;
+    });
+    eq(native.length, 1, "原生段仍在系统提示词一栏");
+    if (native[0]) native[0].props.onChange();
+    eq(nextSelections.length, 1, "取消原生段只更新段落草稿");
+    eq(nextSelections[0].excluded, ["tool:bash"], "取消原生段只写入 excluded");
+    eq(Object.keys(nextSelections[0].sections || {}).length, 0, "取消原生段不创建改动副本");
+  }
 }
 
 
