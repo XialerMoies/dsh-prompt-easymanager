@@ -41,6 +41,7 @@
     "cordis.patch.yml",
     "scripts/lib/heartbeat.mjs",
     "scripts/lib/library-migration.mjs",
+    "scripts/lib/prompt-selection.mjs",
     "scripts/lib/presets.mjs",
     "scripts/lib/prompt-library.mjs",
     "scripts/lib/section-overrides.mjs",

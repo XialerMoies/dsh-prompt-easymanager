@@ -1208,10 +1208,19 @@ const TMP_ID = "zz-test-only";
   );
 }
 
-// ══ 33. 改写按会话：写会话层不许影响别的会话 ══════════════════════════════
+// ══ 33. 段落改写**写进预设**（不再有那两张独立的表）═══════════════════════
+//
+// ⚠️ 这一节整个重写过。老版本验的是「两层改写」模型：
+//
+//       POST /sections + scope:"global"   → 写 state.sectionOverrides
+//       POST /sections + scope:"session"  → 写 state.sessionSectionOverrides
+//
+//    新模型里那两张表**不再被读**（段落改写由预设承载），所以那条路
+//    必须改成写预设 —— 否则「在系统提示词那一栏改一段」会写了不生效。
+//
+//    而且老的 scope 参数**不再有意义**：改动跟着**这会话实际生效的那条预设**走。
+//    这跟个人提示词是同一套规则 —— 两半终于统一了。
 {
-  // ⚠️ 必须给一个**活着的 agent** —— 没有 agent 时 listSections 返回空列表，
-  //    POST 会因为「找不到这个段落」直接 404，测试就测不到写入了。
   const live7 = makeAgent("session-A", {
     assemble: async () => ({
       sections: [
@@ -1225,73 +1234,169 @@ const TMP_ID = "zz-test-only";
   const ctx7 = makeCtx([live7.agent]);
   apply(ctx7);
 
-  // 先写一条**全局**改写
-  const g1 = await call(ctx7, SECTIONS_PATH, {
+  /** 装配一次，返回结果（这一段要用好几回）。 */
+  //
+  //  ⚠️ `asmOf` 定义在文件**后面**第 36 节里，这儿用不了 —— 自己造一个。
+  //     注意**每次都要新对象**，不能复用同一个引用，
+  //     否则上一次装配被改过的正文会带到下一次。
+  const assembleOnce = async () => {
+    const a = {
+      sections: [
+        { name: "harness:identity", text: "官方身份" },
+        { name: "tool:bash", text: "官方 bash" },
+      ],
+      contexts: [],
+      tools: [],
+    };
+    await live7.assembleListeners[0](a, {}, async () => a);
+    return a;
+  };
+  const diskState = () =>
+    JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
+  /** 那张退休的表**这一刻**长什么样 —— 用来验「这次写没写它」。 */
+  const legacyBefore = JSON.stringify(diskState().sectionOverrides ?? {});
+
+  // ── ① 没有生效的预设 → **409**，并说清怎么办 ──────────────────────────
+  //
+  // ⚠️ 这一条是核心：改动总得有地方存。没有预设时就明确拒绝，
+  //    而不是悄悄写进一个没人读的地方（老模型就是这么干的）。
+  {
+    const r = await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "harness:identity", action: "replace", text: "无处可存" },
+    });
+    eq(r.status, 409, "**没有生效的预设时改段落 → 409**（不静默丢弃）");
+    eq(r.json.outcome, "no-active-preset", "结论说清是「没有生效的预设」");
+    ok(
+      typeof r.json.error === "string" && r.json.error.includes("先在会话页选一条预设"),
+      "  并告诉用户怎么办",
+    );
+  }
+
+  // ── ② 给全局选一条预设之后，改写**写进那条预设** ──────────────────────
+  const gp = await call(ctx7, PRESETS_PATH, {
     method: "POST",
-    search: "session=session-A",
-    body: { name: "harness:identity", action: "replace", text: "全局身份", scope: "global" },
+    body: { action: "save", name: "七号全局", prompts: [] },
   });
-  eq(g1.status, 200, "写全局改写 → 200");
+  eq(gp.status, 200, "存一条预设 → 200");
+  await call(ctx7, GLOBAL_PATH, { method: "POST", body: { presetId: gp.json.id, enabled: true } });
 
-  // 再给 A 写一条**会话层**的，盖住同一段
-  const s1 = await call(ctx7, SECTIONS_PATH, {
-    method: "POST",
-    search: "session=session-A",
-    body: { name: "harness:identity", action: "replace", text: "A 的身份", scope: "session" },
-  });
-  eq(s1.status, 200, "写会话层改写 → 200");
+  {
+    const r = await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "harness:identity", action: "replace", text: "改过的身份" },
+    });
+    eq(r.status, 200, "有预设了 → 200");
 
-  // 落盘检查：两层各存各的
-  const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
-  eq(disk.sectionOverrides["harness:identity"].text, "全局身份", "全局层还是原来那条");
-  eq(
-    disk.sessionSectionOverrides["session-A"]["harness:identity"].text,
-    "A 的身份",
-    "会话层单独存着",
-  );
+    // 落盘：改动在**预设里**，那两张老表**没被动**
+    const disk = diskState();
+    const p = disk.presets[gp.json.id];
+    eq(
+      p?.selection?.sections?.["harness:identity"]?.text,
+      "改过的身份",
+      "**改动写进了预设的清单里**",
+    );
+    eq(
+      JSON.stringify(disk.sectionOverrides ?? {}),
+      legacyBefore,
+      "**那张退休的 `sectionOverrides` 表一个字没动**（改动不再写它）",
+    );
+    eq(
+      JSON.stringify(disk.sessionSectionOverrides ?? {}),
+      "{}",
+      "  会话层那张也没被动",
+    );
+    eq(
+      p?.selection?.sections?.["harness:identity"]?.original,
+      "官方身份",
+      "  顺手记下了当时的官方原文（漂移基准）",
+    );
+    ok(p?.selection?.listed?.includes("harness:identity"), "  并把它记进了「勾选」名单");
+  }
 
-  // 读回来：A 看到的是会话层，B 看到的是全局层
-  const a = await call(ctx7, SECTIONS_PATH, { search: "session=session-A" });
-  eq(a.json.effectiveOverrides["harness:identity"].text, "A 的身份", "**A 看到会话层（盖住全局）**");
-  const b = await call(ctx7, SECTIONS_PATH, { search: "session=session-B" });
-  eq(b.json.effectiveOverrides["harness:identity"].text, "全局身份", "**B 看到的是全局那条，没被 A 影响**");
-  eq(Object.keys(b.json.sessionOverrides).length, 0, "B 没有自己的会话层");
+  // ── ③ 装配时真的生效 ──────────────────────────────────────────────────
+  {
+    const a = await assembleOnce();
+    eq(
+      a.sections.find((s) => s.name === "harness:identity")?.text,
+      "改过的身份",
+      "**装配时用上了改过的正文**",
+    );
+  }
 
-  // 还原掉 A 的会话层 → A 回落到全局那条
-  const r1 = await call(ctx7, SECTIONS_PATH, {
-    method: "POST",
-    search: "session=session-A",
-    body: { name: "harness:identity", action: "restore", scope: "session" },
-  });
-  eq(r1.status, 200, "还原会话层 → 200");
-  const a2 = await call(ctx7, SECTIONS_PATH, { search: "session=session-A" });
-  eq(a2.json.effectiveOverrides["harness:identity"].text, "全局身份", "**还原会话层后回落到全局那条**");
-  const disk2 = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
-  ok(
-    disk2.sessionSectionOverrides["session-A"] === undefined,
-    "空掉的会话层不留占位（文件里不堆空对象）",
-  );
+  // ── ④ 「关闭」= 不勾（进 excluded）──────────────────────────────────────
+  {
+    const r = await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "tool:bash", action: "disable" },
+    });
+    eq(r.status, 200, "关掉一段 → 200");
+    const sel = diskState().presets[gp.json.id].selection;
+    ok(sel.excluded.includes("tool:bash"), "**「关闭」写进 excluded**（新模型里它就是「不勾」）");
 
-  // scope: session 但没带 session → 400
-  const noSid = await call(ctx7, SECTIONS_PATH, {
-    method: "POST",
-    body: { name: "harness:identity", action: "disable", scope: "session" },
-  });
-  eq(noSid.status, 400, "scope: session 没带 session → 400");
+    const a = await assembleOnce();
+    eq(a.sections.find((s) => s.name === "tool:bash")?.text, "", "  装配时那段被清空");
+  }
 
-  // 不带 scope → 默认全局（老客户端兼容）
-  const dflt = await call(ctx7, SECTIONS_PATH, {
-    method: "POST",
-    search: "session=session-C",
-    body: { name: "tool:bash", action: "disable" },
-  });
-  eq(dflt.status, 200, "不带 scope → 200");
-  const disk3 = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
-  ok(disk3.sectionOverrides["tool:bash"] !== undefined, "**不带 scope 时写进全局层**（向后兼容）");
-  ok(
-    disk3.sessionSectionOverrides["session-C"] === undefined,
-    "没有意外写进会话层",
-  );
+  // ── ⑤ 「还原」= 从清单里拿掉 → 回原生 ──────────────────────────────────
+  {
+    const r = await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "harness:identity", action: "restore" },
+    });
+    eq(r.status, 200, "还原一段 → 200");
+    const sel = diskState().presets[gp.json.id].selection;
+    eq(
+      Object.keys(sel.sections).includes("harness:identity"),
+      false,
+      "**还原 = 把它从清单里拿掉**",
+    );
+
+    const a = await assembleOnce();
+    eq(
+      a.sections.find((s) => s.name === "harness:identity")?.text,
+      "官方身份",
+      "  装配时回到 dsh 原生",
+    );
+  }
+
+  // ── ⑥ 改的是**这会话生效的那条**：会话选了自己的 → 改它自己那条 ─────────
+  //
+  // ⚠️ 这条替代了老模型的「会话层盖住全局层」——
+  //    现在不是「盖住」，而是「这条会话压根用另一条预设」。
+  {
+    const own = await call(ctx7, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "save", name: "七号自己", prompts: [] },
+    });
+    await call(ctx7, ASSIGN_PATH, {
+      method: "POST",
+      body: { sessionId: "session-A", presetId: own.json.id },
+    });
+
+    const r = await call(ctx7, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-A",
+      body: { name: "tool:bash", action: "replace", text: "A 自己的 bash" },
+    });
+    eq(r.status, 200, "给选了预设的会话改段落 → 200");
+
+    const disk = diskState();
+    eq(
+      disk.presets[own.json.id].selection.sections["tool:bash"]?.text,
+      "A 自己的 bash",
+      "**改动落到了 A 自己那条预设上**",
+    );
+    eq(
+      disk.presets[gp.json.id].selection.sections["tool:bash"],
+      undefined,
+      "  全局那条**没被碰到**（不再互相影响）",
+    );
+  }
 }
 // ══ 34. 提示词组合（预设）：保存 / 改 / 删 / 应用 ═════════════════════════
 //
@@ -1535,11 +1640,13 @@ const TMP_ID = "zz-test-only";
   const ctx9 = makeCtx([live9.agent]);
   apply(ctx9);
 
-  // 装一条改写 —— 它是「改原生段落」，跟注不注入提示词无关
-  await call(ctx9, SECTIONS_PATH, {
-    method: "POST",
-    body: { name: "harness:identity", action: "replace", text: "我改的身份", scope: "global" },
-  });
+  // ⚠️ **这条改写不能在这儿写。**
+  //
+  //    老模型下它无条件生效，所以放哪儿都行 —— 于是老测试把它放在**建预设之前**。
+  //    新模型里段落改写由预设承载，此时还没有任何预设 → POST 直接 409，
+  //    改写**根本没存下来**，后面「开关开着 → 改写生效」那条必然红。
+  //
+  //    所以改成：先建预设 → 选上并打开 → 再写这条改写。见下面。
 
   const l0 = live9.assembleListeners[0];
   ok(typeof l0 === "function", "注入器挂上了装配监听器");
@@ -1553,8 +1660,15 @@ const TMP_ID = "zz-test-only";
   });
   let a = await asm();
   await l0(a, {}, async () => a);
-  eq(a.sections[0].text, "我改的身份", "**开关开着时改写生效**");
-  eq(a.sections[1].text, "我注入的提示词正文", "开关开着时注入保留");
+  // ⚠️ **这一条是新语义，老测试验的是反的。**
+  //
+  //    老模型里「全局段落改写」是一张独立的表，注入时**无条件**读取 ——
+  //    所以「还没选任何预设」的时候它也生效（那条断言因此碰巧绿了）。
+  //
+  //    新模型里段落改写**跟着预设走**（跟个人提示词同一套规则）：
+  //    没有生效的预设 → `getSectionOverrides` 返回 null → 一段都不套。
+  eq(a.sections[0].text, "官方身份", "**没选预设时段落改写不生效**（它现在跟着预设走）");
+  eq(a.sections[1].text, "我注入的提示词正文", "个人提示词的注入不受影响（同上）");
 
   // ── 没选预设就想开全局注入 → 400（用户定的规则）────────────────────────
   {
@@ -1577,6 +1691,20 @@ const TMP_ID = "zz-test-only";
     eq(on.status, 200, "选上预设并打开 → 200");
     eq(on.json.global.presetId, gp9.json.id, "指向它");
     eq(on.json.global.enabled, true, "**35 节**：开启后 global.enabled 为 true");
+
+    // 🔑 **现在才写这条段落改写** —— 它写进刚才选上的那条预设。
+    //    （老测试把它放在建预设之前，新模型下会 409。）
+    const sec = await call(ctx9, SECTIONS_PATH, {
+      method: "POST",
+      search: "session=session-T",
+      body: { name: "harness:identity", action: "replace", text: "我改的身份" },
+    });
+    eq(sec.status, 200, "有预设之后写段落改写 → 200");
+
+    // 🔑 **开关开着 + 有预设 → 改写生效。**（跟上面「没预设」那一版对照）
+    a = await asm();
+    await l0(a, {}, async () => a);
+    eq(a.sections[0].text, "我改的身份", "**开关开着且有预设 → 段落改写生效**");
   }
 
   // ⚠️ 编辑器读完 POST 的响应后会立刻重新 GET /edit（load()）。
@@ -1590,10 +1718,14 @@ const TMP_ID = "zz-test-only";
 
     a = await asm();
     await l0(a, {}, async () => a);
+    // ⚠️ **这一条就是这次要修的 bug。**
+    //
+    //    老行为：「改原生段落跟注不注入是两件事」→ 关掉注入后**改写照样生效**。
+    //    新行为：关掉 = 全局这一层整体停用 → 段落改写**也不生效**，回原生。
     eq(
       a.sections[0].text,
-      "我改的身份",
-      "**关掉注入之后段落改写照样生效**（改原生段落跟注不注入是两件事）",
+      "官方身份",
+      "**关掉全局注入 → 段落改写也不生效**（回 dsh 原生）",
     );
 
     // 再开回来
@@ -1706,6 +1838,274 @@ const TMP_ID = "zz-test-only";
     eq(found?.text, "全局那条的正文", "正文对");
   }
 }
+
+// ══ 37. 会话选「不注入」时，段落改写也**不许**生效 ═════════════════════════
+//
+// 这一节补的是那个 bug 的**另一半**。
+//
+// 35/36 验的是「全局关掉」，这一节验「这个会话自己选了不注入」——
+// 两种情况下段落改写都不该生效。老模型里它们都会漏：
+// 段落改写存在一张独立的表里，注入时**无条件**读取，压根不问会话选了什么。
+//
+// ⚠️ 为什么单开一节而不是塞进 36：36 那节有两个会话、两套预设，
+//    再加一个变量进去就看不清哪条断言在验什么了。
+{
+  // ⚠️ **库里的 id 就用现成的**（`format-contract`）。第一版我编了个 `format-contract`，
+  //    结果保存预设直接 400（"提示词库里没有"），而我又没验状态码 ——
+  //    于是 `gN.json.id` 是 undefined，后面几条断言全在验一个不存在的预设。
+  //    **保存预设之后一定要验一下 200**，不然错了都不知道错在哪。
+  const liveN = makeAgent("session-N1", {
+    assemble: async () => ({
+      sections: [
+        { name: "harness:identity", text: "官方身份" },
+        { name: "prompt-manager:format-contract", text: "会话自己的提示词" },
+      ],
+      contexts: [],
+      tools: [],
+    }),
+  });
+  const ctxN = makeCtx([liveN.agent]);
+  apply(ctxN);
+
+  // 全局那条预设带一段改写，并且开着
+  const gN = await call(ctxN, PRESETS_PATH, {
+    method: "POST",
+    body: {
+      action: "save",
+      name: "N 全局",
+      prompts: ["format-contract"],
+      sections: { "harness:identity": { action: "replace", text: "全局改的身份" } },
+    },
+  });
+  eq(gN.status, 200, "**存「N 全局」这条预设 → 200**（400 的话后面全是假失败）");
+  await call(ctxN, GLOBAL_PATH, { method: "POST", body: { presetId: gN.json.id, enabled: true } });
+
+  const lN = liveN.assembleListeners[0];
+  const asmN = async () => ({
+    sections: [
+      { name: "harness:identity", text: "官方身份" },
+      { name: "prompt-manager:format-contract", text: "会话自己的提示词" },
+    ],
+    contexts: [],
+    tools: [],
+  });
+
+  // ── ① 没记录 → 跟随全局 → 改写生效 ────────────────────────────────────
+  {
+    const x = await asmN();
+    await lN(x, {}, async () => x);
+    eq(x.sections[0].text, "全局改的身份", "没记录的会话跟着全局 → 改写生效");
+  }
+
+  // ── ② 显式选「不注入」 → 全局那条不生效 → **改写也不生效** ──────────────
+  {
+    const asg = await call(ctxN, ASSIGN_PATH, {
+      method: "POST",
+      body: { sessionId: "session-N1", presetId: null },
+    });
+    eq(asg.status, 200, "给会话选「不注入」→ 200");
+
+    const x = await asmN();
+    await lN(x, {}, async () => x);
+    eq(
+      x.sections[0].text,
+      "官方身份",
+      "**会话选「不注入」→ 段落改写也不生效**（回 dsh 原生）",
+    );
+    const injected = x.sections.find((s) => s.name === "prompt-manager:format-contract");
+    eq(injected?.text, "会话自己的提示词", "  那一段是夹具带的，注入器没动它");
+  }
+
+  // ── ③ 给它选一条**自己的**预设 → 改写按那条走 ─────────────────────────
+  {
+    const own = await call(ctxN, PRESETS_PATH, {
+      method: "POST",
+      body: {
+        action: "save",
+        name: "N 自己",
+        prompts: ["format-contract"],
+        sections: { "harness:identity": { action: "replace", text: "会话自己的身份" } },
+      },
+    });
+    await call(ctxN, ASSIGN_PATH, {
+      method: "POST",
+      body: { sessionId: "session-N1", presetId: own.json.id },
+    });
+
+    const x = await asmN();
+    await lN(x, {}, async () => x);
+    eq(
+      x.sections[0].text,
+      "会话自己的身份",
+      "**选了自己的预设 → 按它那条走**（不是全局那条）",
+    );
+  }
+}
+
+// ══ 38. 默认预设：第一次造一条「全原生」的，之后**不再造回来** ═════════════
+//
+// ⚠️ 这一节的关键是**第二、三条**：用户把默认预设删了之后，
+//    再打开设置页不许又被造回来 —— 那样他永远删不掉。
+//
+//    判据是状态文件里那个 `hasLoaded` 标记（「这插件之前加载过没有」）。
+//    没有它的话，「预设表空不空」每读一次盘都成立，预设会反复长出来。
+{
+  const snap = makeAgent("session-DEF", {
+    assemble: async () => ({
+      sections: [{ name: "harness:identity", text: "官方身份" }],
+      contexts: [],
+      tools: [],
+    }),
+  });
+  const ctxF = makeCtx([snap.agent]);
+  apply(ctxF);
+
+  // ── ① 第一次进来：有一条默认预设 ────────────────────────────────────────
+  const first = await call(ctxF, PRESETS_PATH);
+  const defs = first.json.presets.filter((p) => p.name.includes("原生"));
+  eq(defs.length, 1, "**第一次打开 → 有一条默认预设**");
+  eq(defs[0]?.prompts, [], "  它不挂任何个人提示词");
+  eq(Object.keys(defs[0]?.sections ?? {}), [], "  也不改任何段落（= 全部用原生）");
+
+  // ── ② 把它删掉 ──────────────────────────────────────────────────────────
+  const del = await call(ctxF, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "delete", id: defs[0].id },
+  });
+  eq(del.status, 200, "删掉默认预设 → 200");
+  {
+    const after = await call(ctxF, PRESETS_PATH);
+    eq(
+      after.json.presets.filter((p) => p.name.includes("原生")).length,
+      0,
+      "  删完就没了（没被立刻造回来）",
+    );
+  }
+
+  // ── ③ 再读一次（模拟重开设置页）→ **不许造回来** ────────────────────────
+  {
+    const again = await call(ctxF, PRESETS_PATH);
+    eq(
+      again.json.presets.filter((p) => p.name.includes("原生")).length,
+      0,
+      "**再打开一次也不许造回来**（否则用户永远删不掉它）",
+    );
+  }
+
+  // ── ④ 而且那个标记真的落盘了 ────────────────────────────────────────────
+  {
+    // 触发一次写盘
+    await call(ctxF, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+    const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
+    eq(disk.hasLoaded, true, "**`hasLoaded` 落盘了**（下次启动才知道你来过）");
+  }
+}
+
+// ══ 39. 空清单不许保存 ═══════════════════════════════════════════════════════
+//
+// 把原生段全排除、又没改过任何一段 → 这个会话等于**没有系统提示词**。
+// 拦住，并说清怎么改。
+//
+// ⚠️ **判据不是「清单是空的」** —— 空清单正好是默认的全勾状态。
+//    真正的空是「该有的原生段全被排除了」，所以界面要把
+//    「当前有哪些原生段」递过来（`availableNative`）。
+//    递不了就不拦（fail-open）—— 宁可少拦，别把正常保存挡住。
+{
+  // ⚠️ `ctx9` 是 35 节那个块里的局部变量，这里用不了 —— 自己建一个。
+  //    （第一版直接写了 `ctx9`，`ReferenceError`。测试**崩**了而不是红 ——
+  //      崩溃比失败更糟：后面的断言一条都没跑。）
+  const liveE = makeAgent("session-EMP", {
+    assemble: async () => ({
+      sections: [
+        { name: "harness:identity", text: "官方身份" },
+        { name: "tool:bash", text: "bash 说明" },
+      ],
+      contexts: [],
+      tools: [],
+    }),
+  });
+  const ctxE = makeCtx([liveE.agent]);
+  apply(ctxE);
+
+  const avail = ["harness:identity", "tool:bash", "plan:policy"];
+
+  // ── ① 全排除 + 没改过 → 拦住 ───────────────────────────────────────────
+  {
+    const r = await call(ctxE, PRESETS_PATH, {
+      method: "POST",
+      body: {
+        action: "save",
+        name: "空清单",
+        prompts: [],
+        selection: { listed: [], excluded: avail, sections: {} },
+        availableNative: avail,
+      },
+    });
+    eq(r.status, 400, "**全排除又不改任何段 → 400**");
+    eq(r.json.outcome, "empty-selection", "结论说清是「清单是空的」");
+    ok(
+      typeof r.json.error === "string" && r.json.error.includes("至少勾一段"),
+      "  并告诉用户怎么办（不是干巴巴一句「不行」）",
+    );
+  }
+
+  // ── ② 空清单（= 默认全勾）→ **放行** ───────────────────────────────────
+  //
+  // ⚠️ 这条是上一轮的教训：判据要是写成「两个名单都空就算空」，
+  //    默认那条预设就存不下来了。
+  {
+    const r = await call(ctxE, PRESETS_PATH, {
+      method: "POST",
+      body: {
+        action: "save",
+        name: "全原生",
+        prompts: [],
+        selection: { listed: [], excluded: [], sections: {} },
+        availableNative: avail,
+      },
+    });
+    eq(r.status, 200, "**空清单 = 全勾 → 放行**（它不是「空」，是「都用原生」）");
+  }
+
+  // ── ③ 排除了大部分、但留了一段改过的 → 放行 ───────────────────────────
+  //
+  // ⚠️ **别把同一段既排除又给它改正文** —— 那是自相矛盾的数据，
+  //    校验逻辑会（正确地）把被排除段的正文丢掉，于是「改过至少一段」
+  //    这个前提根本不成立。第一版就是这么写的，测试没错、数据错了。
+  {
+    const r = await call(ctxE, PRESETS_PATH, {
+      method: "POST",
+      body: {
+        action: "save",
+        name: "只剩自己改的",
+        prompts: [],
+        // 排除 tool:bash 和 plan:policy，**留下 harness:identity** 并改它
+        selection: {
+          listed: [],
+          excluded: ["tool:bash", "plan:policy"],
+          sections: { "harness:identity": { text: "我改的" } },
+        },
+        availableNative: avail,
+      },
+    });
+    eq(r.status, 200, "排除了大部分、但**留下一段改过的** → 放行（有内容）");
+  }
+
+  // ── ④ 没递 availableNative → **不拦**（fail-open）──────────────────────
+  {
+    const r = await call(ctxE, PRESETS_PATH, {
+      method: "POST",
+      body: {
+        action: "save",
+        name: "不知道有哪些段",
+        prompts: [],
+        selection: { listed: [], excluded: avail, sections: {} },
+      },
+    });
+    eq(r.status, 200, "**不知道有哪些原生段时不拦**（宁可少拦，别挡住正常保存）");
+  }
+}
+
 rmSync(DSH_HOME, { recursive: true, force: true });
 
 

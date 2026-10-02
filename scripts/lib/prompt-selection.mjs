@@ -190,6 +190,18 @@ export function applySelectionEdit({ native, selection, name, action, edit }) {
 
   if (action === "include") {
     next.listed.push(name);
+    // ⚠️ **`include` 时必须把 `edit` 一起存下来。**
+    //    第一版这里只 push 了名字、**把 edit 丢了** —— 于是
+    //    「改一段」这个动作只记了「勾上」，正文没进去，
+    //    表现是「改完保存，还是原生」。
+    //    （集成测试逮到的：`改动写进了预设的清单里` 那条红。）
+    if (edit && typeof edit.text === "string") {
+      next.sections[name] = normalizeKeptOverride({
+        text: edit.text,
+        original: typeof edit.original === "string" ? edit.original : liveText,
+        savedAt: new Date().toISOString(),
+      });
+    }
     return next;
   }
 
@@ -395,7 +407,8 @@ export function diffNative({ native, selection }) {
  *    （默认不写任何东西，意思是「dsh 有什么就用什么」）。
  *
  *    真正的空是：一段都没改过，而且**当前能用的原生段全被排除了**。
- *    第一版漏了这个区分，测试第一条断言就把它逮住了。
+ *    第一版漏了这个区分，测试第一条断言就把它逮住了 ——
+ *    而且第二版还错了一次（`availableNative` 可能是空的，我拿它当「全排除」）。
  *
  * @param {object} args
  * @param {object} args.selection
@@ -404,9 +417,15 @@ export function diffNative({ native, selection }) {
 export function isEmptySelection({ selection, availableNative }) {
   const sel = normalizeSelection(selection);
   if (Object.keys(sel.sections).length > 0) return false; // 有改过的段 → 不空
-  const excluded = new Set(sel.excluded);
-  const usable = (Array.isArray(availableNative) ? availableNative : []).filter(
-    (n) => typeof n === "string" && n && !excluded.has(n),
+
+  const names = (Array.isArray(availableNative) ? availableNative : []).filter(
+    (n) => typeof n === "string" && n,
   );
-  return usable.length === 0;
+  // ⚠️ **不知道有哪些原生段 → 不判断**（返回 false）。
+  //    宁可放过，也不要因为「不知道」就把用户的保存拦下来 ——
+  //    拦住保存比放过保存烦人得多。
+  if (names.length === 0) return false;
+
+  const excluded = new Set(sel.excluded);
+  return names.every((n) => excluded.has(n));
 }

@@ -45,6 +45,8 @@
 //    代价：手写的临时改动会被冲掉。所以「另存为预设」必须好用，
 //    用户才能先存后切。
 
+import { normalizeSelection } from "./prompt-selection.mjs";
+
 /** 预设 id 的最大长度（存进 JSON 的键，别太长）。 */
 const MAX_ID = 60;
 
@@ -86,6 +88,21 @@ export function normalizePreset(raw) {
       : [],
     /** 段落改写表（结构跟 sectionOverrides 一样，**深一层拷贝**） */
     sections: cloneSections(raw.sections),
+    /**
+     * 「勾选清单」—— 新模型的载体（`prompt-selection.mjs`）。
+     *
+     * ⚠️ **`sections` 和 `selection` 是两个时代的东西，现在并存**：
+     *
+     *     `sections`    老模型：一张「段落名 → {action, text}」的表，
+     *                   两个动作 `replace` / `disable`。**界面还在用它**。
+     *     `selection`   新模型：三个名单（listed / excluded / sections / known），
+     *                   注入路径用它。
+     *
+     *     `selection` 缺失时**从 `sections` 转一份**出来 —— 这样
+     *     ①老数据不用迁移 ②界面照旧写 `sections` 也能生效。
+     *     等第三步界面改完，`sections` 就可以退休了。
+     */
+    selection: normalizeSelection(raw.selection ?? selectionFromLegacySections(raw.sections)),
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
     /** 用户自己写的说明，可选 */
     note: typeof raw.note === "string" ? raw.note : "",
@@ -119,6 +136,36 @@ function cloneSections(sections) {
   if (!sections || typeof sections !== "object" || Array.isArray(sections)) return out;
   for (const [name, ov] of Object.entries(sections)) {
     out[name] = ov && typeof ov === "object" ? { ...ov } : ov;
+  }
+  return out;
+}
+
+/**
+ * 把**老模型**的 `sections` 表转成新模型的勾选清单。
+ *
+ * ⚠️ 两个动作的译法：
+ *
+ *     `replace`  →  进 `listed`（用户勾了它）+ 正文进 `sections`
+ *     `disable`  →  进 `excluded`（新模型里「关闭」就是不勾，没有单独的动作）
+ *
+ *     `known` 留空 —— 老数据里没记过「当时有哪些段」，所以第一次比对会把
+ *     当前的段全报成「新段」。这是可接受的：用户会看到一次提示，
+ *     之后 `known` 就被写上了。
+ *
+ * @param {object} sections  老模型的段落表
+ * @returns {object} 新模型的清单
+ */
+function selectionFromLegacySections(sections) {
+  const out = { listed: [], excluded: [], sections: {}, known: [] };
+  if (!sections || typeof sections !== "object" || Array.isArray(sections)) return out;
+  for (const [name, ov] of Object.entries(sections)) {
+    if (typeof name !== "string" || !name || !ov || typeof ov !== "object") continue;
+    if (ov.action === "disable") {
+      out.excluded.push(name);
+      continue;
+    }
+    out.listed.push(name);
+    out.sections[name] = { ...ov };
   }
   return out;
 }

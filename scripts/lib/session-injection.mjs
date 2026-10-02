@@ -40,6 +40,10 @@
 
 import { estimateTokens } from "./prompt-library.mjs";
 import { normalizeOverrides, planOverrides } from "./section-overrides.mjs";
+// ⚠️ 注入路径现在走**勾选清单**（`prompt-selection.mjs`）。
+//    上面那两个是老模型的判定函数，`preview()` 和界面还在用 ——
+//    等第三步界面改完才能收掉。
+import { projectSelection, applyProjection } from "./prompt-selection.mjs";
 
 const SECTION_DEFAULT = "prompt-manager:session-system-prompt";
 
@@ -331,23 +335,31 @@ export function createSessionInjector({
             //    （语义挪到翻译层了），所以它永不触发 —— 留着会让人以为
             //    「清空」这条路径还在用。
             //
-            //    段落改写跟「注不注入提示词」是两件事，所以下面照旧往下走、
-            //    **不 return**。
-
-            // ⚠️ **按 agent 取覆盖表** —— 改写是按会话的，不同会话可以不一样。
+            // ⚠️ **按 agent 取清单** —— 清单是按会话的，不同会话不一样。
             //    监听器本来就是每个 agent 挂一个，所以这里天然知道是谁。
-            const table = normalizeOverrides(getSectionOverrides(agentId));
-            for (const section of sections) {
-              if (!section || typeof section.name !== "string") continue;
-              const ov = table[section.name];
-              if (ov === undefined) continue;
-              // 关掉 = 空正文（renderPrompt 会丢弃空段落）；改写 = 换正文
-              const text = ov.action === "disable" ? "" : ov.text;
-              if (section.text !== text) section.text = text;
-            }
+            //
+            // ⚠️ **返回 `null` 表示「一段都不套」** —— 也就是
+            //    「全局注入关掉」和「这个会话选了不注入」那两种情况。
+            //    老实现是从两张 state 表里**无条件**取改写，所以那两种情况下
+            //    段落改写照样生效（这就是要修的 bug）。
+            //
+            //    现在由 `projectSelection` 统一判定：给了清单就照清单投影，
+            //    没给清单就把原生原样放过去。
+            const selection = getSectionOverrides(agentId);
+            const projected = projectSelection({
+              // ⚠️ 传**当前装配结果**当原生 —— 它就是 dsh 这一刻的原样。
+              //    别的插件挂的段落也在里面，而清单里没有它们，
+              //    所以 `applyProjection` 不会碰它们（有断言钉着）。
+              native: sections.map((s) => ({
+                name: s?.name,
+                text: typeof s?.text === "string" ? s.text : "",
+              })),
+              selection,
+            });
+            applyProjection(sections, projected);
           } catch (err) {
-            // 覆盖出问题**绝不能拖垮整个装配** —— 那会让会话完全跑不动
-            log("段落覆盖失败（已忽略，按原文继续）：", err?.message ?? String(err));
+            // 投影出问题**绝不能拖垮整个装配** —— 那会让会话完全跑不动
+            log("段落投影失败（已忽略，按原文继续）：", err?.message ?? String(err));
           }
           return result;
         });

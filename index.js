@@ -41,6 +41,7 @@ import {
   presetId,
   normalizePresets,
   capturePreset,
+  normalizePreset,
   matchPreset,
   summarizePreset,
   normalizeGlobal,
@@ -49,6 +50,12 @@ import {
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 import { migrateLibraryOutOfPackage } from "./scripts/lib/library-migration.mjs";
+import {
+  isEmptySelection,
+  normalizeSelection,
+  applySelectionEdit,
+  projectSelection,
+} from "./scripts/lib/prompt-selection.mjs";
 import {
   writeHeartbeat,
   makeHeartbeat,
@@ -494,6 +501,39 @@ function toInjectorState(state) {
 }
 
 /**
+ * 归一化一份「段落内容」输入 —— **两种形状都收**。
+ *
+ * ⚠️ 为什么需要这个（踩出来的）：
+ *
+ *     界面「系统提示词」那一栏发的是老形状 `{ action, text }`。
+ *     新模型（`prompt-selection.mjs`）只关心「改成什么」，所以发的是 `{ text }`。
+ *
+ *     而校验用的是老模型的 `normalizeOverrides()` —— 它**要求 `action` 合法**，
+ *     没有就整条丢掉。于是新形状会被**静默丢弃**：
+ *     界面上看着存进去了，实际预设里一段都没有。
+ *
+ *     （测试逮到的：存完预设之后 `selection.sections` 是空的，
+ *       于是「会话选了自己的预设 → 按它那条走」那条断言红。）
+ *
+ * 做法：新形状补一个 `action: "replace"` 再交给老校验 ——
+ * 这样返回的对象仍然带着 `action`，老界面的回应格式不用改。
+ *
+ * @param {object} raw
+ * @returns {Record<string, object>}
+ */
+function normalizeSectionsInput(raw) {
+  const out = {};
+  for (const [name, ov] of Object.entries(raw ?? {})) {
+    if (typeof name !== "string" || !name) continue;
+    if (!ov || typeof ov !== "object" || Array.isArray(ov)) continue;
+    // 已经有合法 action 的照原样；否则补一个，让它过得了老校验
+    const action = ov.action === "disable" ? "disable" : "replace";
+    out[name] = { ...ov, action };
+  }
+  return normalizeOverrides(out);
+}
+
+/**
  * 清掉**预设里**已经不存在的提示词 id。
  *
  * ⚠️ 这条是新模型引入的**第二层引用**，老的 `injector.pruneMissing()` 管不到：
@@ -566,6 +606,8 @@ const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"));
       sectionOverrides: {},
       sessionSectionOverrides: {},
       presets: {},
+      /** 「这个插件之前加载过没有」—— 见下面 `ensureDefaultPreset` */
+      hasLoaded: parsed?.hasLoaded === true,
     };
     out.presets = normalizePresets(parsed?.presets);
     // ⚠️ **顺序要紧**：先让 `migrateLegacyState` 把老 `defaults[]` 变成一条预设，
@@ -598,17 +640,105 @@ const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"));
         if (Object.keys(norm).length > 0) out.sessionSectionOverrides[sid] = norm;
       }
     }
+    ensureDefaultPreset(out);
     return out;
   } catch {
     /* 文件不存在或损坏：等价于「什么都不挂」+「不改动任何原生段落」，符合默认值 */
   }
-  return {
+  const fresh = {
     global: { enabled: false, presetId: null },
     assignments: {},
     sectionOverrides: {},
     sessionSectionOverrides: {},
     presets: {},
+    hasLoaded: false,
   };
+  // ⚠️ **第一次跑（连状态文件都没有）也要给那条默认预设。**
+  //    这样刚装上的用户进设置页就能看到一条能用的，而不是空白。
+  ensureDefaultPreset(fresh);
+  return fresh;
+}
+
+/** 默认那条预设叫什么。 */
+const DEFAULT_PRESET_NAME = "系统提示词（原生）";
+
+/**
+ * 首次加载时造一条「全部原生」的预设。
+ *
+ * ⚠️ **只在「第一次」造，之后就算用户把它删了也不再造。**
+ *    判据是 `hasLoaded` —— 这个插件之前加载过没有。
+ *    没有它的话，每读一次盘都判断「预设表空不空」，用户删掉默认预设之后
+ *    会**每次打开设置页都被造回来**，而且他自己删不掉。
+ *
+ * ⚠️ **这条预设的清单是「空的」** —— 而空清单的意思正是「全勾」（都用原生）。
+ *    见 `prompt-selection.mjs`：没动过的段不在任何名单里，自动包含。
+ *    所以不需要在造的时候去问 dsh 有哪些段，也就不需要会话。
+ *
+ * ⚠️ **不去改 `global`** —— 不自动把全局注入打开。
+ *    造一条预设 ≠ 决定用它；用不用是用户的事（界面上一目了然）。
+ *
+ * @param {object} out  就地改
+ */
+function ensureDefaultPreset(out) {
+  if (out.hasLoaded === true) return;
+  out.hasLoaded = true;
+  if (Object.keys(out.presets).length > 0) return; // 已经有别的预设了（老用户）
+  const id = presetId(DEFAULT_PRESET_NAME, Object.keys(out.presets));
+  out.presets[id] = capturePreset({
+    name: DEFAULT_PRESET_NAME,
+    prompts: [],
+    sections: {},
+    note: "刚装上时的默认：三段都用 dsh 原生的。改哪一段，它就会挪进「改动提示词」。",
+  });
+}
+
+/**
+ * 把一份「勾选清单」的改动**写进这会话生效的那条预设**。
+ *
+ * ⚠️ **这是老 `/sections` 路由跟新模型的桥。**
+ *
+ *    老路由（界面「系统提示词」那一栏还在用）原来是写 `state.sectionOverrides`
+ *    那张独立表的。新模型里段落改写**由预设承载**，那张表不再被读 ——
+ *    于是「在那一栏改一段」会**写了不生效**。
+ *
+ *    两条路可选：① 读的时候把老表折算进来（桥接）② 写的时候直接写进预设。
+ *
+ *    **② 是对的。** 桥接那条路我试过，它会让老表变成「影响所有预设的一层」——
+ *    本质上就是这次要修掉的那个 bug（段落改写无条件生效）换个地方复发。
+ *    注入验证逮到的：把「没有预设就返回 null」注入掉之后，测试**照样全绿**，
+ *    因为桥接把老改写塞回来了。
+ *
+ * @param {object} args
+ * @param {string} args.sessionId
+ * @param {number} [args.expectRevision]  没用上，留个位（写盘是整表覆盖）
+ * @param {(sel: object) => object} args.edit  收一份清单、返回改完的清单
+ * @returns {{ok: true, presetId: string} | {ok: false, outcome: string, error: string}}
+ */
+function editActivePresetSelection({ sessionId, edit }) {
+  const s = readState();
+  const found = presetForSession({
+    sessionId,
+    assignments: s.assignments,
+    global: s.global,
+    presets: s.presets,
+  });
+  if (!found || !found.preset) {
+    return {
+      ok: false,
+      outcome: "no-active-preset",
+      error:
+        "这个会话没有生效的预设，改动无处可存 —— " +
+        "先在会话页选一条预设（或者把全局注入打开并选一条）。",
+    };
+  }
+  const before = found.preset.selection ?? { listed: [], excluded: [], sections: {}, known: [] };
+  const after = edit(before);
+  const next = normalizePreset({ ...found.preset, selection: after });
+  if (next === null) {
+    return { ok: false, outcome: "bad-preset", error: "改完之后预设不合法（名字丢了？）" };
+  }
+  writeState({ presets: { ...s.presets, [found.id]: next } });
+  return { ok: true, presetId: found.id };
 }
 
 /**
@@ -744,6 +874,17 @@ function writeState(state) {
         state && "presets" in state && state.presets
           ? normalizePresets(state.presets)
           : onDisk.presets,
+      // ⚠️ **「见过面」标记：从盘上继承，只认盘上那份。**
+      //
+      //    用途：区分「刚装上，该给你造那条默认预设」和
+      //    「你之前来过，而且把默认那条删了」—— 后者不该被造回来。
+      //
+      //    ⚠️ 不认入参：调用方大多只传一部分字段，认入参的话这个标记会被写没，
+      //       下次加载又把用户删掉的预设造回来。
+      //
+      //    ⚠️ **也不要 `|| true`** —— 我第一版这么写过，标记恒为真、等于没有。
+      //       它由 `readState` 在读盘时补上（那边才判断得出「是不是第一次」）。
+      hasLoaded: onDisk.hasLoaded === true,
       updatedAt: new Date().toISOString(),
     };
     // ⚠️ 写**一律写新名字** —— 这样读一次就迁过来了，老文件留着不动。
@@ -911,9 +1052,73 @@ function applyInner(ctx) {
     //    那在新模型里是错的：全局关掉时用户自己选的预设照样该生效。
     //    所以这里恒为 true，语义完全由 `global.enabled` 在翻译层表达。
     isEnabled: () => true,
+    /**
+     * 这个会话该套哪份「勾选清单」。
+     *
+     * ⚠️ **返回值 `null` = 一段都不套** —— 这是这次改造的核心。
+     *
+     *    老实现是从 `state.sectionOverrides` + `state.sessionSectionOverrides`
+     *    两张表里**无条件**取改写，不问开关、不问选了哪条预设。于是：
+     *
+     *        全局注入关掉      →  段落改写**照样生效**
+     *        会话选了「不注入」 →  同上
+     *        会话什么都没选     →  照样吃全局那份改写
+     *
+     *    现在改成**跟着预设走**，跟个人提示词同一套作用域规则：
+     *
+     *        会话选了预设      →  用那条的清单
+     *        没选，全局也开着   →  用全局那条的
+     *        其余（含全局关掉） →  **null**，系统提示词原样，一个字都不改
+     *
+     *    判定完全交给 `presetForSession` —— 它本来就是干这个的，
+     *    个人提示词那半一直走它。两半从此同一套规则。
+     *
+     * ⚠️ **下面那段「老数据桥接」是暂时的，第三步要删。**
+     *
+     *    老的 `/sections` 路由（界面「系统提示词」那一栏还在用）把改写写进
+     *    `state.sectionOverrides` 那张单独的表，而不是写进预设。新模型不看
+     *    那张表了 —— 于是「在那一栏改一段」会**写了不生效**。
+     *
+     *    桥接：有生效的预设时，把它清单里没有的老改写**折算进去**。
+     *    语义上说得通 —— 全局改写本来就是「所有预设共享的那层」。
+     *
+     *    等第三步把那栏改成「写进当前预设」，这段就删掉，
+     *    `sectionOverrides` / `sessionSectionOverrides` 两张表一起退休。
+     */
     getSectionOverrides: (sessionId) => {
       const s = readState();
-      return resolveOverrides(s.sectionOverrides, s.sessionSectionOverrides[sessionId]);
+      const found = presetForSession({
+        sessionId,
+        assignments: s.assignments,
+        global: s.global,
+        presets: s.presets,
+      });
+      // ⚠️ 没有生效的预设 → **null**。这就是修掉的那个 bug：
+      //    「全局关掉」和「会话不注入」都走到这儿，段落改写不再生效。
+      //
+      //    ⚠️ **必须直接 return，不能落进下面的桥接。**
+      //       注入验证逮到的：第一版「先算出 sel、再进桥接」——
+      //       于是桥接会把 `state.sectionOverrides` 里那份老改写**塞回来**，
+      //       等于 `null` 那条路被绕过去了，bug 原样还在
+      //       （「没有生效的预设时照样套」那个注入**没变红**，就是它暴露的）。
+      if (!found || !found.preset) return null;
+
+      const sel = found.preset.selection ?? { listed: [], excluded: [], sections: {}, known: [] };
+
+      // ⚠️ **这里原来有一段「老数据桥接」**（把 `state.sectionOverrides` 里的
+      //    老改写折算进清单），**已删** —— 它有两个毛病：
+      //
+      //    ① 它让那张老表变成「影响**所有**预设的一层」——
+      //       本质上就是这次要修掉的 bug（段落改写无条件生效）换了个地方复发。
+      //       注入验证逮到的：把上面那句 `return null` 注入掉之后，
+      //       测试**照样全绿** —— 因为桥接把老改写塞了回来，等于没修。
+      //
+      //    ② 正确的做法是**写的时候直接写进预设**，不是读的时候折算。
+      //       老的 `/sections` 路由已经改成写预设（见 `editActivePresetSelection`）。
+      //
+      //    那张表从此**只读不写**：只为把升级前的老数据读出来一次
+      //    （`readState` 里的 `migrateLegacyState` 会把它并进预设）。
+      return sel;
     },
   });
   injector.restore(toInjectorState(readState()));
@@ -1148,106 +1353,228 @@ const jsonOf = (body, status) =>
             return jsonOf({ error: "缺少 name" }, 400);
           }
 
-          const state = readState();
-
-          // ── 写到哪一层 ──────────────────────────────────────────────────
+          // ── ⚠️ 从这一版起，这里**写进预设**，不再写 `sectionOverrides` ──
           //
-          //   scope: "global"  → 全局默认改写（影响所有会话）
-          //   scope: "session" → 只影响 sessionId 这一个会话，**盖住全局那条**
+          //    新模型里段落改写由预设承载（`selection`），那张独立的表不再被读。
+          //    所以这条路必须改成写预设 —— 不然「在系统提示词那一栏改一段」
+          //    会**写了不生效**（而且不报错）。
           //
-          // ⚠️ **默认 global** —— 老客户端不带 scope 时行为跟以前一样。
-          const scope = body?.scope === "session" ? "session" : "global";
-          if (scope === "session" && !sessionId) {
-            diag.lastSections = "missing-session";
-            return jsonOf({ error: "scope: session 时必须带 ?session=<sessionId>" }, 400);
-          }
-
-          // 拿到**这一层**的表（会话层不存在就现建）
-          const layerTable =
-            scope === "session"
-              ? { ...(state.sessionSectionOverrides[sessionId] ?? {}) }
-              : { ...state.sectionOverrides };
-          const table = layerTable;
-
-          if (action === "restore") {
-            // 「还原默认」= 删掉覆盖。
-            // ⚠️ 还原的是官方**当前**的文本 —— 如果官方更新过这一段，
-            //    拿到的是新版而不是用户当初依据的旧版。（用户明确要的口径。）
-            delete table[name];
-          } else if (action === "replace" || action === "disable") {
-            if (typeof body?.text !== "string" && action === "replace") {
+          //    ⚠️ 老的 `scope` 参数**不再有意义**：改动跟着**这会话实际生效的那条预设**走
+          //       （会话选了就用会话那条，没选就用全局那条）。
+          //       这跟个人提示词是同一套规则 —— 两半终于统一了。
+          {
+            // ⚠️ **校验顺序：先参数、再段落、最后才查「有没有预设」。**
+            //    第一版把「有没有生效的预设」放在最前，于是「非法 action」
+            //    「replace 缺 text」「段落不存在」全被盖成了 409 ——
+            //    而那几条校验**本来就不该依赖有没有预设**。测试逮到的。
+            if (!["restore", "replace", "disable", "acknowledge"].includes(action)) {
+              diag.lastSections = "bad-action";
+              return jsonOf(
+                {
+                  error: `action 必须是 replace / disable / restore / acknowledge，收到 ${JSON.stringify(action)}`,
+                },
+                400,
+              );
+            }
+            if ((action === "replace" || action === "disable") && action === "replace" && typeof body?.text !== "string") {
               diag.lastSections = "missing-text";
               return jsonOf({ error: "replace 需要 text" }, 400);
             }
-            // 先取这一段**当前的官方原文**做漂移基准。
-            // 此刻如果已经存在覆盖，listSections 给的是原文（不带 scope），所以
-            // 反复编辑不会把基准越推越偏。
-            const found = await injector.listSections(sessionId);
-            const live = found.sections.find((s) => s.name === name);
-            if (live === undefined) {
-              diag.lastSections = "unknown-section";
-              return jsonOf({
-                  error: `找不到段落 ${name} —— 它可能刚被官方删掉或改名了`,
-                  knownNames: found.sections.map((s) => s.name),
-                }, 404);
-            }
-            const built = makeOverride({
-              action,
-              text: action === "disable" ? "" : body.text,
-              original: live.text,
-              acceptedDrift: body?.acceptedDrift === true,
-            });
-            table[name] = built;
-          } else if (action === "acknowledge") {
-            // 点掉「官方已更新」的提醒：覆盖不动，只把 acceptedDrift 置真。
-            const existing = normalizeOverride(table[name]);
-            if (existing === null) {
-              diag.lastSections = "acknowledge-missing";
-              return jsonOf({ error: `段落 ${name} 没有覆盖记录，无从确认` }, 404);
-            }
-            table[name] = { ...existing, acceptedDrift: true };
-          } else {
-            diag.lastSections = "bad-action";
-            return jsonOf({ error: `action 必须是 replace / disable / restore / acknowledge，收到 ${JSON.stringify(action)}` }, 400);
-          }
 
-          // 只写**这一层**，另一层原样保留
-          if (scope === "session") {
-            const next = { ...state.sessionSectionOverrides };
-            if (Object.keys(table).length > 0) next[sessionId] = table;
-            else delete next[sessionId]; // 空表就不留占位
-            writeState({ sessionSectionOverrides: next });
-          } else {
-            writeState({ sectionOverrides: table });
+            // 这一段**当前的官方原文** —— 编辑时当漂移基准，还原/确认时也要用
+            const foundLive = await injector.listSections(sessionId);
+            const live = foundLive.sections.find((s) => s.name === name);
+            const liveText = typeof live?.text === "string" ? live.text : "";
+            if ((action === "replace" || action === "disable") && live === undefined) {
+              diag.lastSections = "unknown-section";
+              return jsonOf(
+                {
+                  error: `找不到段落 ${name} —— 它可能刚被官方删掉或改名了`,
+                  knownNames: foundLive.sections.map((s) => s.name),
+                },
+                404,
+              );
+            }
+
+            // ── `acknowledge` 的校验要**放在最前** ────────────────────────────
+            //
+            // ⚠️ 它跟别的动作不一样：**不写任何东西**，只是把漂移基准推到当前原文。
+            //    所以「没有生效的预设」对它不是错误 —— **没有记录**才是（404）。
+            //
+            //    第一版把它跟别的动作一起放在「有没有预设」后面，于是
+            //    「确认一个不存在的覆盖」返回的是 409「没有预设」——
+            //    **答非所问**，而且那条 404 的路**永远走不到**（测试逮到的）。
+            if (action === "acknowledge") {
+              const sAck = readState();
+              const foundAck = presetForSession({
+                sessionId,
+                assignments: sAck.assignments,
+                global: sAck.global,
+                presets: sAck.presets,
+              });
+              if (!foundAck?.preset?.selection?.sections?.[name]) {
+                diag.lastSections = "acknowledge-missing";
+                return jsonOf({ error: `段落 ${name} 没有改动记录，无从确认` }, 404);
+              }
+            }
+
+            // ── 到这里参数和段落都验过了，再看改动有没有地方存 ──────────────
+            const state0 = readState();
+            const found0 = presetForSession({
+              sessionId,
+              assignments: state0.assignments,
+              global: state0.global,
+              presets: state0.presets,
+            });
+            if (!found0 || !found0.preset) {
+              diag.lastSections = "no-active-preset";
+              return jsonOf(
+                {
+                  ok: false,
+                  outcome: "no-active-preset",
+                  error:
+                    "这个会话没有生效的预设，段落改动无处可存 —— " +
+                    "先在会话页选一条预设，或者把全局注入打开并选一条。",
+                },
+                409,
+              );
+            }
+
+            /** 把一份改好的清单写回那条预设；失败就返回响应对象。 */
+            const commit = (editFn) => {
+              const r = editActivePresetSelection({ sessionId, edit: editFn });
+              if (!r.ok) {
+                diag.lastSections = r.outcome;
+                return jsonOf({ ok: false, outcome: r.outcome, error: r.error }, 409);
+              }
+              return null;
+            };
+
+            // ⚠️ 参数和段落**上面都验过了**，所以下面这一串可以放心分发 ——
+            //    不用在每个分支里重复校验。
+            if (action === "restore") {
+              // 「还原默认」= 把这段从清单里拿掉 → 回到原生
+              const bad = commit((sel) => {
+                const next = normalizeSelection(sel);
+                next.listed = next.listed.filter((n) => n !== name);
+                next.excluded = next.excluded.filter((n) => n !== name);
+                delete next.sections[name];
+                return next;
+              });
+              if (bad) return bad;
+            } else if (action === "replace" || action === "disable") {
+              const bad = commit((sel) =>
+                applySelectionEdit({
+                  native: [{ name, text: liveText }],
+                  selection: sel,
+                  name,
+                  // ⚠️ 「关闭」在新模型里就是**不勾**（进 excluded），
+                  //    不再是一个 `disable` 动作。见 prompt-selection.mjs。
+                  action: action === "disable" ? "exclude" : "include",
+                  edit:
+                    action === "disable" ? undefined : { text: body.text, original: liveText },
+                }),
+              );
+              if (bad) return bad;
+            } else if (action === "acknowledge") {
+              // 点掉「官方已更新」的提醒：**把基准推到当前原文**，正文不动。
+              //
+              // ⚠️ 没有覆盖记录时给 **404** —— 「无从确认」跟「没有预设」是两回事，
+              //    别混成一个状态码（第一版混了，测试逮到的）。
+              const sAck = readState();
+              const foundAck = presetForSession({
+                sessionId,
+                assignments: sAck.assignments,
+                global: sAck.global,
+                presets: sAck.presets,
+              });
+              if (!foundAck?.preset?.selection?.sections?.[name]) {
+                diag.lastSections = "acknowledge-missing";
+                return jsonOf({ error: `段落 ${name} 没有改动记录，无从确认` }, 404);
+              }
+              const bad = commit((sel) => {
+                const next = normalizeSelection(sel);
+                const ov = next.sections[name];
+                if (ov) next.sections[name] = { ...ov, original: liveText };
+                return next;
+              });
+              if (bad) return bad;
+            }
           }
           // 覆盖是**每次装配现取**的（见 createSessionInjector 的 getSectionOverrides），
           // 所以这里不用重挂 agent，下一个模型步骤就生效。
 
           const found2 = await injector.listSections(sessionId);
-          // ⚠️ 判定要用**合并后**的表 —— 只看单层的话，会话层看到的会漏掉全局那些
-          const stateAfter = readState();
-          const effective = resolveOverrides(
-            stateAfter.sectionOverrides,
-            sessionId ? stateAfter.sessionSectionOverrides[sessionId] : undefined,
-          );
-          const plan2 = planOverrides({ overrides: effective, globalSections: found2.sections });
-          diag.lastSections = `${action}:${scope}:ok`;
+          // ⚠️ **响应形状暂时保持老样子**（`applied` / `drifted` / `stale` /
+          //    `untouched` / `summary`）—— 界面那一栏还在读它们，
+          //    改了会让它崩。第三步界面改完之后，这里跟着换成新模型的
+          //    「三个文件夹」形状。
+          //
+          //    但**内容要来自新的清单**，不能再去读那两张退休的表 ——
+          //    否则「改完一段，界面显示的还是旧的」。
+          const stateAfter2 = readState();
+          const foundAfter = presetForSession({
+            sessionId,
+            assignments: stateAfter2.assignments,
+            global: stateAfter2.global,
+            presets: stateAfter2.presets,
+          });
+          const selAfter = foundAfter?.preset?.selection ?? null;
+          const projected = projectSelection({
+            native: found2.sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
+            selection: selAfter,
+          });
+          // 把新模型的投影结果**翻译回老形状**
+          const asRow = (row, status) => {
+            const ov = selAfter?.sections?.[row.name];
+            return {
+              name: row.name,
+              index: found2.sections.findIndex((s) => s.name === row.name),
+              status,
+              drifted: row.drifted === true,
+              driftAcknowledged: false,
+              original: found2.sections.find((s) => s.name === row.name)?.text ?? "",
+              originalHash: "",
+              basedOn: ov?.original ?? "",
+              basedOnHash: "",
+              action: status === "apply" ? "replace" : null,
+              text: row.text ?? "",
+              savedAt: ov?.savedAt ?? "",
+            };
+          };
+          const appliedRows = projected.plan
+            .filter((r) => r.mode === "edited")
+            .map((r) => asRow(r, "apply"));
+          const droppedRows = projected.plan
+            .filter((r) => r.mode === "dropped")
+            .map((r) => asRow(r, "apply"));
+          const untouchedRows = projected.plan
+            .filter((r) => r.mode === "native")
+            .map((r) => asRow(r, "untouched"));
+          const staleRows = (projected.stale ?? []).map((r) => asRow(r, "stale"));
+          const allApplied = appliedRows.concat(droppedRows);
+          diag.lastSections = `${action}:ok`;
           return jsonOf({
               ok: true,
               action,
               name,
-              summary: summarizePlan(plan2),
-              applied: plan2.apply,
-              drifted: plan2.drifted,
-              stale: plan2.stale,
-              untouched: plan2.untouched,
+              summary:
+                allApplied.length > 0
+                  ? `改 ${allApplied.length} 段`
+                  : untouchedRows.length > 0
+                    ? "全部原生"
+                    : "",
+              applied: allApplied,
+              drifted: allApplied.filter((r) => r.drifted),
+              stale: staleRows,
+              untouched: untouchedRows,
               // 改完一段后空槽位也要重算 —— 通常不会变，但保持两个响应形状一致
               emptySlots: findEmptySlots(found2.sections),
               counts: {
-                applied: plan2.apply.length,
-                drifted: plan2.drifted.length,
-                stale: plan2.stale.length,
-                untouched: plan2.untouched.length,
+                applied: allApplied.length,
+                drifted: allApplied.filter((r) => r.drifted).length,
+                stale: staleRows.length,
+                untouched: untouchedRows.length,
                 total: found2.sections.length,
               },
             });
@@ -1347,12 +1674,64 @@ const jsonOf = (body, status) =>
               out.prompts = prompts;
             }
             if ("sections" in (body ?? {})) {
+              // ⚠️ **两种形状都收** —— 老界面发 `{action, text}`，新模型只发 `{text}`。
+              //
+              //    这里原来用的是 `normalizeOverrides()`（老模型的校验），
+              //    而它**要求 `action` 是 `replace` / `disable` 之一**，没有就整条丢掉。
+              //    于是新形状的 `{ text }` 会被**静默丢弃** —— 界面上看着存进去了，
+              //    实际预设里一段都没有。（测试逮到的：存完 `selection.sections` 是空的。）
+              //
+              //    新模型里「有没有 action」不该是判据：能留下来的记录就是
+              //    「改成这样」，而 `disable` 由 `excluded` 表达、不需要正文。
               out.sections =
                 body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)
-                  ? normalizeOverrides(body.sections)
+                  ? normalizeSectionsInput(body.sections)
                   : {};
             }
             return out;
+          };
+
+          /**
+           * 拦住「一段都不会进提示词」的清单。
+           *
+           * ⚠️ 为什么值得拦：把 32 段全不勾、又没挂任何提示词，
+           *    这个会话就等于**没有系统提示词** —— 模型会跑得莫名其妙，
+           *    而用户不会想到是自己那张清单搞的。
+           *
+           * ⚠️ **判据不能是「清单是空的」** —— 空清单正好是**默认的全勾状态**
+           *    （「没动过的段自动包含」）。真正的空是「该有的原生段全被排除了」，
+           *    所以要知道**当前有哪些原生段**。
+           *
+           * ⚠️ **拿不到原生段清单时不拦**（fail-open）。
+           *    界面会把它知道的那份通过 `availableNative` 递过来；
+           *    递给不了（比如第三方调用）就放过 —— 宁可少拦，别把正常保存挡住。
+           *
+           * @returns {string|null} 有错返回说明文字，没问题返回 null
+           */
+          const emptySelectionProblem = (content) => {
+            const available = Array.isArray(body?.availableNative) ? body.availableNative : [];
+            if (available.length === 0) return null; // 不知道 → 不拦
+            const raw = body?.selection && typeof body.selection === "object" ? body.selection : {};
+            const sel = {
+              listed: Array.isArray(raw.listed) ? raw.listed : [],
+              excluded: Array.isArray(raw.excluded) ? raw.excluded : [],
+              // ⚠️ **`selection.sections` 也要算进去。** 第一版只看老形状的
+              //    `content.sections`，于是「全排除 + 改了一段」会被误判成空
+              //    （测试里的第 ③ 条当场红了）。
+              sections: { ...(raw.sections && typeof raw.sections === "object" ? raw.sections : {}) },
+            };
+            // 老形状的输入（只有 `sections`）没有 excluded 的概念，
+            // 所以按老形状折算一遍：`disable` 进 excluded，其余进 sections。
+            for (const [name, ov] of Object.entries(content.sections ?? {})) {
+              if (ov && ov.action === "disable") {
+                sel.excluded = [...sel.excluded, name];
+              } else {
+                sel.sections[name] = { ...ov };
+              }
+            }
+            return isEmptySelection({ selection: sel, availableNative: available })
+              ? "这张清单里一段都不会进系统提示词 —— 至少勾一段原生段落，或者挂一条自己的提示词。"
+              : null;
           };
 
           // ── 保存新预设 ──────────────────────────────────────────────────
@@ -1366,6 +1745,13 @@ const jsonOf = (body, status) =>
             if (content.error) {
               diag.lastPresets = "unknown-prompt";
               return jsonOf({ error: content.error }, 400);
+            }
+            {
+              const empty = emptySelectionProblem(content);
+              if (empty) {
+                diag.lastPresets = "empty-selection";
+                return jsonOf({ ok: false, outcome: "empty-selection", error: empty }, 400);
+              }
             }
             const s = readState();
             const id = presetId(name, Object.keys(s.presets));
@@ -1397,6 +1783,16 @@ const jsonOf = (body, status) =>
             if (content.error) {
               diag.lastPresets = "unknown-prompt";
               return jsonOf({ error: content.error }, 400);
+            }
+            // ⚠️ 改名/改内容**同样要拦住空清单** ——
+            //    不然「先存一条好的、再把它改成空的」就绕过去了。
+            //    只在真的动了段落内容时才判（只改名不该被拦）。
+            if ("sections" in (body ?? {}) || "selection" in (body ?? {})) {
+              const empty = emptySelectionProblem(content);
+              if (empty) {
+                diag.lastPresets = "empty-selection";
+                return jsonOf({ ok: false, outcome: "empty-selection", error: empty }, 400);
+              }
             }
             const name =
               typeof body?.name === "string" && body.name.trim() ? body.name.trim() : preset.name;
