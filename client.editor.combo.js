@@ -76,8 +76,15 @@ window.__ModuleLoader__.load({
       function sectionTagRows(props) {
         var seen = {};
         var out = [];
-        var presetSec = props.presetSections;
-        var globalOv = (props.sectionsData && props.sectionsData.globalOverrides) || {};
+        var selection = props.presetSelection || {
+          listed: props.presetSections && typeof props.presetSections === "object"
+            ? Object.keys(props.presetSections)
+            : [],
+          excluded: [],
+          sections: props.presetSections || {},
+        };
+        var presetSec = selection.sections || props.presetSections;
+        var listed = Array.isArray(selection.listed) ? selection.listed : [];
         function push(name, on) {
           if (!name || seen[name]) return;
           seen[name] = true;
@@ -85,11 +92,8 @@ window.__ModuleLoader__.load({
         }
         if (presetSec && typeof presetSec === "object") {
           for (var a in presetSec) {
-            if (Object.prototype.hasOwnProperty.call(presetSec, a)) push(a, true);
+            if (Object.prototype.hasOwnProperty.call(presetSec, a)) push(a, listed.indexOf(a) >= 0);
           }
-        }
-        for (var b in globalOv) {
-          if (Object.prototype.hasOwnProperty.call(globalOv, b)) push(b, false);
         }
         out.sort(function (x, y) {
           return x.name < y.name ? -1 : x.name > y.name ? 1 : 0;
@@ -99,18 +103,40 @@ window.__ModuleLoader__.load({
 
       /** 收进 / 移出这一段（只改草稿，保存才写盘）。 */
       function toggleSection(props, name) {
-        var cur =
-          props.presetSections && typeof props.presetSections === "object" ? props.presetSections : {};
-        var next = {};
-        for (var k in cur) {
-          if (Object.prototype.hasOwnProperty.call(cur, k) && k !== name) next[k] = cur[k];
-        }
-        if (!Object.prototype.hasOwnProperty.call(cur, name)) {
-          // 原来不在里面 → 现在要收进来。值取全局改写里那份（有就用，没有给个空对象占位）。
-          var ov = (props.sectionsData && props.sectionsData.globalOverrides) || {};
-          next[name] = Object.prototype.hasOwnProperty.call(ov, name) ? ov[name] : {};
-        }
-        props.setPresetSections(next);
+        var current = props.presetSelection || { listed: [], excluded: [], sections: {}, known: [] };
+        var listed = Array.isArray(current.listed) ? current.listed.slice() : [];
+        var excluded = Array.isArray(current.excluded) ? current.excluded.slice() : [];
+        var isListed = listed.indexOf(name) >= 0;
+        listed = listed.filter(function (x) { return x !== name; });
+        excluded = excluded.filter(function (x) { return x !== name; });
+        if (!isListed) listed.push(name);
+        var setter = props.setPresetSelection || function (next) {
+          if (props.setPresetSections) props.setPresetSections(next.sections || {});
+        };
+        setter({
+          listed: listed,
+          excluded: excluded,
+          sections: Object.assign({}, current.sections || {}),
+          known: Array.isArray(current.known) ? current.known.slice() : [],
+        });
+      }
+
+      function toggleNativeSection(props, name) {
+        var current = props.presetSelection || { listed: [], excluded: [], sections: {}, known: [] };
+        var excluded = Array.isArray(current.excluded) ? current.excluded.slice() : [];
+        var listed = Array.isArray(current.listed) ? current.listed.filter(function (x) { return x !== name; }) : [];
+        var at = excluded.indexOf(name);
+        if (at >= 0) excluded.splice(at, 1);
+        else excluded.push(name);
+        var setter = props.setPresetSelection || function (next) {
+          if (props.setPresetSections) props.setPresetSections(next.sections || {});
+        };
+        setter({
+          listed: listed,
+          excluded: excluded,
+          sections: Object.assign({}, current.sections || {}),
+          known: Array.isArray(current.known) ? current.known.slice() : [],
+        });
       }
 
       function renderPickerBody(props) {
@@ -254,11 +280,9 @@ window.__ModuleLoader__.load({
           var exList = Array.isArray(sd.excludedSections) ? sd.excludedSections : [];
           for (var xi = 0; xi < exList.length; xi++) excluded[exList[xi]] = true;
           var edited = {};
-          for (var ti2 = 0; ti2 < tagRows.length; ti2++) {
-            if (tagRows[ti2].on) edited[tagRows[ti2].name] = true;
-          }
+          for (var ti2 = 0; ti2 < tagRows.length; ti2++) edited[tagRows[ti2].name] = true;
 
-          var mkTag = function (name, on, keyPrefix, title) {
+          var mkTag = function (name, on, keyPrefix, title, onToggle) {
             return react.createElement(
               "label",
               {
@@ -274,7 +298,7 @@ window.__ModuleLoader__.load({
                   disabled: props.presetsBusy,
                   "data-section-tag": name,
                   onChange: function () {
-                    toggleSection(props, name);
+                    (onToggle || function () { toggleSection(props, name); })();
                   },
                 }),
                 react.createElement("span", { key: "n", style: { fontSize: "12px" } }, name),
@@ -300,16 +324,14 @@ window.__ModuleLoader__.load({
           // ② 改动提示词 —— `tagRows` 里勾着的那些
           var editedEls = [];
           for (var ei = 0; ei < tagRows.length; ei++) {
-            if (tagRows[ei].on) {
-              editedEls.push(
-                mkTag(
-                  tagRows[ei].name,
-                  true,
-                  "edited",
-                  "这段的改动留在预设里（取消勾 = 回到原生）",
-                ),
-              );
-            }
+            editedEls.push(
+              mkTag(
+                tagRows[ei].name,
+                tagRows[ei].on,
+                "edited",
+                tagRows[ei].on ? "这段的改动留在预设里（取消勾 = 使用原生）" : "这段改动暂不注入（勾上 = 使用改写）",
+              ),
+            );
           }
 
           // ③ 系统提示词 —— **全部原生段都列出来**，没动的也列
@@ -318,7 +340,15 @@ window.__ModuleLoader__.load({
             var nm = avail[ni];
             if (edited[nm]) continue; // 改过的归上一块
             nativeEls.push(
-              mkTag(nm, !excluded[nm], "native", "这段用 dsh 原生的（取消勾 = 不要它）"),
+            (function (nativeName) {
+              return mkTag(
+                nativeName,
+                !excluded[nativeName],
+                "native",
+                "这段用 dsh 原生的（取消勾 = 不要它）",
+                function () { toggleNativeSection(props, nativeName); },
+              );
+            })(nm),
             );
           }
 
@@ -675,9 +705,10 @@ window.__ModuleLoader__.load({
       function savePreset(props) {
     // ⚠️ 草稿要**一起交上去** —— 不然「勾了几条 → 保存」只会存下预设的旧内容。
     var draft = Array.isArray(props.presetDraft) ? props.presetDraft : null;
+    var selection = props.presetSelection || null;
         var matched = globalPresetOf(props);
         if (matched) {
-          props.doPreset(Object.assign({ action: "save", name: matched.name }, draft ? { prompts: draft } : {}));
+          props.doPreset(Object.assign({ action: "save", name: matched.name }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {}));
           return;
         }
         var name = props.presetName.trim();
@@ -687,7 +718,7 @@ window.__ModuleLoader__.load({
           props.setRenameDraft("");
           return;
         }
-        props.doPreset(Object.assign({ action: "save", name: name }, draft ? { prompts: draft } : {})).then(function () {
+        props.doPreset(Object.assign({ action: "save", name: name }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {})).then(function () {
           props.setPresetName("");
         });
       }

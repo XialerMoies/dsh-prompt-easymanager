@@ -173,7 +173,7 @@ const THREE = native(
   });
   eq(sel.excluded, ["tool:bash"], "排进去了");
   eq(sel.listed, [], "从 listed 里拿掉");
-  eq(sel.sections["tool:bash"], undefined, "**改过的正文也丢掉**（用户说不要它了）");
+  eq(sel.sections["tool:bash"].text, "我改的", "**取消勾选不丢改写副本**（之后可以重新勾回）");
 }
 
 // ── 8. 勾上 / 不勾：两个名单的语义 ────────────────────────────────────────

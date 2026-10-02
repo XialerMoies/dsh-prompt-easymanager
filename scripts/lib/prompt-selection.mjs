@@ -86,7 +86,7 @@ export function normalizeSelection(raw) {
     out.listed.push(name);
   }
 
-  // ③ 段落正文 —— 被排除的段不用留（省地方，也不会被误用）
+  // ③ 段落正文 —— 被排除的段仍保留副本，取消勾选不应造成数据丢失
   if (raw.sections && typeof raw.sections === "object" && !Array.isArray(raw.sections)) {
     for (const [name, ov] of Object.entries(raw.sections)) {
       if (typeof name !== "string" || !name) continue;
@@ -182,9 +182,8 @@ export function applySelectionEdit({ native, selection, name, action, edit }) {
   next.excluded = next.excluded.filter((n) => n !== name);
 
   if (action === "exclude") {
-    // 不勾 = 不进提示词。改过的正文也一起丢掉（用户说了不要它）
+    // 不勾 = 不进提示词；改过的正文保留在副本里，之后可以重新勾回。
     next.excluded.push(name);
-    delete next.sections[name];
     return next;
   }
 
@@ -260,7 +259,10 @@ export function projectSelection({ native, selection }) {
     }
 
     const ov = sel.sections[s.name];
-    if (ov) {
+    // A saved edit is only active when it is also listed in the preset.
+    // An empty `listed` is the default "all native sections" state, so an
+    // unlisted edit falls back to the current native text.
+    if (ov && listed.has(s.name)) {
       // 改过的段：用改的那份，并报「官方后来动过没有」
       const drifted = ov.original ? ov.original !== live : false;
       plan.push({ name: s.name, mode: "edited", text: ov.text, drifted });

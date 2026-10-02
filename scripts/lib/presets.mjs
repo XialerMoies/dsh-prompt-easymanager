@@ -180,11 +180,12 @@ function selectionFromLegacySections(sections) {
  * @param {string} [args.note]
  * @param {string} [args.now]       注入时间戳（测试用，默认取当前时间）
  */
-export function capturePreset({ name, prompts, sections, note = "", now }) {
+export function capturePreset({ name, prompts, sections, selection, note = "", now }) {
   return {
     name: String(name ?? "").trim(),
     prompts: [...new Set((Array.isArray(prompts) ? prompts : []).filter((x) => typeof x === "string" && x))],
     sections: cloneSections(sections),
+    selection: normalizeSelection(selection ?? selectionFromLegacySections(sections)),
     createdAt: now ?? new Date().toISOString(),
     note: String(note ?? ""),
   };
@@ -208,6 +209,7 @@ export function planApply(preset) {
   return {
     prompts: [...(preset.prompts ?? [])],
     sections: { ...(preset.sections ?? {}) },
+    selection: normalizeSelection(preset.selection),
   };
 }
 
@@ -231,7 +233,13 @@ export function presetSignature(input) {
       return `${k}=${action}:${text}`;
     })
     .sort();
-  return JSON.stringify({ p, s });
+  const sel = normalizeSelection(src.selection ?? selectionFromLegacySections(sections));
+  return JSON.stringify({
+    p,
+    s,
+    listed: [...sel.listed].sort(),
+    excluded: [...sel.excluded].sort(),
+  });
 }
 
 /**

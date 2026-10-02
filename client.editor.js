@@ -200,8 +200,14 @@ window.__ModuleLoader__.load({
         // ⚠️ **段落草稿**：跟勾选草稿一样，改动先攒着，保存才写进预设。
         //    勾选区那组「系统提示词」tag 改的就是它。
         var preSecSt = react.useState(null);
-        var presetSections = preSecSt[0];
-        var setPresetSections = preSecSt[1];
+        var presetSelection = preSecSt[0];
+        var setPresetSelection = preSecSt[1];
+        var presetSections = presetSelection && presetSelection.sections ? presetSelection.sections : {};
+        var setPresetSections = function (next) {
+          setPresetSelection(function (prev) {
+            return Object.assign({}, prev || {}, { sections: next || {} });
+          });
+        };
         /** 总开关的本地态（带乐观更新 —— 拨一下立刻变色，失败再回滚） */
         var enSt = react.useState(null);
         var enabledDraft = enSt[0];
@@ -346,6 +352,18 @@ window.__ModuleLoader__.load({
             .then(function (d) {
               if (!mountedRef.current) return null;
               setPresetsData(d);
+              var gid = d && d.global && typeof d.global.presetId === "string" ? d.global.presetId : "";
+              var current = presetById(d, gid);
+              if (current && current.selection) {
+                setPresetSelection({
+                  listed: Array.isArray(current.selection.listed) ? current.selection.listed.slice() : [],
+                  excluded: Array.isArray(current.selection.excluded) ? current.selection.excluded.slice() : [],
+                  sections: current.selection.sections && typeof current.selection.sections === "object"
+                    ? Object.assign({}, current.selection.sections)
+                    : {},
+                  known: Array.isArray(current.selection.known) ? current.selection.known.slice() : [],
+                });
+              }
               return null;
             })
             .catch(function (e) {
@@ -368,7 +386,24 @@ window.__ModuleLoader__.load({
           var one = presetById(presetsData, id);
           setPresetDraft(one && Array.isArray(one.prompts) ? one.prompts.slice() : []);
           // 段落草稿跟着一起建 —— 两者都是「这条预设的内容」。
-          setPresetSections(one && one.sections && typeof one.sections === "object" ? Object.assign({}, one.sections) : {});
+          var sel = one && one.selection && typeof one.selection === "object" ? one.selection : null;
+          setPresetSelection({
+            listed: sel && Array.isArray(sel.listed) ? sel.listed.slice() : [],
+            excluded: sel && Array.isArray(sel.excluded) ? sel.excluded.slice() : [],
+            sections: sel && sel.sections && typeof sel.sections === "object"
+              ? Object.assign({}, sel.sections)
+              : one && one.sections && typeof one.sections === "object"
+                ? Object.assign({}, one.sections)
+                : {},
+            known: sel && Array.isArray(sel.known) ? sel.known.slice() : [],
+          });
+          setPresetSections(
+            sel && sel.sections && typeof sel.sections === "object"
+              ? Object.assign({}, sel.sections)
+              : one && one.sections && typeof one.sections === "object"
+                ? Object.assign({}, one.sections)
+                : {},
+          );
           // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [presetsData && presetsData.global && presetsData.global.presetId]);
 
@@ -443,16 +478,16 @@ window.__ModuleLoader__.load({
  *    没有当前预设时（手改过的状态）走 `save` 存一条新的。
  */
 var saveDraft = react.useCallback(
-  function (nextIds, name) {
+  function (nextIds, name, nextSelection) {
   // ⚠️ 段落草稿**一起交上去** —— 不然「tag 收了 / 去了 → 保存」只会存下旧的段落。
-  var sec = presetSections && typeof presetSections === "object" ? presetSections : null;
+  var selection = nextSelection || presetSelection;
     var matched =
       presetsData && presetsData.global && typeof presetsData.global.presetId === "string"
         ? presetById(presetsData, presetsData.global.presetId)
         : null;
     if (matched) {
       setPresetsBusy(true);
-      return doPreset(Object.assign({ action: "update", id: matched.id, prompts: nextIds }, sec ? { sections: sec } : {}));
+      return doPreset(Object.assign({ action: "update", id: matched.id, prompts: nextIds }, selection ? { selection: selection } : {}));
     }
     var nm = (name || "").trim();
     if (!nm) {
@@ -462,9 +497,9 @@ var saveDraft = react.useCallback(
       return null;
     }
     setPresetsBusy(true);
-    return doPreset(Object.assign({ action: "save", name: nm, prompts: nextIds }, sec ? { sections: sec } : {}));
+    return doPreset(Object.assign({ action: "save", name: nm, prompts: nextIds }, selection ? { selection: selection } : {}));
   },
-  [doPreset, flash, presetsData, presetSections, setRenameDraft, setRenaming],
+  [doPreset, flash, presetsData, presetSelection, setRenameDraft, setRenaming],
 );
 
 /** 按 id 在预设表里查一条（表可能是对象也可能是数组）。 */
@@ -735,6 +770,8 @@ function presetById(d, id) {
                     //    漏了的话那一组**整组不显示**（拿不到 presetSections → 当成空组），不报错。
                     presetSections: presetSections,
                     setPresetSections: setPresetSections,
+                    presetSelection: presetSelection,
+                    setPresetSelection: setPresetSelection,
                     // ⚠️ 变量名是 sections（不是 sectionsData）—— 传错了会 ReferenceError，
                     //    渲染期整棵子树被卸载（不是静默失败，但报错位置离原因很远）。
                     sectionsData: sections,

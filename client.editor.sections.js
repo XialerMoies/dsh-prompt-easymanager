@@ -55,7 +55,7 @@ window.__ModuleLoader__.load({
       function sectionBadge(row) {
         if (row.status === "stale") return { text: "已失效", style: BADGE_WARN };
         if (row.status === "untouched") return { text: "官方原文", style: BADGE_MUTED };
-        if (row.action === "disable") return { text: "已关掉", style: BADGE_OFF };
+        if (row.action === "disable") return { text: "未勾选", style: BADGE_OFF };
         if (row.drifted && !row.driftAcknowledged) return { text: "官方已更新", style: BADGE_WARN };
         return { text: "已改写", style: BADGE_OK };
       }
@@ -344,7 +344,7 @@ window.__ModuleLoader__.load({
             react.createElement("span", { key: "n", style: HEADING_TITLE }, "系统提示词"),
             // 两段说明并成一个「?」—— 详见 client.editor.switch.js
             props.helpIcon(
-              "这些是 dsh 自己往系统提示词里放的段落。可以逐段改写或关掉，也能还原。" +
+                "这些是 dsh 自己往系统提示词里放的段落。可以逐段改写，也能还原。" +
                 "官方以后新增段落会自动出现在这里，改过的会标出来 —— 你的改动不会被官方更新顶掉。" +
                 "\n\n" +
                 "这里改的是全局默认，所有会话都生效。" +

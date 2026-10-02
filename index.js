@@ -1778,6 +1778,7 @@ const jsonOf = (body, status) =>
               name: p.name,
               prompts: p.prompts,
               sections: p.sections,
+              selection: p.selection,
               createdAt: p.createdAt,
               note: p.note,
               summary: summarizePreset(p),
@@ -1855,6 +1856,9 @@ const jsonOf = (body, status) =>
                   ? normalizeSectionsInput(body.sections)
                   : {};
             }
+            if ("selection" in (body ?? {})) {
+              out.selection = normalizeSelection(body.selection);
+            }
             return out;
           };
 
@@ -1927,6 +1931,7 @@ const jsonOf = (body, status) =>
               // 「存」的时候缺字段就是空（新建没给就是空的，语义清楚）
               prompts: content.prompts ?? [],
               sections: content.sections ?? {},
+              selection: content.selection,
               note: typeof body?.note === "string" ? body.note : "",
             });
             writeState({ presets: { ...s.presets, [id]: preset } });
@@ -1973,6 +1978,7 @@ const jsonOf = (body, status) =>
               //    改成无条件赋值的话，「只改名」会把内容清空。
               prompts: content.prompts ?? preset.prompts,
               sections: content.sections ?? preset.sections,
+              selection: content.selection ?? preset.selection,
             };
             const patch = { presets: nextPresets };
             if (nextId !== id) {

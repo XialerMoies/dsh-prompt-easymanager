@@ -3528,7 +3528,7 @@ function makeSectionsData(over = {}) {
   shims.setStates([...EDITOR_BASE, data, false, null, {}]);
   try {
     const text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("已关掉"), "关掉的段落有「已关掉」徽章");
+    ok(text.includes("未勾选"), "未勾选的段落有「未勾选」徽章");
     ok(text.includes("tool:旧名字"), "列出了失效的段落");
     ok(text.includes("已失效"), "失效的段落有「已失效」徽章");
     ok(text.includes("不会再生效"), "失效段落说明了「不会再生效」");
