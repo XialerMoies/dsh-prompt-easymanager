@@ -756,7 +756,10 @@ window.__ModuleLoader__.load({
     var selection = props.presetSelection || null;
         var matched = props.presetName === NEW_PRESET_SENTINEL ? null : globalPresetOf(props);
         if (matched) {
-          props.doPreset(Object.assign({ action: "save", name: matched.name }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {}));
+          // 覆盖当前预设必须走 update。`save` 会按同名生成新 id，
+          // 全局仍指向旧预设，于是用户刚勾上的改写看似保存却继续 pending，
+          // 同时列表里不断出现重复预设。
+          props.doPreset(Object.assign({ action: "update", id: matched.id }, draft ? { prompts: draft } : {}, selection ? { selection: selection } : {}));
           return;
         }
         var name = (props.renameDraft || props.presetName || "").trim();

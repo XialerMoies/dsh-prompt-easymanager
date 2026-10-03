@@ -446,6 +446,8 @@ window.__ModuleLoader__.load({
                 flash(
                   payload.action === "save"
                     ? "已存为「" + payload.name + "」"
+                    : payload.action === "update"
+                      ? "已保存"
                     : payload.action === "apply"
                       ? "已切换到「" + (d && d.name) + "」"
                       : payload.action === "rename"

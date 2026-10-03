@@ -60,3 +60,4 @@ _final.mjs
 _*.mjs
 _*.js
 _*.txt
+browser-regression-snapshot.json

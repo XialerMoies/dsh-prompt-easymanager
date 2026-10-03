@@ -1861,14 +1861,15 @@ const renderEditor = (props = {}) =>
     }),
   );
 
-  // 「保存」按钮：当前匹配到预设 → 应该调 doPreset({action:"save", name: 当前预设名})
+  // 「保存」按钮：当前匹配到预设 → 应该调 doPreset({action:"update", id: 当前预设 id})。
+  // 走 save 会生成同名新 id，当前全局仍指向旧预设，正是重复预设 bug。
   const saveBtn = findEl(el, (n) => n.type === "button" && flattenText(n).join("") === "保存");
   ok(!!saveBtn, "找得到「保存」按钮");
   if (saveBtn) {
     saveBtn.props.onClick();
     eq(spy.length, 1, "**点保存真的调到了 doPreset**（回调链没被 props 断掉）");
-    eq(spy[0] && spy[0].action, "save", "提交的是 save");
-    eq(spy[0] && spy[0].name, "写代码", "覆盖当前匹配到的那条预设");
+    eq(spy[0] && spy[0].action, "update", "覆盖当前预设提交的是 update");
+    eq(spy[0] && spy[0].id, "写代码", "update 指向当前匹配到的预设 id");
     // ⚠️ 原来这条验的是 `scope: "global"` —— 那个字段**已经删了**
     //    （预设不再带作用范围，挂在哪层由位置决定）。
     //    现在要守的是：**保存时把勾选草稿一起交上去** ——
