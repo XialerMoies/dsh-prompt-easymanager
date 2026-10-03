@@ -1370,8 +1370,8 @@ const TMP_ID = "zz-test-only";
     );
     eq(
       JSON.stringify(disk.sectionOverrides ?? {}),
-      legacyBefore,
-      "**那张退休的 `sectionOverrides` 表一个字没动**（改动不再写它）",
+      "{}",
+      "**退休的 `sectionOverrides` 表已清空**（改动只写预设 selection）",
     );
     eq(
       JSON.stringify(disk.sessionSectionOverrides ?? {}),

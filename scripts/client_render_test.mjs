@@ -2507,7 +2507,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     assignments: {},
     global: { enabled: true, presetId: "底" },
     presets: {
-      底: { name: "底", prompts: [], sections: { "harness:identity": { action: "replace", text: "x" } } },
+      底: { name: "底", prompts: [], selection: { listed: ["harness:identity"], excluded: [], sections: { "harness:identity": { text: "x" } }, known: [] } },
       带段落的: { name: "带段落的", prompts: ["a"], sections: {} },
       两样都有: { name: "两样都有", prompts: ["a"], sections: { "harness:identity": { action: "replace", text: "x" } } },
     },
@@ -2539,8 +2539,8 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   // ⚠️ 新模型里**没有**「改原生 N 段」这个后缀了 —— 「改了系统提示词」是
   //    预设内容的一部分，体现在预设名（或「系统提示词 · 改」）上。
   //    这条改成盯那个说法。
-  ok(
-    /系统提示词 · 改|写作|写代码/.test(t1),
+      ok(
+    /底|系统提示词 · 改|写作|写代码/.test(t1),
     "改了原生段落时，标签体现出来（预设名 或「系统提示词 · 改」）",
   );
 

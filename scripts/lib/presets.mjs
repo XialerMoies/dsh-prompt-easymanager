@@ -7,7 +7,7 @@
 //     {
 //       name:     "写代码",
 //       prompts:  ["格式契约", "编码规范"],        ← 个人提示词：挂哪几条
-//       sections: { "harness:identity": {…} },    ← 系统提示词：改了哪几段
+//       selection: { listed, excluded, sections, known }, ← 系统提示词清单与改写正文
 //     }
 //
 // **两半是独立的**：
@@ -77,7 +77,7 @@ export function normalizePreset(raw) {
   if (!raw || typeof raw !== "object") return null;
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
   if (!name) return null;
-  return {
+  const out = {
     name,
     // ⚠️ 这里原来还有 `scope: "global"|"session"`，现在**删掉了** ——
     //    预设不再自带作用范围，挂在哪层由 `assignments` / `global.presetId`
@@ -86,27 +86,22 @@ export function normalizePreset(raw) {
     prompts: Array.isArray(raw.prompts)
       ? [...new Set(raw.prompts.filter((x) => typeof x === "string" && x))]
       : [],
-    /** 段落改写表（结构跟 sectionOverrides 一样，**深一层拷贝**） */
-    sections: cloneSections(raw.sections),
-    /**
-     * 「勾选清单」—— 新模型的载体（`prompt-selection.mjs`）。
-     *
-     * ⚠️ **`sections` 和 `selection` 是两个时代的东西，现在并存**：
-     *
-     *     `sections`    老模型：一张「段落名 → {action, text}」的表，
-     *                   两个动作 `replace` / `disable`。**界面还在用它**。
-     *     `selection`   新模型：三个名单（listed / excluded / sections / known），
-     *                   注入路径用它。
-     *
-     *     `selection` 缺失时**从 `sections` 转一份**出来 —— 这样
-     *     ①老数据不用迁移 ②界面照旧写 `sections` 也能生效。
-     *     等第三步界面改完，`sections` 就可以退休了。
-     */
+    /** 系统提示词的唯一数据源：勾选名单、改写正文和 dsh 段落名快照。 */
     selection: normalizeSelection(raw.selection ?? selectionFromLegacySections(raw.sections)),
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
     /** 用户自己写的说明，可选 */
     note: typeof raw.note === "string" ? raw.note : "",
   };
+  // 旧插件代码可能直接读取 preset.sections。保留一个不可枚举的只读视图，
+  // 这样旧状态/API 调用可以平滑升级，但 JSON 持久化不会再写第二份正文。
+  Object.defineProperty(out, "sections", {
+    enumerable: false,
+    configurable: true,
+    get() {
+      return legacySectionsView(out.selection);
+    },
+  });
+  return out;
 }
 
 /** 校验整张预设表。坏记录丢掉，不拖垮其他预设。 */
@@ -117,25 +112,6 @@ export function normalizePresets(raw) {
     if (typeof id !== "string" || !id) continue;
     const norm = normalizePreset(value);
     if (norm !== null) out[id] = norm;
-  }
-  return out;
-}
-
-/**
- * 深一层拷贝段落改写表。
- *
- * ⚠️ **不能只 `{ ...sections }`** —— 那是浅拷贝，内层的覆盖对象还是共享的。
- *    结果：存完预设之后，界面上再改同一段，**已存的预设会跟着变**
- *    （测试逮到的：改源对象的 `.text`，预设里的也跟着变了）。
- *
- *    覆盖对象本身是平的（action/text/original/originalHash/savedAt/acceptedDrift），
- *    所以拷贝一层就够。
- */
-function cloneSections(sections) {
-  const out = {};
-  if (!sections || typeof sections !== "object" || Array.isArray(sections)) return out;
-  for (const [name, ov] of Object.entries(sections)) {
-    out[name] = ov && typeof ov === "object" ? { ...ov } : ov;
   }
   return out;
 }
@@ -165,7 +141,18 @@ function selectionFromLegacySections(sections) {
       continue;
     }
     out.listed.push(name);
-    out.sections[name] = { ...ov };
+    out.sections[name] = { ...ov, text: typeof ov.text === "string" ? ov.text : "" };
+  }
+  return out;
+}
+
+/** 仅供旧调用方读取的兼容视图；不会参与持久化或签名。 */
+function legacySectionsView(selection) {
+  const sel = normalizeSelection(selection);
+  const out = {};
+  for (const name of sel.excluded) out[name] = { action: "disable", text: "" };
+  for (const [name, ov] of Object.entries(sel.sections)) {
+    out[name] = { action: "replace", ...ov };
   }
   return out;
 }
@@ -181,14 +168,13 @@ function selectionFromLegacySections(sections) {
  * @param {string} [args.now]       注入时间戳（测试用，默认取当前时间）
  */
 export function capturePreset({ name, prompts, sections, selection, note = "", now }) {
-  return {
+  return normalizePreset({
     name: String(name ?? "").trim(),
     prompts: [...new Set((Array.isArray(prompts) ? prompts : []).filter((x) => typeof x === "string" && x))],
-    sections: cloneSections(sections),
     selection: normalizeSelection(selection ?? selectionFromLegacySections(sections)),
     createdAt: now ?? new Date().toISOString(),
     note: String(note ?? ""),
-  };
+  });
 }
 
 /**
@@ -200,17 +186,18 @@ export function capturePreset({ name, prompts, sections, selection, note = "", n
  * ⚠️ 不再返回 `scope` —— 预设不带作用范围了，写去哪层由调用方决定。
  *
  * @param {object} preset  已 normalize 的预设
- * @returns {{ prompts: string[], sections: object }}
+ * @returns {{ prompts: string[], selection: object }}
  */
 export function planApply(preset) {
   if (!preset || typeof preset !== "object") {
     return { prompts: [], sections: {} };
   }
-  return {
+  const out = {
     prompts: [...(preset.prompts ?? [])],
-    sections: { ...(preset.sections ?? {}) },
     selection: normalizeSelection(preset.selection),
   };
+  out.sections = legacySectionsView(out.selection);
+  return out;
 }
 
 /**
@@ -224,21 +211,15 @@ export function presetSignature(input) {
   //    `Cannot destructure property 'prompts' of 'object null'`（测试逮到的）。
   const src = input && typeof input === "object" ? input : {};
   const prompts = src.prompts;
-  const sections = src.sections;
   const p = [...new Set((Array.isArray(prompts) ? prompts : []).filter(Boolean))].sort();
-  const s = Object.entries(sections && typeof sections === "object" ? sections : {})
-    .map(([k, v]) => {
-      const action = v && v.action === "disable" ? "disable" : "replace";
-      const text = action === "disable" ? "" : String((v && v.text) ?? "");
-      return `${k}=${action}:${text}`;
-    })
-    .sort();
-  const sel = normalizeSelection(src.selection ?? selectionFromLegacySections(sections));
+  const sel = normalizeSelection(src.selection ?? selectionFromLegacySections(src.sections));
   return JSON.stringify({
     p,
-    s,
     listed: [...sel.listed].sort(),
     excluded: [...sel.excluded].sort(),
+    sections: Object.entries(sel.sections)
+      .map(([k, v]) => `${k}:${String(v?.text ?? "")}`)
+      .sort(),
   });
 }
 
@@ -263,7 +244,8 @@ export function matchPreset(current, presets) {
  */
 export function summarizePreset(preset) {
   const parts = [];
-  const n = Object.keys((preset && preset.sections) || {}).length;
+  const sel = normalizeSelection(preset?.selection ?? selectionFromLegacySections(preset?.sections));
+  const n = new Set([...sel.listed, ...sel.excluded]).size;
   if (n > 0) parts.push(`改 ${n} 段`);
   const m = ((preset && preset.prompts) || []).length;
   if (m > 0) parts.push(`自设 ${m} 条`);
@@ -334,7 +316,10 @@ export function presetLabel(preset) {
   if (!p) return "系统提示词";
   const prompts = Array.isArray(p.prompts) ? p.prompts : [];
   if (prompts.length > 0) return String(p.name ?? "") || "（无名预设）";
-  const n = Object.keys(p.sections && typeof p.sections === "object" ? p.sections : {}).length;
+  const n = new Set([
+    ...(Array.isArray(p.selection?.listed) ? p.selection.listed : []),
+    ...(Array.isArray(p.selection?.excluded) ? p.selection.excluded : []),
+  ]).size;
   return n > 0 ? "系统提示词 · 改" : "系统提示词";
 }
 

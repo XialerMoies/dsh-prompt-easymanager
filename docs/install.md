@@ -19,6 +19,10 @@ dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager
 
 装完**重启 DSH Web**。
 
+发布包会在 `npm pack` 的 `prepack` 阶段自动刷新客户端资源版本。这样只改
+`client.*.js` 分块时，宿主 `client.js` 的 `?rev=` 也会同步变化，浏览器不会继续
+复用旧缓存。开发中若只更新本地分块，可手动运行 `npm run bump:rev`。
+
 ### 想钉住某个版本
 
 ```powershell

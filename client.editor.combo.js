@@ -441,14 +441,16 @@ window.__ModuleLoader__.load({
        */
       function renderCombo(props) {
         var matched = globalPresetOf(props);
-        var list = (props.presetsData && props.presetsData.presets) || [];
+        var allPresets = (props.presetsData && props.presetsData.presets) || [];
+        // 原生入口是选择器的固定项，不属于用户预设列表。
+        var list = allPresets.filter(function (p) { return !(p && p.isNative === true); });
         var newPresetMode = props.presetName === NEW_PRESET_SENTINEL;
-        var currentId = matched && !newPresetMode ? matched.id : "";
+        var currentId = newPresetMode ? "" : (matched ? matched.id : "__native");
         var currentName = newPresetMode ? "新建预设" : matched ? matched.name : "未保存的配置";
         var bus = props.presetsBusy || !props.presetsData;
 
         function presetOptionName(p, index) {
-          var base = p && p.name ? String(p.name) : "未命名预设";
+          var base = p && p.name ? String(p.name) : (p && p.label ? String(p.label) : "未命名预设");
           var total = 0;
           var order = 0;
           for (var i = 0; i < list.length; i++) {
@@ -541,7 +543,7 @@ window.__ModuleLoader__.load({
           [
             titleNode,
             // 改名铅笔：只有「当前这套是一条真预设」时才有意义
-            currentId && !props.renaming
+            currentId && currentId !== "__native" && !props.renaming
               ? react.createElement(
                   "button",
                   {
@@ -598,10 +600,13 @@ window.__ModuleLoader__.load({
                     title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
                     onChange: function (ev) {
                       var id = ev.target.value;
-                      if (id) applyPreset(id, props);
+                      if (id === "__native") {
+                        if (props.onToggleGlobal) props.onToggleGlobal(false);
+                      } else if (id) applyPreset(id, props);
                     },
                   },
                   [
+                    react.createElement("option", { key: "__native", value: "__native" }, "系统提示词（原生）"),
                     // 手改过（没匹配上任何预设）时给个占位项，否则 select 会跳到第一条
                     currentId
                       ? null

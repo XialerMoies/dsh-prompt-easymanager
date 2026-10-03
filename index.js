@@ -47,6 +47,7 @@ import {
   normalizeGlobal,
   presetForSession,
   presetLabel,
+  presetSignature,
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
 import { migrateLibraryOutOfPackage } from "./scripts/lib/library-migration.mjs";
@@ -568,6 +569,22 @@ function normalizeSectionsInput(raw) {
   return normalizeOverrides(out);
 }
 
+/** 把旧接口的段落表转换成唯一的 selection 字段。 */
+function selectionFromSectionsInput(raw) {
+  const normalized = normalizeSectionsInput(raw);
+  const listed = [];
+  const excluded = [];
+  const sections = {};
+  for (const [name, ov] of Object.entries(normalized)) {
+    if (ov.action === "disable") excluded.push(name);
+    else {
+      listed.push(name);
+      sections[name] = { text: ov.text ?? "", original: ov.original ?? "", originalHash: ov.originalHash ?? "", savedAt: ov.savedAt ?? "" };
+    }
+  }
+  return normalizeSelection({ listed, excluded, sections, known: [] });
+}
+
 /**
  * 清掉**预设里**已经不存在的提示词 id。
  *
@@ -615,8 +632,9 @@ function prunePresets(alive) {
 //     global:      { enabled: boolean, presetId: string | null },   ← 全局用哪个预设
 //     assignments: { "<sessionId>": "<presetId>" | null },          ← 会话用哪个预设
 //     presets:     { "<presetId>": { name, prompts[], sections{} } },
-//     sectionOverrides:        { … },   ← 保留：段落改写区块仍在用
-//     sessionSectionOverrides: { … },
+//     selection.sections      ← 段落改写正文（唯一来源）
+//
+//     sectionOverrides / sessionSectionOverrides 仅作为升级输入读取，写盘时清除。
 //   }
 //
 // ⚠️ **`assignments` 的语义变了**：老版本存的是 `["<promptId>", …]`（一堆裸 id），
@@ -653,7 +671,8 @@ const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"));
     //    （演练真实状态文件时发现的：`defaults:["my-prompt-1"]` + 开关关着，
     //      迁移后什么都没剩下。）
     migrateLegacyState(out, parsed);
-    out.global = normalizeGlobal(parsed?.global, {
+    const globalRaw = parsed?.global ?? (out.global.presetId ? out.global : undefined);
+    out.global = normalizeGlobal(globalRaw, {
       // ⚠️ 按老版本的语义传：**不写 `enabled` = 开着**（`parsed?.enabled !== false`）。
       //    传 `parsed?.enabled` 的话，「没有这个字段」会变成 undefined → 关掉，
       //    用户升级后全局注入凭空失效。
@@ -894,6 +913,65 @@ function migrateLegacyState(out, parsed) {
       }
     }
   }
+
+  // ── 旧版独立段落表 → 预设 selection ───────────────────────────────────
+  // 0.3.5 之前的 sectionOverrides 不属于任何预设；迁移时必须明确归属，
+  // 否则它会继续以“全局暗层”的形式污染所有选择器。
+  const globalLegacy =
+    parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object"
+      ? selectionFromSectionsInput(parsed.sectionOverrides)
+      : null;
+  if (globalLegacy && (globalLegacy.listed.length > 0 || globalLegacy.excluded.length > 0)) {
+    const gid = typeof parsed?.global?.presetId === "string" ? parsed.global.presetId : null;
+    const target = gid && out.presets[gid] ? out.presets[gid] : null;
+    if (target) {
+      const current = normalizeSelection(target.selection);
+      out.presets[gid] = normalizePreset({
+        ...target,
+        selection: normalizeSelection({
+          listed: [...new Set([...current.listed, ...globalLegacy.listed])],
+          excluded: [...new Set([...current.excluded, ...globalLegacy.excluded])],
+          sections: { ...current.sections, ...globalLegacy.sections },
+          known: [...new Set([...current.known, ...globalLegacy.known])],
+        }),
+      });
+    } else {
+      const name = "（旧配置）全局系统提示词";
+      const existing = Object.entries(out.presets).find(([, p]) => p.name === name);
+      const id = existing?.[0] ?? presetId(name, Object.keys(out.presets));
+      if (!existing) {
+        out.presets[id] = capturePreset({ name, prompts: [], selection: globalLegacy });
+      }
+      out.global = { enabled: parsed?.enabled !== false, presetId: id };
+    }
+  }
+
+  // 会话覆盖不能并入共享预设：每个会话复制一份并绑定，避免互相污染。
+  const sessionLegacy = parsed?.sessionSectionOverrides;
+  if (sessionLegacy && typeof sessionLegacy === "object" && !Array.isArray(sessionLegacy)) {
+    for (const [sid, table] of Object.entries(sessionLegacy)) {
+      const sel = selectionFromSectionsInput(table);
+      if (sel.listed.length === 0 && sel.excluded.length === 0) continue;
+      const baseId = typeof out.assignments[sid] === "string" ? out.assignments[sid] : null;
+      const base = baseId && out.presets[baseId] ? out.presets[baseId] : null;
+      const name = `（旧配置）会话 ${sid}`;
+      const existing = Object.entries(out.presets).find(([, p]) => p.name === name);
+      const id = existing?.[0] ?? presetId(name, Object.keys(out.presets));
+      if (!existing) {
+        out.presets[id] = capturePreset({
+          name,
+          prompts: base?.prompts ?? [],
+          selection: {
+            listed: [...(base?.selection?.listed ?? []), ...sel.listed],
+            excluded: [...(base?.selection?.excluded ?? []), ...sel.excluded],
+            sections: { ...(base?.selection?.sections ?? {}), ...sel.sections },
+            known: [...(base?.selection?.known ?? []), ...sel.known],
+          },
+        });
+      }
+      out.assignments[sid] = id;
+    }
+  }
 }
 
 function writeState(state) {
@@ -929,14 +1007,9 @@ function writeState(state) {
       //    所以这里只接受「值不是数组」的输入（字符串 = 预设 id、null = 不挂）。
       //    注入器内部那套对不上的话，以**状态文件为准** —— 见 `syncInjector()`。
       assignments: pickPresetAssignments(state, onDisk),
-      sectionOverrides:
-        state && "sectionOverrides" in state && state.sectionOverrides
-          ? normalizeOverrides(state.sectionOverrides)
-          : onDisk.sectionOverrides,
-      sessionSectionOverrides:
-        state && "sessionSectionOverrides" in state && state.sessionSectionOverrides
-          ? state.sessionSectionOverrides
-          : onDisk.sessionSectionOverrides,
+      // 旧字段只在 readState 中消费迁移；新写盘彻底移除，防止第二套来源复活。
+      sectionOverrides: {},
+      sessionSectionOverrides: {},
       presets:
         state && "presets" in state && state.presets
           ? normalizePresets(state.presets)
@@ -1324,13 +1397,26 @@ const jsonOf = (body, status) =>
              *    踩过一次，所以钉住。
              */
             enabled: st.global.enabled === true,
-            /** 预设表（界面要用它渲染勾选状态和标签） */
-            presets: st.presets,
+            /** 预设表（selection 是唯一段落来源；签名/标签由服务端生成） */
+            presets: Object.fromEntries(
+              Object.entries(st.presets).map(([id, p]) => [id, {
+                ...p,
+                // 旧客户端只读这份响应兼容字段；磁盘状态仍只保存 selection。
+                sections: p.selection?.sections ?? {},
+                signature: presetSignature(p),
+                label: presetLabel(p),
+                isNative: p.prompts.length === 0 &&
+                  Object.keys(p.selection?.sections ?? {}).length === 0 &&
+                  (p.selection?.listed ?? []).length === 0 &&
+                  (p.selection?.excluded ?? []).length === 0,
+              }]),
+            ),
             /**
              * 原生段落改写 —— **全局层**（所有会话都用）。
              * 按会话的那层在 `/sections` 里回传，会话头徽章用那个。
              */
-            sectionOverrides: st.sectionOverrides,
+            sectionOverrides: {},
+            schemaVersion: 3,
             version: snap.version,
             prompts: items,
             categories: CATEGORIES,
@@ -1344,9 +1430,7 @@ const jsonOf = (body, status) =>
       //
       // 这是「按段落改系统提示词」的入口。设计见 docs/section-overrides-design.md。
       //
-      // ⚠️ 状态存在 STATE_FILE 的 `sectionOverrides` 里，**键是段落的 name**
-      //    （如 `harness:identity`），不是下标也不是 order ——
-      //    这样官方新增/改动/删除段落时用户的数据一个字都不用改。
+      // 段落改写状态存在当前生效预设的 `selection` 中；旧版独立表只在读盘时迁移。
       if (path === SECTIONS_PATH) {
         const sessionId = url.searchParams.get("session") ?? undefined;
 
@@ -1466,6 +1550,8 @@ const jsonOf = (body, status) =>
               globalOverrides: {},
               sessionOverrides: {},
               effectiveOverrides: {},
+              effectivePresetId: foundPreset?.id ?? null,
+              effectivePresetSignature: foundPreset?.preset ? presetSignature(foundPreset.preset) : null,
               counts: {
                 applied: appliedRows.length,
                 drifted: appliedRows.filter((r) => r.drifted).length,
@@ -1786,13 +1872,20 @@ const jsonOf = (body, status) =>
               id,
               name: p.name,
               prompts: p.prompts,
-              sections: p.sections,
+              // 兼容 0.3.5 客户端；这是由 selection 派生的只读视图，
+              // 不会写回状态文件，也不是第二个数据源。
+              sections: p.selection?.sections ?? {},
               selection: p.selection,
+      signature: presetSignature(p),
               createdAt: p.createdAt,
               note: p.note,
               summary: summarizePreset(p),
               /** 会话页标签按这个显示（只有系统改动时不显示预设名） */
               label: presetLabel(p),
+              isNative: p.prompts.length === 0 &&
+                Object.keys(p.selection?.sections ?? {}).length === 0 &&
+                (p.selection?.listed ?? []).length === 0 &&
+                (p.selection?.excluded ?? []).length === 0,
             }))
             .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1812,12 +1905,25 @@ const jsonOf = (body, status) =>
               : null,
             /** 目前**实际生效**的是哪条（把跟随 / 显式 / 全局都算完） */
             effective: hasSession
-              ? presetForSession({
-                  sessionId,
-                  assignments: s.assignments,
-                  global: s.global,
-                  presets: s.presets,
-                })
+              ? (() => {
+                  const found = presetForSession({
+                    sessionId,
+                    assignments: s.assignments,
+                    global: s.global,
+                    presets: s.presets,
+                  });
+                  return found?.preset
+                    ? {
+                        ...found,
+                        signature: presetSignature(found.preset),
+                        preset: {
+                          ...found.preset,
+                          signature: presetSignature(found.preset),
+                          label: presetLabel(found.preset),
+                        },
+                      }
+                    : found;
+                })()
               : null,
           });
         }
@@ -1860,10 +1966,10 @@ const jsonOf = (body, status) =>
               //
               //    新模型里「有没有 action」不该是判据：能留下来的记录就是
               //    「改成这样」，而 `disable` 由 `excluded` 表达、不需要正文。
-              out.sections =
+              out.selection =
                 body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)
-                  ? normalizeSectionsInput(body.sections)
-                  : {};
+                  ? selectionFromSectionsInput(body.sections)
+                  : normalizeSelection(null);
             }
             if ("selection" in (body ?? {})) {
               out.selection = normalizeSelection(body.selection);
@@ -1900,14 +2006,11 @@ const jsonOf = (body, status) =>
               //    （测试里的第 ③ 条当场红了）。
               sections: { ...(raw.sections && typeof raw.sections === "object" ? raw.sections : {}) },
             };
-            // 老形状的输入（只有 `sections`）没有 excluded 的概念，
-            // 所以按老形状折算一遍：`disable` 进 excluded，其余进 sections。
-            for (const [name, ov] of Object.entries(content.sections ?? {})) {
-              if (ov && ov.action === "disable") {
-                sel.excluded = [...sel.excluded, name];
-              } else {
-                sel.sections[name] = { ...ov };
-              }
+            // 旧形状的 sections 已在 readContent 阶段转换为 selection。
+            if (content.selection) {
+              sel.listed = content.selection.listed;
+              sel.excluded = content.selection.excluded;
+              sel.sections = content.selection.sections;
             }
             return isEmptySelection({ selection: sel, availableNative: available })
               ? "这张清单里一段都不会进系统提示词 —— 至少勾一段原生段落，或者挂一条自己的提示词。"
@@ -1939,13 +2042,12 @@ const jsonOf = (body, status) =>
               name,
               // 「存」的时候缺字段就是空（新建没给就是空的，语义清楚）
               prompts: content.prompts ?? [],
-              sections: content.sections ?? {},
               selection: content.selection,
               note: typeof body?.note === "string" ? body.note : "",
             });
             writeState({ presets: { ...s.presets, [id]: preset } });
             diag.lastPresets = `save:${id}`;
-            return jsonOf({ ok: true, id, preset });
+            return jsonOf({ ok: true, id, preset: { ...preset, sections: preset.selection?.sections ?? {} } });
           }
 
           // ── 改内容 / 改名 ───────────────────────────────────────────────
@@ -1986,7 +2088,6 @@ const jsonOf = (body, status) =>
               // ⚠️ 没传就**保持原样**（`undefined` 才会走到 `??` 右边）——
               //    改成无条件赋值的话，「只改名」会把内容清空。
               prompts: content.prompts ?? preset.prompts,
-              sections: content.sections ?? preset.sections,
               selection: content.selection ?? preset.selection,
             };
             const patch = { presets: nextPresets };
@@ -2056,10 +2157,9 @@ const jsonOf = (body, status) =>
               //
               // ⚠️ **段落覆盖也要一起写** —— 预设的两半是「个人提示词」+「系统提示词改动」，
               //    只写前者的话，预设里改过的段落根本不会生效（而且不报错）。
-              //    全局那份覆盖存在 `sectionOverrides` 里。
+              //    段落正文已经随预设的 selection 一起生效，无需再写独立覆盖表。
               writeState({
                 global: { ...s.global, presetId: id, enabled: true },
-                sectionOverrides: preset.sections,
               });
             } else {
               writeState({ assignments: { ...s.assignments, [sessionId]: id } });
@@ -2074,7 +2174,8 @@ const jsonOf = (body, status) =>
               label: presetLabel(preset),
               applied: {
                 prompts: preset.prompts.length,
-                sections: Object.keys(preset.sections).length,
+                sections: Object.keys(preset.selection?.sections ?? {}).length,
+                signature: presetSignature(preset),
               },
             });
           }

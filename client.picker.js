@@ -311,15 +311,18 @@ window.__ModuleLoader__.load({
         if (!p) return "系统提示词";
         // 预设是用户明确命名的配置。即使它只包含系统段落，也要显示这个名字，
         // 否则会和“系统提示词（原生）”混成同一项，选中后无法确认自己用的是哪套。
-        if (typeof p.name === "string" && p.name.trim()) return p.name.trim();
+        if (typeof p.name === "string" && p.name.trim() && p.name !== "系统提示词（原生）") return p.name.trim();
+        if (typeof p.label === "string" && p.label) return p.label;
         var ps = Array.isArray(p.prompts) ? p.prompts : [];
         if (ps.length > 0) return p.name || "（无名预设）";
-        var n = p.sections && typeof p.sections === "object" ? Object.keys(p.sections).length : 0;
+        var n = p.selection && p.selection.sections && typeof p.selection.sections === "object"
+          ? Object.keys(p.selection.sections).length : 0;
         return n > 0 ? "系统提示词 · 改" : "系统提示词";
       }
 
       /** 纯原生预设与选择器里的“系统提示词（原生）”是同一个效果，隐藏重复项。 */
       function isNativePreset(p) {
+        if (p && typeof p.isNative === "boolean") return p.isNative;
         // 只隐藏内置默认预设。用户新建的空配置也许有自己的名字，不能因为内容
         // 恰好为空就从选择器里抹掉。
         if (!p || (p.name !== "系统提示词（原生）" && p.name !== "系统提示词")) return false;
@@ -332,32 +335,16 @@ window.__ModuleLoader__.load({
           !(s.sections && typeof s.sections === "object" && Object.keys(s.sections).length > 0);
       }
 
-      function stablePresetValue(value, key) {
-        // 这些字段用于升级/诊断，不会改变最终注入文本；副本保存时间不同
-        // 也不应让内容相同的预设继续重复显示。
-        if (key === "savedAt" || key === "originalHash" || key === "original") return undefined;
-        if (Array.isArray(value)) return value.map(function (item) { return stablePresetValue(item); });
-        if (!value || typeof value !== "object") return value;
-        var out = {};
-        Object.keys(value).sort().forEach(function (key) {
-          var normalized = stablePresetValue(value[key], key);
-          if (normalized !== undefined) out[key] = normalized;
-        });
-        return out;
-      }
-
-      /** 内容完全一致的预设只保留一项；优先保留当前正在使用的 id。 */
+      /** 服务端已按签名收敛重复项；前端只尊重服务端结果，不自行猜内容相等。 */
       function mergeEquivalentPresets(list, preferredId) {
         var out = [];
         var positions = {};
         for (var i = 0; i < list.length; i++) {
           var p = list[i];
           if (!p) continue;
-          var key = JSON.stringify(stablePresetValue({
-            prompts: Array.isArray(p.prompts) ? p.prompts : [],
-            sections: p.sections && typeof p.sections === "object" ? p.sections : {},
-            selection: p.selection && typeof p.selection === "object" ? p.selection : {},
-          }));
+          // 没有 signature 只可能是旧 dsh 缓存/旧服务端响应；兼容一次，
+          // 新响应始终由服务端提供签名。
+          var key = typeof p.signature === "string" ? p.signature : legacyPresetKey(p);
           if (!(key in positions)) {
             positions[key] = out.length;
             out.push(p);
@@ -366,6 +353,17 @@ window.__ModuleLoader__.load({
           }
         }
         return out;
+      }
+
+      function legacyPresetKey(p) {
+        var s = p && p.selection && typeof p.selection === "object" ? p.selection : {};
+        var sec = s.sections && typeof s.sections === "object" ? s.sections : (p && p.sections) || {};
+        return JSON.stringify({
+          prompts: Array.isArray(p && p.prompts) ? p.prompts.slice().sort() : [],
+          listed: Array.isArray(s.listed) ? s.listed.slice().sort() : [],
+          excluded: Array.isArray(s.excluded) ? s.excluded.slice().sort() : [],
+          sections: Object.keys(sec).sort().map(function (k) { return [k, sec[k] && sec[k].text || ""]; }),
+        });
       }
 
       /** 给同名预设加序号，避免不同 id 在选择器里看起来像重复项。 */
@@ -405,7 +403,9 @@ window.__ModuleLoader__.load({
               id: pid,
               name: one.name,
               prompts: one.prompts,
-              sections: one.sections,
+              selection: one.selection,
+              signature: one.signature,
+              isNative: one.isNative,
               label: presetLabelOf(one),
               summary: "",
             });
@@ -1137,9 +1137,12 @@ window.__ModuleLoader__.load({
           /** 预设的显示名 —— 跟 server 端 presetLabel 同一套规则。 */
           function labelOf(p) {
             if (!p) return null;
+            if (typeof p.name === "string" && p.name.trim() && p.name !== "系统提示词（原生）") return p.name.trim();
+            if (typeof p.label === "string" && p.label) return p.label;
             var ps = Array.isArray(p.prompts) ? p.prompts : [];
             if (ps.length > 0) return p.name || "（无名预设）";
-            var nsec = p.sections && typeof p.sections === "object" ? Object.keys(p.sections).length : 0;
+            var nsec = p.selection && p.selection.sections && typeof p.selection.sections === "object"
+              ? Object.keys(p.selection.sections).length : 0;
             return nsec > 0 ? "系统提示词 · 改" : "系统提示词";
           }
 
