@@ -26,33 +26,17 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     function create(api) {
-      var HostButton = api.ui && api.ui.Button;
-      var HostCheckbox = api.ui && api.ui.Checkbox;
-      function ActionButton(props) {
-        if (!HostButton) return react.createElement("button", props, props.children);
-        var next = Object.assign({}, props);
-        delete next.children;
-        delete next.style;
-        delete next.className;
-        delete next.type;
-        next.style = { whiteSpace: "nowrap" };
-        next.variant = next.variant || "ghost";
-        next.size = next.size || "sm";
-        return react.createElement(HostButton, next, props.children);
-      }
-      var BTN = api.style.BTN;
-      var BTN_BUSY = api.style.BTN_BUSY;
+      var ActionButton = api.ui.ActionButton;
+      var HostCheckbox = api.ui.NativeCheckbox;
+      var NativeInput = api.ui.NativeInput;
       var CARD = api.style.CARD;
       var CARD_DETAILS = api.style.CARD_DETAILS;
       var CARD_HEAD = api.style.CARD_HEAD;
       var CARD_HEADING = api.style.CARD_HEADING;
       var CARD_MAIN_ROW = api.style.CARD_MAIN_ROW;
       var CARD_TITLE = api.style.CARD_TITLE;
-      var DETAIL_BTN = api.style.DETAIL_BTN;
       var HEADING_TITLE = api.style.HEADING_TITLE;
-      var SELECT_SM = api.style.SELECT_SM;
       var STATUS_LINE = api.style.STATUS_LINE;
-      var TAG = api.style.TAG;
       // 只在前端草稿里使用的哨兵：选中「新建」后，当前内容会作为新预设保存，
       // 不会误覆盖当前已选中的那条预设。
       var NEW_PRESET_SENTINEL = "__new_preset__";
@@ -285,56 +269,14 @@ window.__ModuleLoader__.load({
                 : activeIds.concat([p.id]);
               props.setPresetDraft(next);
             };
-            rows.push(HostCheckbox
-              ? react.createElement(HostCheckbox, {
-                  key: p.id,
-                  checked: on,
-                  disabled: props.presetsBusy,
-                  label: p.name || p.id,
-                  title: p.description || p.id,
-                  onChange: toggle,
-                })
-              : react.createElement(
-                "label",
-                {
-                  key: p.id,
-                  title: p.description || p.id,
-                  style: {
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    minWidth: "0",
-                    cursor: props.presetsBusy ? "default" : "pointer",
-                  },
-                },
-                [
-                  react.createElement("input", {
-                    key: "cb",
-                    type: "checkbox",
-                    checked: on,
-                    disabled: props.presetsBusy,
-                    onChange: toggle,
-                  }),
-                  // 名字占满剩余宽度。
-                  // ⚠️ 这里原来还跟了 `order 950` 和 `1 tokens` —— 用户明确说
-                  //    不要。勾选清单只回答「哪几条生效」，order / token 数
-                  //    在下面「个人提示词」的卡片详情里本来就有。
-                  react.createElement(
-                    "span",
-                    {
-                      key: "n",
-                      style: Object.assign({}, CARD_TITLE, {
-                        flex: "1 1 auto",
-                        fontSize: "13px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }),
-                    },
-                    p.name || p.id,
-                  ),
-                ],
-              ));
+            rows.push(react.createElement(HostCheckbox, {
+              key: p.id,
+              checked: on,
+              disabled: props.presetsBusy,
+              label: p.name || p.id,
+              title: p.description || p.id,
+              onChange: toggle,
+            }));
           })(ordered[oi]);
         }
 
@@ -380,27 +322,17 @@ window.__ModuleLoader__.load({
           for (var xi = 0; xi < exList.length; xi++) excluded[exList[xi]] = true;
 
           var mkTag = function (name, on, keyPrefix, title, onToggle) {
-            return react.createElement(
-              "label",
-              {
-                key: keyPrefix + "-" + name,
-                title: title,
-                style: TAG,
+            return react.createElement(HostCheckbox, {
+              key: keyPrefix + "-" + name,
+              checked: on,
+              disabled: props.presetsBusy,
+              title: title,
+              label: name,
+              "data-section-tag": name,
+              onChange: function () {
+                (onToggle || function () { toggleSection(props, name); })();
               },
-              [
-                react.createElement("input", {
-                  key: "cb",
-                  type: "checkbox",
-                  checked: on,
-                  disabled: props.presetsBusy,
-                  "data-section-tag": name,
-                  onChange: function () {
-                    (onToggle || function () { toggleSection(props, name); })();
-                  },
-                }),
-                react.createElement("span", { key: "n", style: { fontSize: "12px" } }, name),
-              ],
-            );
+            });
           };
 
           var rowStyle = { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" };
@@ -555,11 +487,9 @@ window.__ModuleLoader__.load({
         // 标题：预设名 + 改名铅笔；改名时就地变输入框
         var titleNode;
         if (props.renaming) {
-          titleNode = react.createElement("input", {
+          titleNode = react.createElement(NativeInput, {
             key: "rn",
             type: "text",
-            className: "pm-input",
-            style: Object.assign({}, SELECT_SM, { maxWidth: "200px" }),
             value: props.renameDraft,
             autoFocus: true,
             disabled: props.presetsBusy,
@@ -634,8 +564,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "pen",
                     type: "button",
-                    className: "pm-btn",
-                    style: Object.assign({}, DETAIL_BTN, { padding: "1px 6px" }),
                     disabled: bus,
                     title: "改这套预设的名字",
                     onClick: function () {
@@ -651,8 +579,6 @@ window.__ModuleLoader__.load({
               {
                 key: "new",
                 type: "button",
-                className: "pm-btn",
-                style: bus ? BTN_BUSY : BTN,
                 disabled: bus,
                 title: "以当前勾选内容新建一套预设",
                 onClick: function () {
@@ -678,8 +604,6 @@ window.__ModuleLoader__.load({
                   "select",
                   {
                     key: "sel",
-                    className: "pm-input",
-                    style: SELECT_SM,
                     disabled: bus,
                     value: currentId,
                     title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
@@ -710,8 +634,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "sav",
                     type: "button",
-                    className: "pm-btn",
-                    style: bus ? BTN_BUSY : BTN,
                     disabled: bus,
                     title: currentId
                       ? "把当前勾选覆盖到预设「" + currentName + "」"
@@ -733,8 +655,6 @@ window.__ModuleLoader__.load({
                       {
                         key: "del",
                         type: "button",
-                        className: "pm-btn",
-                        style: bus ? BTN_BUSY : BTN,
                         disabled: bus,
                         title: "删掉预设「" + currentName + "」（用它挂着的全局/会话会自动退回）",
                         onClick: function () {
@@ -749,8 +669,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "r",
                     type: "button",
-                    className: "pm-btn",
-                    style: bus ? BTN_BUSY : BTN,
                     disabled: bus,
                     title: "重新从盘上读一遍",
                     onClick: function () {

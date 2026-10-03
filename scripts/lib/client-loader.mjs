@@ -117,6 +117,42 @@ export function createClientSandbox(shims, opts = {}) {
   const requireFn = (id) => {
     if (id === "react") return shims.react;
     if (id === "react-dom") return shims.reactDom;
+    if (id === "@deepseek-ai/dsh-client-ui-primitives") {
+      const h = (type, props, children) => shims.react.createElement(type, props, children);
+      return {
+        Button: (props) => h("button", { ...(props || {}), type: "button" }, props && props.children),
+        Checkbox: (props) => h("label", { title: props && props.title }, [
+          h("input", {
+            type: "checkbox",
+            checked: !!props.checked,
+            disabled: props.disabled,
+            "data-section-tag": props["data-section-tag"],
+            onChange: (e) => props.onChange(e && e.target ? e.target.checked : !props.checked),
+          }),
+          h("span", null, props.label),
+        ]),
+        Input: (props) => h("input", props),
+        Menu: (props) => h("div", { role: "menu" }, (props && props.items || []).map((item) =>
+          h("button", {
+            type: "button",
+            role: "menuitem",
+            "aria-selected": props.selectedId === item.id ? "true" : undefined,
+            onClick: () => props.onSelect(item.id),
+          }, (item.icon ? item.icon + " " : "") + item.label),
+        )),
+        Modal: (props) => props && props.open
+          ? shims.reactDom.createPortal(
+              h("div", { role: "dialog", "aria-label": props.title }, [
+                props.title ? h("div", null, props.title) : null,
+                props.children,
+              ]),
+              documentShim.body,
+            )
+          : null,
+        Switch: (props) => h("button", { role: "switch", "aria-checked": !!props.checked, disabled: props.disabled, onClick: () => props.onChange(!props.checked) }),
+        Tag: (props) => h("span", props, props && props.children),
+      };
+    }
     throw new Error("未知依赖: " + id);
   };
 

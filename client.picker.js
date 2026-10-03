@@ -13,7 +13,6 @@ window.__ModuleLoader__.load({
     var module = { exports: {} };
     var exports = module.exports;
     var react = require("react");
-    var reactDom = require("react-dom");
 
     /**
      * 宿主调用入口，把「注册期就存在、chunk 等不到」的东西注入进来。
@@ -23,20 +22,8 @@ window.__ModuleLoader__.load({
      *    React 随即卸载整棵子树，表现是「点了之后控件全没了」。
      */
     function create(api) {
-      var HostButton = api.ui && api.ui.Button;
-      // dsh 原生按钮；旧宿主没有 primitives 时保留可用的 HTML 回退。
-      function ActionButton(props) {
-        if (!HostButton) return react.createElement("button", props, props.children);
-        var next = Object.assign({}, props);
-        delete next.children;
-        delete next.style;
-        delete next.className;
-        delete next.type;
-        next.style = { whiteSpace: "nowrap" };
-        next.variant = next.variant || "ghost";
-        next.size = next.size || "sm";
-        return react.createElement(HostButton, next, props.children);
-      }
+      var ActionButton = api.ui.ActionButton;
+      var Menu = api.ui.Menu;
       var SELECT_SM = api.style.SELECT_SM;
       var HERO_CHIP = api.style.HERO_CHIP;
       var SLOT_HEAD = api.style.SLOT_HEAD;
@@ -54,7 +41,6 @@ window.__ModuleLoader__.load({
       var MONO = api.style.MONO;
       var MONO_TAIL = api.style.MONO_TAIL;
       var WARN = api.style.WARN;
-      var MENU_ITEM_HOVER = api.style.MENU_ITEM_HOVER;
       var ADVISE = api.style.ADVISE;
       var MUTED = api.style.MUTED;
       var HEADING = api.style.HEADING;
@@ -64,24 +50,6 @@ window.__ModuleLoader__.load({
       var CARD_TITLE = api.style.CARD_TITLE;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
-      var DETAIL_BTN = api.style.DETAIL_BTN;
-      var OVERLAY = api.style.OVERLAY;
-      var PANEL_SM = api.style.PANEL_SM;
-      var PANEL = api.style.PANEL;
-      var BTN = api.style.BTN;
-      var BTN_BUSY = api.style.BTN_BUSY;
-      var BTN_PRIMARY = api.style.BTN_PRIMARY;
-      var PANEL_BODY = api.style.PANEL_BODY;
-      var MENU_LABEL = api.style.MENU_LABEL;
-      var MENU_LABEL_ROW = api.style.MENU_LABEL_ROW;
-      var MENU_ITEM = api.style.MENU_ITEM;
-      var MENU_ITEM_ON = api.style.MENU_ITEM_ON;
-      var MENU_MARK = api.style.MENU_MARK;
-      var MENU_TEXT = api.style.MENU_TEXT;
-      var MENU_HINT = api.style.MENU_HINT;
-      var MENU_SEP = api.style.MENU_SEP;
-      var PANEL_FOOT = api.style.PANEL_FOOT;
-      var BTN_ERR = api.style.BTN_ERR;
       var MSG_ERR = api.style.MSG_ERR;
       var MSG_OK = api.style.MSG_OK;
       var MODE_LABEL = api.mode;
@@ -103,18 +71,10 @@ window.__ModuleLoader__.load({
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       /** 组件共用的浮层外壳：portal 到 body，点遮罩关闭。 */
       function Overlay(props) {
-        return reactDom.createPortal(
-          react.createElement(
-            "div",
-            {
-              style: OVERLAY,
-              onClick: function (e) {
-                if (e.target === e.currentTarget) props.onClose();
-              },
-            },
-            react.createElement("div", { style: props.narrow ? PANEL_SM : PANEL }, props.children),
-          ),
-          document.body,
+        return react.createElement(
+          api.ui.Modal,
+          { open: true, onClose: props.onClose, title: props.title || "提示词选择", closeLabel: "关闭", headless: true },
+          props.children,
         );
       }
 
@@ -139,12 +99,6 @@ window.__ModuleLoader__.load({
         var errSt = react.useState(null);
         var err = errSt[0];
         var setErr = errSt[1];
-        // ⚠️ **鼠标划过去要高亮** —— 原生菜单是 `.item:hover`，而内联样式
-        //    写不了 `:hover`，所以自己跟一个 state 手动做。
-        //    少了它列表像坏死的：划过去一点反馈都没有。
-        var hovSt = react.useState("");
-        var hoverId = hovSt[0];
-        var setHoverId = hovSt[1];
         // ⚠️ 面板**自己拉一份 /presets?session=** —— 因为：
         //    · /state 里那份预设表没有 label（会话页要按 label 显示）
         //    · 「这个会话自己选了哪条」只有 /presets 的 session.presetId 说清了
@@ -228,8 +182,8 @@ window.__ModuleLoader__.load({
         //    PANEL_HEAD 自带 `borderBottom` —— 那条分隔线加上「项没有内边距」，
         //    就成了用户报的「选项紧贴分隔线」。原生菜单的标题是**一小行灰字**，
         //    没有分隔线。
-        var head = react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
-          react.createElement("span", { key: "t", style: MENU_LABEL }, "这个会话用什么"),
+        var head = react.createElement("div", { key: "h" }, [
+          react.createElement("strong", { key: "t" }, "这个会话用什么"),
           react.createElement(
             ActionButton,
             { key: "x", onClick: onClose },
@@ -244,49 +198,38 @@ window.__ModuleLoader__.load({
           rows.push(react.createElement("div", { key: "m", style: MSG_OK }, msg));
         }
 
-        // ── 选项 ────────────────────────────────────────────────────
-        for (var i = 0; i < presets.length; i++) {
-          // ⚠️ **必须把完整的 props 合进去，不能只传 hover** ——
-          //    曾经写成 `renderOption(presets[i], { hoverId, setHoverId })`，
-          //    结果 renderOption 里 `props.sessionId` 是 undefined，
-          //    点下去发出去的请求**没有 sessionId** → 后端 400「缺少 sessionId」
-          //    → 表现就是**点了没反应**（真机上踩了很久才定位到）。
-          //
-          //    hover 那两个在闭包里、不在 props 上，所以得手动合进去。
-          rows.push(
-            renderOption(
-              presets[i],
-              Object.assign({}, props, {
-                hoverId: hoverId,
-                setHoverId: setHoverId,
-                // ⚠️ **面板自己包好的「点完了」回调** ——
-                //    这几件事都得在**面板的闭包**里做，模块级的 `pickOption`
-                //    看不到 `tick` / `setTick`。
-                //
-                //    （踩过：我把 setTick 写进了 pickOption，ReferenceError 被
-                //      里面的 catch 吞了 —— 表现就是「切了但要关掉浮窗才看到」。）
-                onDone: function () {
-                  // 刷新**面板自己那份** /presets —— 这样勾会立刻挪到新选项上，
-                  // 而**面板保持打开**。
-                  setTick(tick + 1);
-                  // ⚠️ **不要自动关**（用户明确要求）：
-                  //    「为什么一切换就退出选择框而不是和初始会话页的一样
-                  //      **自由切换自主关闭**」
-                  //    —— 留在这儿才能连着点几个、比较一下，自己决定什么时候关。
-                },
-              }),
-            ),
-          );
-        }
+        var menuItems = presets.map(function (o) {
+          return {
+            id: o.kind + ":" + (o.id || ""),
+            label: o.label,
+            icon: o.active ? "✓" : undefined,
+          };
+        });
+        var activeOption = presets.find(function (o) { return o.active; });
+        var activeId = activeOption ? activeOption.kind + ":" + (activeOption.id || "") : undefined;
+        var selectOption = function (id) {
+          var chosen = presets.find(function (o) { return o.kind + ":" + (o.id || "") === id; });
+          if (!chosen) return;
+          pickOption(chosen, Object.assign({}, props, {
+            onDone: function () {
+              setTick(tick + 1);
+            },
+          }));
+        };
 
         if (presets.length === 0) {
-          rows.push(
-            react.createElement(
-              "div",
-              { key: "none", style: MUTED },
-              "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
-            ),
-          );
+          rows.push(react.createElement("div", { key: "none", style: MUTED }, "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。"));
+        } else {
+          rows.push(react.createElement(Menu, {
+            key: "menu",
+            open: true,
+            anchor: null,
+            items: menuItems,
+            selectedId: activeId,
+            onSelect: selectOption,
+            onClose: onClose,
+            portal: false,
+          }));
         }
 
         // ⚠️ 加载中**不要**渲染成「空列表」—— 那会闪一下「还没有任何提示词组合」，
@@ -299,9 +242,7 @@ window.__ModuleLoader__.load({
           );
         }
 
-        return react.createElement(Overlay, { narrow: true, onClose: onClose }, [
-          react.createElement("div", { key: "b", style: PANEL_BODY }, rows),
-        ]);
+        return react.createElement(Overlay, { narrow: true, onClose: onClose }, rows);
       }
 
       /** 「跟随全局」这个选项在内部用一个哨兵值表示（不是字符串 id）。 */
@@ -512,49 +453,6 @@ window.__ModuleLoader__.load({
         return out;
       }
 
-      /** 一个选项行。当前生效的带勾 + 高亮。 */
-      function renderOption(o, props) {
-        return react.createElement(
-          "button",
-          {
-            key: "o-" + o.kind + "-" + (o.id || ""),
-            type: "button",
-            className: "pm-btn",
-            // ⚠️ 照原生 `.item` / `.selectedFill` —— 选中**只加填充**，
-            //    不换字号不换粗细（原生菜单就是这样：勾是唯一的标记）。
-            //    划过去也要高亮（原生是 `.item:hover`）。
-            style: o.active
-              ? MENU_ITEM_ON
-              : props.hoverId === o.kind + (o.id || "")
-                ? MENU_ITEM_HOVER
-                : MENU_ITEM,
-            "aria-current": o.active ? "true" : undefined,
-            onMouseEnter: function () {
-              props.setHoverId(o.kind + (o.id || ""));
-            },
-            onMouseLeave: function () {
-              props.setHoverId("");
-            },
-            onClick: function () {
-              if (o.active) {
-                props.onClose && props.onClose();
-                return;
-              }
-              pickOption(o, props);
-            },
-          },
-          [
-            // 勾那一列：照原生 `.itemIcon`（14×14，固定宽，没有勾也占位）
-            react.createElement("span", { key: "g", style: MENU_MARK }, o.active ? "✓" : ""),
-            // 主文字：照原生 `.itemLabel`
-            react.createElement("span", { key: "l", style: MENU_TEXT }, o.label),
-            // 副文字：照原生 `.shortcut` —— 它自己 `margin-inline-start: auto` 靠右，
-            // 所以**不用再塞一个弹簧**（原来那样会撑出空洞）
-            o.sub ? react.createElement("span", { key: "s", style: MENU_HINT }, o.sub) : null,
-          ],
-        );
-      }
-
       /** 点一个选项 → 写状态 + 让宿主重挂。 */
       function pickOption(o, props) {
         var body = { sessionId: props.sessionId };
@@ -749,11 +647,6 @@ window.__ModuleLoader__.load({
         var errSt = react.useState(null);
         var err = errSt[0];
         var setErr = errSt[1];
-        // ⚠️ 同 PresetDropdown：内联样式写不了 `:hover`，自己跟一个 state。
-        var hovSt = react.useState("");
-        var hoverId = hovSt[0];
-        var setHoverId = hovSt[1];
-
         /** @param o 选项；`o.id === null` 表示**回到原生**。 */
         function pick(o) {
           setErr(null);
@@ -801,8 +694,8 @@ window.__ModuleLoader__.load({
             )
           : [];
         var rows = [
-          react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
-            react.createElement("span", { key: "t", style: MENU_LABEL }, "新会话用哪套"),
+          react.createElement("div", { key: "h" }, [
+            react.createElement("strong", { key: "t" }, "新会话用哪套"),
             react.createElement(
               ActionButton,
               { key: "x", onClick: props.onClose },
@@ -822,94 +715,52 @@ window.__ModuleLoader__.load({
         // 旧状态可能仍把全原生预设的 id 挂在 global 上；它和回到原生
         // 是同一个效果，选择器应合并成这一项并正确显示当前勾选。
         var nativeOn = !g.presetId || nativeGlobal;
-        rows.push(
-          react.createElement(
-            "button",
-            {
-              key: "o-native",
-              type: "button",
-              className: "pm-btn",
-              style: nativeOn
-                ? MENU_ITEM_ON
-                : hoverId === "native"
-                  ? MENU_ITEM_HOVER
-                  : MENU_ITEM,
-              "aria-current": nativeOn ? "true" : undefined,
-              onMouseEnter: function () {
-                setHoverId("native");
-              },
-              onMouseLeave: function () {
-                setHoverId("");
-              },
-              onClick: function () {
-                if (nativeOn) {
-                  props.onClose && props.onClose();
-                  return;
-                }
-                pick({ id: null, label: "系统提示词" });
-              },
-            },
-            [
-              react.createElement("span", { key: "g", style: MENU_MARK }, nativeOn ? "✓" : ""),
-              react.createElement("span", { key: "l", style: MENU_TEXT }, "系统提示词（原生）"),
-              react.createElement("span", { key: "s", style: MENU_HINT }, "不挂任何自设提示词"),
-            ],
-          ),
-        );
-
+        var options = [{
+          id: "native",
+          label: "系统提示词（原生）",
+          icon: nativeOn ? "✓" : undefined,
+          preset: { id: null },
+          active: nativeOn,
+        }];
         for (var i = 0; i < list.length; i++) {
           var p = list[i];
           if (!p) continue;
           var active = g.enabled === true && g.presetId === p.id;
-          rows.push(
-            react.createElement(
-              "button",
-              {
-                key: "o-" + p.id,
-                type: "button",
-                className: "pm-btn",
-                style: active
-                  ? MENU_ITEM_ON
-                  : hoverId === "p" + p.id
-                    ? MENU_ITEM_HOVER
-                    : MENU_ITEM,
-                "aria-current": active ? "true" : undefined,
-                onMouseEnter: function () {
-                  setHoverId("p" + p.id);
-                },
-                onMouseLeave: function () {
-                  setHoverId("");
-                },
-                onClick: (function (oo, isActive) {
-                  return function () {
-                    if (isActive) {
-                      props.onClose && props.onClose();
-                      return;
-                    }
-                    pick(oo);
-                  };
-                })(p, active),
-              },
-              [
-                react.createElement("span", { key: "g", style: MENU_MARK }, active ? "✓" : ""),
-                react.createElement("span", { key: "l", style: MENU_TEXT }, presetDisplayLabel(list, i)),
-                p.summary ? react.createElement("span", { key: "s", style: MENU_HINT }, p.summary) : null,
-              ],
-            ),
-          );
+          options.push({
+            id: "preset:" + p.id,
+            label: presetDisplayLabel(list, i),
+            icon: active ? "✓" : undefined,
+            preset: p,
+            active: active,
+          });
         }
+        var menuItems = options.map(function (o) {
+          return { id: o.id, label: o.label, icon: o.icon };
+        });
+        var activeMenuId = options.find(function (o) { return o.active; });
+        var selectOption = function (id) {
+          var chosen = options.find(function (o) { return o.id === id; });
+          if (!chosen) return;
+          if (chosen.active) {
+            props.onClose && props.onClose();
+            return;
+          }
+          pick(chosen.preset);
+        };
         if (list.length === 0) {
-          rows.push(
-            react.createElement(
-              "div",
-              { key: "none", style: MUTED },
-              "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
-            ),
-          );
+          rows.push(react.createElement("div", { key: "none", style: MUTED }, "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。"));
         }
-        return react.createElement(Overlay, { narrow: true, onClose: props.onClose }, [
-          react.createElement("div", { key: "b", style: PANEL_BODY }, rows),
-        ]);
+        rows.push(react.createElement(Menu, {
+          key: "menu",
+          open: true,
+          anchor: null,
+          items: menuItems,
+          selectedId: activeMenuId && activeMenuId.id,
+          onSelect: selectOption,
+          onClose: props.onClose,
+          portal: false,
+        }));
+        return react.createElement(Overlay, { narrow: true, onClose: props.onClose }, rows);
       }
 
       function PromptPicker(props) {

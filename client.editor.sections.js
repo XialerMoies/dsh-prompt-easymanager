@@ -23,19 +23,7 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     function create(api) {
-      var HostButton = api.ui && api.ui.Button;
-      function ActionButton(props) {
-        if (!HostButton) return react.createElement("button", props, props.children);
-        var next = Object.assign({}, props);
-        delete next.children;
-        delete next.style;
-        delete next.className;
-        delete next.type;
-        next.style = { whiteSpace: "nowrap" };
-        next.variant = next.variant || "ghost";
-        next.size = next.size || "sm";
-        return react.createElement(HostButton, next, props.children);
-      }
+      var ActionButton = api.ui.ActionButton;
       // 段落名 → 中文标签（宿主给的那一份，别在这儿再写一个）
       var sectionLabel = api.label;
       var ACTIONS = api.style.ACTIONS;
@@ -43,10 +31,6 @@ window.__ModuleLoader__.load({
       var BADGE_OFF = api.style.BADGE_OFF;
       var BADGE_OK = api.style.BADGE_OK;
       var BADGE_WARN = api.style.BADGE_WARN;
-      var BTN = api.style.BTN;
-      var BTN_BUSY = api.style.BTN_BUSY;
-      var BTN_DANGER = api.style.BTN_DANGER;
-      var BTN_PRIMARY = api.style.BTN_PRIMARY;
       var CARD = api.style.CARD;
       var CARD_DETAILS = api.style.CARD_DETAILS;
       var CARD_HEAD = api.style.CARD_HEAD;
@@ -148,8 +132,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "a",
                     type: "button",
-                    className: "pm-btn",
-                    style: props.sectionsBusy ? BTN_BUSY : BTN,
                     disabled: props.sectionsBusy,
                     onClick: function (e) {
                       e.stopPropagation();
@@ -181,8 +163,6 @@ window.__ModuleLoader__.load({
             bodyChildren = [
               react.createElement("textarea", {
                 key: "ta",
-                className: "pm-input",
-                style: TEXTAREA,
                 value: draft,
                 disabled: props.sectionsBusy,
                 spellCheck: false,
@@ -199,8 +179,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "s",
                     type: "button",
-                    className: "pm-btn",
-                    style: props.sectionsBusy ? BTN_BUSY : BTN_PRIMARY,
                     variant: "primary",
                     disabled: props.sectionsBusy,
                     onClick: function () {
@@ -220,8 +198,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "c",
                     type: "button",
-                    className: "pm-btn",
-                    style: BTN,
                     disabled: props.sectionsBusy,
                     onClick: function () {
                       props.setSectionDrafts(function (prev) {
@@ -244,8 +220,6 @@ window.__ModuleLoader__.load({
                   {
                     key: "e",
                     type: "button",
-                    className: "pm-btn",
-                    style: props.sectionsBusy ? BTN_BUSY : BTN,
                     disabled: props.sectionsBusy,
                     onClick: function () {
                       props.setSectionDrafts(function (prev) {
@@ -279,8 +253,6 @@ window.__ModuleLoader__.load({
                       {
                         key: "r",
                         type: "button",
-                        className: "pm-btn",
-                        style: props.sectionsBusy ? BTN_BUSY : BTN,
                         disabled: props.sectionsBusy,
                         title: "删掉你的改动，回到官方当前的文本（官方更新过的话就是新版）",
                         onClick: function (e) {
@@ -378,8 +350,6 @@ window.__ModuleLoader__.load({
               {
                 key: "r",
                 type: "button",
-                className: "pm-btn",
-                style: props.sectionsBusy ? BTN_BUSY : BTN,
                 disabled: props.sectionsBusy,
                 onClick: function () {
                   props.loadSections();

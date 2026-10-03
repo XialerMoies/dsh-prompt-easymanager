@@ -23,19 +23,8 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     function create(api) {
-      var HostButton = api.ui && api.ui.Button;
-      function ActionButton(props) {
-        if (!HostButton) return react.createElement("button", props, props.children);
-        var next = Object.assign({}, props);
-        delete next.children;
-        delete next.style;
-        delete next.className;
-        delete next.type;
-        next.style = { whiteSpace: "nowrap" };
-        next.variant = next.variant || "ghost";
-        next.size = next.size || "sm";
-        return react.createElement(HostButton, next, props.children);
-      }
+      var ActionButton = api.ui.ActionButton;
+      var NativeInput = api.ui.NativeInput;
       var fmtTokens = api.tokens;
       var CARD = api.style.CARD;
       var CARDS_GRID = api.style.CARDS_GRID;
@@ -50,16 +39,10 @@ window.__ModuleLoader__.load({
       var CHEVRON_OPEN = api.style.CHEVRON_OPEN;
       var DD = api.style.DD;
       var DETAILS_GRID = api.style.DETAILS_GRID;
-      var DETAIL_BTN = api.style.DETAIL_BTN;
-      var DETAIL_BTN_BUSY = api.style.DETAIL_BTN_BUSY;
-      var DETAIL_BTN_DANGER = api.style.DETAIL_BTN_DANGER;
       var DT = api.style.DT;
       var FORM = api.style.FORM;
-      var FORM_INPUT = api.style.FORM_INPUT;
-      var FORM_INPUT_NUM = api.style.FORM_INPUT_NUM;
       var FORM_LABEL = api.style.FORM_LABEL;
       var FORM_LINE = api.style.FORM_LINE;
-      var FORM_TEXTAREA = api.style.FORM_TEXTAREA;
       var HEADING_COUNT = api.style.HEADING_COUNT;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       // ⚠️ MODE_LABEL **不在 api.style 里** —— 宿主是当 api.mode 导出的
@@ -178,9 +161,8 @@ window.__ModuleLoader__.load({
     return react.createElement("div", { style: FORM }, [
       react.createElement("div", { key: "r1", style: FORM_LINE }, [
         react.createElement("span", { key: "l", style: FORM_LABEL }, "id"),
-        react.createElement("input", {
+        react.createElement(NativeInput, {
           key: "i",
-          className: "pm-input", style: FORM_INPUT,
           value: props.edit.id,
           disabled: !props.edit.isNew,
           onChange: field("id", props),
@@ -191,9 +173,8 @@ window.__ModuleLoader__.load({
       ]),
       react.createElement("div", { key: "r2", style: FORM_LINE }, [
         react.createElement("span", { key: "l", style: FORM_LABEL }, "名称"),
-        react.createElement("input", {
+        react.createElement(NativeInput, {
           key: "i",
-          className: "pm-input", style: FORM_INPUT,
           value: props.edit.name,
           onChange: field("name", props),
           placeholder: "显示名",
@@ -201,7 +182,7 @@ window.__ModuleLoader__.load({
         react.createElement("span", { key: "l2", style: FORM_LABEL }, "模式"),
         react.createElement(
           "select",
-          { key: "s", style: Object.assign({}, FORM_INPUT, { flex: "0 0 110px" }), value: props.edit.mode, onChange: field("mode") },
+          { key: "s", value: props.edit.mode, onChange: field("mode") },
           [
             react.createElement("option", { key: "a", value: "append" }, "追加"),
             react.createElement("option", { key: "n", value: "none" }, "不注入"),
@@ -249,8 +230,6 @@ window.__ModuleLoader__.load({
                 "select",
                 {
                   key: "sel",
-                  className: "pm-input",
-                  style: Object.assign({}, FORM_INPUT, { flex: "0 0 auto", minWidth: "132px" }),
                   value: selectValue,
                   "data-pm-category": "select",
                   onChange: function (e) {
@@ -270,10 +249,8 @@ window.__ModuleLoader__.load({
               // 只有"自定义"时才出现输入框
               isBuiltin || isKnownCustom
                 ? null
-                : react.createElement("input", {
+                : react.createElement(NativeInput, {
                     key: "txt",
-                    className: "pm-input",
-                    style: Object.assign({}, FORM_INPUT, { flex: "0 1 150px" }),
                     value: current,
                     "data-pm-category": "text",
                     onChange: function (e) {
@@ -289,9 +266,8 @@ window.__ModuleLoader__.load({
           );
         })(),
         react.createElement("span", { key: "l3", style: FORM_LABEL }, "order"),
-        react.createElement("input", {
+        react.createElement(NativeInput, {
           key: "o",
-          style: FORM_INPUT_NUM,
           type: "number",
           value: props.edit.order,
           onChange: field("order", props),
@@ -316,9 +292,8 @@ window.__ModuleLoader__.load({
       ),
       react.createElement("div", { key: "r3", style: FORM_LINE }, [
         react.createElement("span", { key: "l", style: FORM_LABEL }, "说明"),
-        react.createElement("input", {
+      react.createElement(NativeInput, {
           key: "i",
-          className: "pm-input", style: FORM_INPUT,
           value: props.edit.description,
           onChange: field("description", props),
           placeholder: "一句话说明，会显示在选择器里",
@@ -332,7 +307,6 @@ window.__ModuleLoader__.load({
           )
         : react.createElement("textarea", {
             key: "t",
-            className: "pm-input", style: FORM_TEXTAREA,
             value: props.edit.text,
             onChange: field("text", props),
             placeholder: "提示词正文（保存后写到 prompts/" + props.edit.id + ".md）",
@@ -349,7 +323,6 @@ window.__ModuleLoader__.load({
           {
             key: "c",
             type: "button",
-            className: "pm-btn", style: props.busy ? DETAIL_BTN_BUSY : DETAIL_BTN,
             disabled: props.busy,
             onClick: function () {
               props.setEdit(null);
@@ -362,7 +335,6 @@ window.__ModuleLoader__.load({
           {
             key: "s",
             type: "button",
-            style: props.busy || !idOk ? DETAIL_BTN_BUSY : DETAIL_BTN,
             disabled: props.busy || !idOk,
             onClick: function () {
               props.send(
@@ -584,7 +556,6 @@ window.__ModuleLoader__.load({
                       {
                         key: "e",
                         type: "button",
-                        className: "pm-btn", style: props.busy ? DETAIL_BTN_BUSY : DETAIL_BTN,
                         disabled: props.busy,
                         onClick: function () {
                           props.setEdit({
@@ -607,7 +578,6 @@ window.__ModuleLoader__.load({
                       {
                         key: "d",
                         type: "button",
-                        className: "pm-btn", style: props.busy ? DETAIL_BTN_BUSY : DETAIL_BTN_DANGER,
                         variant: "outline",
                         disabled: props.busy,
                         title: "删除这条（正文文件一并删除）",
@@ -661,7 +631,6 @@ window.__ModuleLoader__.load({
       {
         key: "n",
         type: "button",
-        className: "pm-btn", style: props.busy || !!props.edit ? DETAIL_BTN_BUSY : DETAIL_BTN,
         disabled: props.busy || !!props.edit,
         onClick: newPrompt,
       },

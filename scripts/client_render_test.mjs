@@ -862,7 +862,16 @@ const editorBox = modEditor.create(strict.api);
       .filter(Boolean)
       .map((n) => flattenText(n).join(" "))
       .join(" ");
-    ok(nativeText.includes("✓ 系统提示词（原生）"), "原生预设副本与固定原生入口合并并显示为当前项");
+    const nativeItem = [];
+    for (const root of Array.isArray(nativePortal?.el) ? nativePortal.el : [nativePortal?.el]) {
+      findEl(root, (n) => {
+        if (n.props && n.props.role === "menuitem" && flattenText(n).join(" ").includes("系统提示词（原生）")) {
+          nativeItem.push(n);
+        }
+        return false;
+      });
+    }
+    ok(nativeItem.length === 1 && nativeItem[0].props["aria-selected"] === "true", "原生预设副本与固定原生入口合并并显示为当前项");
 
     globalThis.fetch = realFetch;
   }
@@ -1309,78 +1318,20 @@ const renderEditor = (props = {}) =>
       over,
     );
 
-  // ══ 菜单项有 hover 反馈 + 分隔线是 hairline ═══════════════════════════
-  //
-  // ⚠️ 这两条都是「照原生」时才发现的：
-  //
-  //    ① 原生 `.item:hover { background: var(--dsw-alias-interactive-bg-hover) }`
-  //       —— 内联样式写不了 `:hover`，**得自己跟一个 state 手动做**。
-  //       漏了的话列表像坏死的：划过去一点反馈都没有。
-  //    ② 原生的 `.separator` / `.footer` 都是 **.5px** 的 hairline，
-  //       我原来几处写的是 `1px`，比原生粗一倍。
+  // ══ 菜单项使用 dsh primitives ═══════════════════════════════════════
   {
     const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
-    // ⚠️ **数够不够**，不是「有没有」——
-    //    两个面板（会话页 / 新会话页）各有选项，所以至少各 2 处。
-    //    第一版只判「有没有」，摘掉一个面板的 hover 照样绿（注入验证发现的）。
-    const hoverIn = [...picker.matchAll(/onMouseEnter/g)].length;
-    const hoverOut = [...picker.matchAll(/onMouseLeave/g)].length;
-    ok(
-      hoverIn >= 2 && hoverOut >= 2,
-      `**两个面板的菜单项都有 hover 反馈**（onMouseEnter ${hoverIn} 处 / onMouseLeave ${hoverOut} 处，各要 ≥2）`,
-    );
-    ok(
-      /hoverId/.test(picker) && /setHoverId/.test(picker),
-      "hover 用的是 state（hoverId / setHoverId）",
-    );
-    ok(
-      [...picker.matchAll(/MENU_ITEM_HOVER/g)].length >= 2,
-      "两个面板都用 **MENU_ITEM_HOVER**（照原生 .item:hover）",
-    );
-    // 分隔线：源码里不该再出现 1px 的主题色边框
-    const thick = [...picker.matchAll(/"1px solid var\(--dsw-alias-border-l2/g)].length;
-    eq(thick, 0, '**分隔线不许是 1px**（原生的 separator / footer 是 .5px hairline）');
+    ok((picker.match(/react\.createElement\(Menu/g) || []).length >= 2, "两个选择器使用 dsh Menu");
+    ok(picker.includes("var Menu = api.ui.Menu"), "选择器菜单使用 dsh Menu primitive");
+    ok(!picker.includes("MENU_ITEM_HOVER") && !picker.includes("onMouseEnter"), "菜单不再维护自绘 hover 状态");
   }
-  // ══ 菜单项用**原生尺寸** ═══════════════════════════════════════════════
-  //
-  // ⚠️ 用户原话：「选项颜色不搭原生的，建议复用原生的」。
-  //
-  //    我原来用的是 `ROW`（4px 间距的小胶囊）+ `CARD_TITLE`（14px/600 粗体），
-  //    而原生菜单项（dsh-client-ui-primitives 的 Menu.module.css `.item`）是：
-  //
-  //        min-height 34px / padding 6px 8px / radius --dsw-radius-md
-  //        font-size 13px / line-height 20px / color --dsw-alias-label-primary
-  //
-  //    渲染测试测不出「像不像原生」，所以把这几条静态钉住。
+  // ══ 菜单/弹层不再复制宿主组件样式 ═══════════════════════════════════
   {
     const host = readFileSync(join(HERE, "..", "client.js"), "utf8");
-    const m = objectSourceOf(host, "MENU_ITEM");
-    ok(!!m, "能定位到 MENU_ITEM");
-    const one = m;
-    if (one) {
-      ok(/minHeight: "34px"/.test(one), "菜单项 **min-height 34px**（照原生 .item）");
-      ok(/padding: "6px 8px"/.test(one), "菜单项 **padding 6px 8px**（照原生 .item）");
-      ok(/borderRadius: "var\(--dsw-radius-md/.test(one), "菜单项圆角用 --dsw-radius-md");
-      ok(/fontSize: "13px"/.test(one), "菜单项 **13px**（不是原来那个 14px/600 粗体）");
-      ok(/color: "var\(--dsw-alias-label-primary/.test(one), "菜单项文字色用 --dsw-alias-label-primary");
-    }
-    // 卡片内边距：没有它项会紧贴边缘（照原生 .list 的 padding: 4px）
-    const pSrc = objectSourceOf(host, "PANEL");
-    ok(!!pSrc && /padding: "4px"/.test(pSrc), "**面板有 4px 内边距**（照原生 .list；没有它项会紧贴边缘）");
-    // 头不许自带分隔线（那是「选项紧贴分隔线」的来源）
-    const hSrc = objectSourceOf(host, "MENU_LABEL");
-    ok(!!hSrc, "能定位到 MENU_LABEL（原生 .label 那一行灰字）");
-    // ⚠️ 判据是「真有 border 属性」—— `/border/i` 会把 `borderRadius` 也算进去（踩过）。
-    if (hSrc) {
-      const borderProps = [...hSrc.matchAll(/\b(border|borderTop|borderBottom|borderLeft|borderRight)\s*:/g)].map(
-        (x) => x[1],
-      );
-      eq(
-        borderProps,
-        [],
-        "**标题行没有分隔线**（原生菜单的标题就是一行灰字）",
-      );
-    }
+    ok(!/var\s+MENU_ITEM\s*=/.test(host), "宿主不再定义菜单项样式");
+    ok(!/var\s+PANEL\s*=/.test(host), "宿主不再定义弹层面板样式");
+    ok(host.includes("Menu: hostUi.Menu"), "宿主向 chunk 注入原生菜单组件");
+    ok(host.includes("Modal: hostUi.Modal"), "宿主向 chunk 注入原生 Modal 组件");
   }
   // ══ 卡片头的**结构**：两段竖排 + 动作成组 ═══════════════════════════════
   //
@@ -3784,46 +3735,9 @@ function makeSectionsData(over = {}) {
     for (const m of codeOnly.matchAll(/--dsh-[\w-]+/g)) used.add(m[0]);
     eq([...used], [], "**不许用 `--dsh-*` 这种不存在的变量**（正确命名空间是 `--dsw-alias-*`）");
 
-    // ── ③ 面板背景必须是**弹层语义**的变量 ────────────────────────────
-    //
-    // ⚠️ 这条是三轮真机问题里**最难过的那一条**：
-    //
-    //    `--dsw-alias-bg-overlay` —— 变量**存在**、明暗也**不同**，
-    //    但它是个**遮罩层**色（浮层背后压暗那一层）。深色下它是中灰
-    //    #61666b，拿它当面板背景会把面板糊成一片灰。
-    //
-    //    前两条守卫（变量存在 / 兜底跟主题走）**都拦不住它** ——
-    //    所以得把「哪些变量能当弹层背景」写成白名单。
-    //
-    //    dsh 自己的弹层（`MenuSurface.module.css`）用的是
-    //    `--dsw-menu-surface-fill` + `--dsw-menu-backdrop-filter`。
-    {
-      const OK_BG = [
-        "--dsw-specific-menu",
-        "--dsw-menu-surface-fill",
-        "--dsw-alias-settings-card-fill",
-        "--dsw-alias-bg-module-platform",
-        "--dsw-alias-bg-layer-2",
-      ];
-      const OK_MASK = ["--dsw-alias-bg-mask-1"];
-      const panels2 = [...src.matchAll(/var PANEL = \{[\s\S]*?\n {4,10}\};/g)].map((m) => m[0]);
-      for (const [i, one] of panels2.entries()) {
-        const m = /background:\s*"var\((--dsw-[a-z0-9-]+)/.exec(one);
-        ok(!!m, `面板背景用主题变量（第 ${i + 1} 份）`);
-        if (m) {
-          ok(
-            OK_BG.includes(m[1]),
-            `**面板背景是「面」语义的变量**（第 ${i + 1} 份实际用了 \`${m[1]}\`）—— ` +
-              "遮罩层类（如 --dsw-alias-bg-overlay）深色下是中灰，会把面板糊成一片灰",
-          );
-        }
-      }
-      // 遮罩层那一个单独网开一面：它**就该**用遮罩色
-      ok(
-        OK_MASK.some((k) => src.includes(k)),
-        "遮罩层用遮罩色（--dsw-alias-bg-mask-1）",
-      );
-    }
+    // 弹层外观由 dsh Modal/Menu 提供，宿主源码不再复制面板和遮罩 CSS。
+    ok(src.includes("Modal: hostUi.Modal"), "弹层使用 dsh 原生 Modal");
+    ok(src.includes("Menu: hostUi.Menu"), "菜单使用 dsh 原生 Menu");
     //
     // ── ④ 兜底不许是 Canvas / CanvasText ──────────────────────────────
     //
@@ -3867,23 +3781,7 @@ function makeSectionsData(over = {}) {
         "**硬编码灰度必须落在主题变量的兜底位里**（裸写的话浅色主题下颜色不对）",
       );
     }
-    // 浮窗/面板的背景必须走主题变量，不能写死颜色。
-    // PANEL 那一族现在住在宿主（面板和预览两个 chunk 各自从 api.style 取），
-    // 所以扫描必然能从拼起来的源码里找到它 —— 找不到就说明它被搬丢了。
-    const panels = [...src.matchAll(/var PANEL = \{[\s\S]*?\n {4,10}\};/g)].map((m) => m[0]);
-    ok(panels.length > 0, "能定位到 PANEL 样式");
-    for (const [i, one] of panels.entries()) {
-      ok(
-        // ⚠️ 前缀放宽到 `--dsw-(alias|specific|menu)-` —— 弹层专用变量是
-        //    `--dsw-specific-menu`，只认 `--dsw-alias-` 的话它会被误判成「没套变量」。
-        /background:\s*"var\(--dsw-(?:alias|specific|menu)-/.test(one),
-        `**浮窗背景用主题变量**（第 ${i + 1} 份；写死颜色会导致明暗主题下有一边是错的）`,
-      );
-      ok(
-        !/background:\s*"#[0-9a-fA-F]{3,6}"/.test(one),
-        `浮窗背景没有写死的十六进制颜色（第 ${i + 1} 份）`,
-      );
-    }
+    ok(!/var\s+PANEL\s*=/.test(src), "宿主不再维护自定义 PANEL 样式");
   }
 
   ok(labelBlock !== null, "能定位到 SECTION_LABELS 表");
@@ -4417,54 +4315,11 @@ function makeSectionsData(over = {}) {
     ok(seq.indexOf("combo") < seq.indexOf("sections"), `提示词配置在系统提示词之前（实际 ${seq.join(" → ")}）`);
   }
 
-  // ── 开关本身：借用 dsh 原生开关的类名和结构 ──────────────────────────
-  //
-  // 用户给的参考就是 dsh 自己的开关：
-  //   <button type="button" role="switch" aria-checked="true" class="_switch_…">
-  //     <span class="_thumb_…"></span>
-  //   </button>
-  // 那段 CSS 在**全局样式表**里（web-frontend/dist/assets/index-*.css），
-  // 所以插件能直接借，外观自动跟着主题令牌走。
-  //
-  // ⚠️ 那个哈希是内容派生的，dsh 升级可能变。所以这里断言的是：
-  //    结构对（role/aria-checked）+ 有类名 + **有形状兜底**。
-  //    类名一旦失效，至少还是个圆角胶囊，不会退回方按钮。
+  // ── 开关本身：交给 dsh 原生 Switch ───────────────────────────────────
   const sw = findEl(el, (n) => n.props && n.props.role === "switch");
   ok(!!sw, "**有 role=switch 的开关**（原生语义，键盘和读屏能用）");
   if (sw) {
     eq(sw.props["aria-checked"], true, "**aria-checked 跟状态一致**（原生开关靠它驱动视觉）");
-    ok(
-      typeof sw.props.className === "string" && sw.props.className.startsWith("_switch_"),
-      `用了 dsh 原生开关类名（实际 ${JSON.stringify(sw.props.className)}）`,
-    );
-    eq(sw.props.style.borderRadius, "999px", "**形状兜底仍在**：类名失效也是个胶囊，不是方按钮");
-    eq(sw.props.style.width, "36px", "兜底尺寸跟原生一致（36×20）");
-    // 开关本体的 background 用原生同一套令牌，跟着主题走
-    ok(
-      String(sw.props.style.background).includes("--dsw-alias-brand-primary"),
-      "开启态背景走主题令牌 brand-primary（不是写死的颜色）",
-    );
-
-    const th = findEl(sw, (n) => n.props && typeof n.props.className === "string" && n.props.className.startsWith("_thumb_"));
-    ok(!!th, "滑块用了原生 thumb 类名");
-    if (th) {
-      // ⚠️⚠️ 这两条是**回归守卫**，踩过：
-      //    内联 background:"#fff" 把 thumb 的主题令牌顶掉了 ——
-      //    深色模式下滑块本该是深色（开启态 brand-primary 在深色下偏亮，
-      //    滑块要反过来），结果一直是白的。
-      //    内联样式永远赢 class，所以原生管了的属性内联一个都不能写。
-      eq(
-        th.props.style.background,
-        undefined,
-        "**滑块不许有内联背景**（写死颜色会顶掉深色模式的令牌，白块 bug）",
-      );
-      eq(
-        th.props.style.transform,
-        undefined,
-        "**滑块不许有内联 transform**（位移归原生 [aria-checked=true] 规则管）",
-      );
-      eq(th.props.style.borderRadius, "50%", "滑块仍有形状兜底");
-    }
   }
   // 「配置不会被清掉」也收进了 title —— 用户在决定要不要关的时候才需要看到它
   ok(swTip.includes("配置都留着"), "**title 里说明了配置不会被清掉**（否则用户不敢关）");

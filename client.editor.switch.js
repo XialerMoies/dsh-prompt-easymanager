@@ -9,7 +9,7 @@
 //    改了 chunk 之后跑 `npm run bump:rev` 把 client.js 顶新。
 //
 // 为什么这两样在一起：
-//   · 总开关自己是一块，控件和样式函数（switchStyle / thumbStyle + 两个回退常量）
+//   · 总开关自己是一块，控件交给 dsh 的 Switch primitive
 //     只有它用；
 //   · renderHelpIcon 是**零依赖**的纯函数，而总开关、提示词组合、系统提示词
 //     三处都要用它 —— 跟开关一起搬出来，由宿主把它交回给编辑器那一份用。
@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
      *    （这个仓库已经踩过多次：SECTION 的 gap、NAV_TITLE、CARDS_GRID）。
      */
     function create(api) {
-      var HostSwitch = api.ui && api.ui.Switch;
+      var HostSwitch = api.ui.Switch;
       var CARD = api.style.CARD;
       var HEADING_COUNT = api.style.HEADING_COUNT;
 
@@ -66,41 +66,15 @@ window.__ModuleLoader__.load({
            * 是「形状」而不是「配色」：类名一旦失效，至少还是个圆角胶囊、不会退回方按钮；
            * 颜色交给原生 —— 宁可失效时朴素，也不要**在好的时候是错的**。
            */
-          var NATIVE_SWITCH = "_switch_15ung_5";
-          var NATIVE_THUMB = "_thumb_15ung_33";
+          /* Switch visuals are owned by dsh's primitive. */
           // 只兜形状和布局：原生 css 失效时才起作用，生效时被 class 覆盖（值相同）
-          var SWITCH_FALLBACK = {
-            position: "relative",
-            display: "inline-block",
-            flex: "0 0 auto",
-            boxSizing: "border-box",
-            width: "36px",
-            height: "20px",
-            padding: "2px",
-            border: "0",
-            borderRadius: "999px",
-            cursor: "pointer",
-          };
           // ⚠️ 这里**没有** background、**没有** transform —— 见上面那段。
-          var THUMB_FALLBACK = {
-            display: "block",
-            width: "16px",
-            height: "16px",
-            borderRadius: "50%",
-          };
           /**
            * 开关本体：形状兜底 + 仅当原生类名失效时才需要的一点颜色。
            *
            * background 用**原生同一套令牌**，这样即使写到内联也还是跟着主题走；
            * 原生类名生效时它和 class 里的值一致，不会打架。
            */
-          function switchStyle(on) {
-            return Object.assign({}, SWITCH_FALLBACK, {
-              background: on
-                ? "var(--dsw-alias-brand-primary)"
-                : "var(--dsw-alias-border-l3)",
-            });
-          }
           /**
            * 滑块：**只有形状兜底，没有颜色、没有 transform**。
            *
@@ -109,37 +83,14 @@ window.__ModuleLoader__.load({
            * 偏亮，滑块得反过来）。写死白色就是深色模式下看起来不对的原因。
            * 位移交给原生的 `[aria-checked=true] .thumb{transform:translate(16px)}`。
            */
-          function thumbStyle() {
-            return THUMB_FALLBACK;
-          }
-
           function NativeSwitch(props) {
-            if (HostSwitch) {
-              return react.createElement(HostSwitch, {
-                checked: props.on,
-                onChange: props.onToggle,
-                label: "提示词全局注入",
-                title: props.help,
-                disabled: props.busy,
-              });
-            }
-            return react.createElement(
-              "button",
-              {
-                type: "button",
-                role: "switch",
-                "aria-checked": props.on,
-                "aria-label": "提示词全局注入",
-                className: NATIVE_SWITCH,
-                title: props.help,
-                disabled: props.busy,
-                onClick: function () {
-                  props.onToggle(!props.on);
-                },
-                style: switchStyle(props.on),
-              },
-              react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle() }),
-            );
+            return react.createElement(HostSwitch, {
+              checked: props.on,
+              onChange: props.onToggle,
+              label: "提示词全局注入",
+              title: props.help,
+              disabled: props.busy,
+            });
           }
   
           /**

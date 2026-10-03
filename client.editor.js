@@ -48,15 +48,10 @@ window.__ModuleLoader__.load({
       var CARD_HEADING = api.style.CARD_HEADING;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
-      var DETAIL_BTN = api.style.DETAIL_BTN;
-      var DETAIL_BTN_BUSY = api.style.DETAIL_BTN_BUSY;
-      var DETAIL_BTN_DANGER = api.style.DETAIL_BTN_DANGER;
       var CARD_ACTIONS = api.style.CARD_ACTIONS;
       var FORM = api.style.FORM;
       var FORM_LINE = api.style.FORM_LINE;
       var FORM_LABEL = api.style.FORM_LABEL;
-      var FORM_INPUT = api.style.FORM_INPUT;
-      var FORM_INPUT_NUM = api.style.FORM_INPUT_NUM;
       var FORM_TEXTAREA = api.style.FORM_TEXTAREA;
       var HINT = api.style.HINT;
       var STATUS_LINE = api.style.STATUS_LINE;
@@ -67,13 +62,9 @@ window.__ModuleLoader__.load({
       var RAW_NAME = api.style.RAW_NAME;
       var CARD_NOTICE = api.style.CARD_NOTICE;
       var WARN = api.style.WARN;
-      var BTN_BUSY = api.style.BTN_BUSY;
-      var BTN = api.style.BTN;
       var TEXTAREA = api.style.TEXTAREA;
       var ACTIONS = api.style.ACTIONS;
-      var BTN_PRIMARY = api.style.BTN_PRIMARY;
       var PRE = api.style.PRE;
-      var BTN_DANGER = api.style.BTN_DANGER;
       var HINT_TEXT = api.style.HINT_TEXT;
       var SLOT_HEAD = api.style.SLOT_HEAD;
       var SLOT_WHY = api.style.SLOT_WHY;
@@ -927,40 +918,8 @@ function presetById(d, id) {
         ],
       );
 
-      // ── 注入一小段样式表 ──────────────────────────────────────────────────
-      // 内联 style 做不了 `:hover` / `:focus-visible`，而这两样正是原生卡片的关键手感。
-      // 一方插件（dsh-client-ui-settings-*）也是往文档里塞一个带 data-plugin 标记的
-      // `<style>`（CSS module 编译成字符串后注入），这里照做。
-      // 类名统一加 `pm-` 前缀，避免和别的插件撞。
-      const CSS_TAG_ID = "dsh-prompt-easymanager-editor-css";
-      const EDITOR_CSS = [
-        ".pm-head{transition:background .12s ease}",
-        ".pm-head:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.09))}",
-        ".pm-head:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#3b82f6));outline-offset:-2px}",
-        ".pm-btn{transition:background .12s ease}",
-        ".pm-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.09))}",
-        ".pm-btn:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#3b82f6));outline-offset:1px}",
-        ".pm-input:focus-visible{border-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#3b82f6));box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#3b82f6)) 18%,transparent)}",
-      ].join("");
-
-      function ensureEditorStyles() {
-        try {
-          if (typeof document === "undefined" || !document.head) return;
-          if (document.getElementById(CSS_TAG_ID)) return;
-          var tag = document.createElement("style");
-          tag.id = CSS_TAG_ID;
-          tag.setAttribute("data-plugin", "dsh-prompt-easymanager");
-          tag.textContent = EDITOR_CSS;
-          document.head.appendChild(tag);
-        } catch {
-          /* 拿不到 document 就算了 —— 只是少了悬停效果，功能不受影响 */
-        }
-      }
-
-
       return {
         PromptEditor: PromptEditor,
-        installStyles: ensureEditorStyles,
       };
     }
 

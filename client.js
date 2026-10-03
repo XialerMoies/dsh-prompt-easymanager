@@ -230,46 +230,34 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         react = require("react");
         var reactDom = require("react-dom");
         // dsh 的官方插件共用这一组 UI primitives。它们由宿主模块加载器提供，
-        // 不打进插件包；旧宿主/测试沙箱拿不到时保留现有渲染回退。
-        var hostUi = {};
-        try {
-          hostUi = require("@deepseek-ai/dsh-client-ui-primitives") || {};
-        } catch (_) {
-          hostUi = {};
+        // 不打进插件包；插件 UI 不再维护 HTML 控件回退。
+        var hostUi = require("@deepseek-ai/dsh-client-ui-primitives");
+        function ActionButton(props) {
+          var next = Object.assign({}, props);
+          delete next.children;
+          delete next.style;
+          delete next.className;
+          delete next.type;
+          next.style = { whiteSpace: "nowrap" };
+          next.variant = next.variant || "ghost";
+          next.size = next.size || "sm";
+          return react.createElement(hostUi.Button, next, props.children);
+        }
+        function NativeInput(props) {
+          var next = Object.assign({}, props);
+          delete next.children;
+          delete next.className;
+          delete next.style;
+          return react.createElement(hostUi.Input, next);
+        }
+        function NativeCheckbox(props) {
+          return react.createElement(hostUi.Checkbox, props);
         }
 
         var inject = ["slots"];
 
         // ── 会话头部那一个按钮 + 它要用的样式 ────────────────────────────────
         var ROW = { display: "inline-flex", alignItems: "center", gap: "4px", flex: "none" };
-        var BTN = {
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "4px",
-          padding: "2px 6px",
-          borderRadius: "5px",
-          border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
-          background: "transparent",
-          color: "inherit",
-          fontFamily: "inherit",
-          fontSize: "11px",
-          lineHeight: "16px",
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-          flex: "none",
-        };
-        var BTN_BUSY = Object.assign({}, BTN, { opacity: 0.55, cursor: "default" });
-        var BTN_ERR = Object.assign({}, BTN, { borderColor: "rgba(239,68,68,.85)" });
-        // ── 「系统提示词」段落卡片用的样式 ──────────────────────────────────
-        // 跟上面同风格：都从 BTN 派生，只改需要改的那一项。
-        var BTN_PRIMARY = Object.assign({}, BTN, {
-          borderColor: "var(--dsw-alias-state-business-primary, rgba(59,130,246,.7))",
-          color: "var(--dsw-alias-state-business-primary, #3b82f6)",
-        });
-        var BTN_DANGER = Object.assign({}, BTN, {
-          borderColor: "var(--dsw-alias-state-error-primary, rgba(239,68,68,.6))",
-          color: "var(--dsw-alias-state-error-primary, #ef4444)",
-        });
         var ACTIONS = {
           display: "flex",
           gap: "6px",
@@ -361,42 +349,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
          * 最后一层兜底用 CSS 系统色 `Canvas` —— 它跟着浏览器/系统主题走，
          * 比写死一个颜色安全得多。
          */
-        var OVERLAY = {
-          position: "fixed",
-          inset: "0",
-          // 遮罩用 dsh 自己的 mask 变量 —— 深色遮罩在明暗两种主题下都是惯例，
-          // 所以这里保留一个 rgba 兜底是安全的（不像浮窗背景必须跟着主题）。
-          background: "var(--dsw-alias-bg-mask-1, rgba(0,0,0,.45))",
-          zIndex: 9999,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "24px",
-        };
-        var PANEL = {
-          // ⚠️ **弹层配方**，照 dsh 自己的 `MenuSurface.module.css` 抄：
-  //      background: var(--dsw-menu-surface-fill)
-  //      backdrop-filter: var(--dsw-menu-backdrop-filter)
-  //
-  //    别用 `--dsw-alias-bg-overlay` —— 那是**遮罩层**（浮层背后压暗那一层），
-  //    深色下它是中灰 #61666b，拿它当面会把面板糊成一片灰（真机截图里就是这个）。
-  background: "var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, rgba(128,128,128,.14)))",
-  backdropFilter: "var(--dsw-menu-backdrop-filter, none)",
-          color: "var(--dsw-alias-label-primary, rgba(128,128,128,.95))",
-          border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
-          borderRadius: "8px",
-          maxWidth: "860px",
-          width: "100%",
-          maxHeight: "80vh",
-          // ⚠️ 照原生 `.list` —— **卡片内边距 4px**。
-          //    没有它的话项会**紧贴面板边缘和标题那条线**（用户报的「选项紧贴分隔线」）。
-          padding: "4px",
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "0 12px 40px rgba(0,0,0,.28)",
-          fontFamily: "inherit",
-          fontSize: "12px",
-        };
+        // 浮层和菜单由 dsh 的 Modal/MenuSurface 原生组件负责外观。
 
   /**
    * 面板里的**标题行** —— 照原生菜单的 `.label`。
@@ -405,111 +358,8 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
    *     原生菜单的标题是**一小行灰字**，跟项同样的左右内边距，**没有分隔线**。
    *     画了分隔线之后，项又紧贴那条线 → 用户看到的「位置混乱」。
    */
-  var MENU_LABEL = {
-    padding: "6px 8px",
-    fontSize: "11px",
-    lineHeight: "15px",
-    color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
-    fontWeight: 600,
-  };
+  // MenuSurface/MenuItemButton supply the menu title and item styling.
 
-  /** 标题行的右侧（放「关闭」之类的小按钮）：同一行、靠右、不撑高。 */
-  var MENU_LABEL_ROW = {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "6px",
-    padding: "6px 8px",
-  };
-
-  /**
-   * 菜单项 —— 照原生 `.item`。
-   *
-   *     min-height 34px / padding 6px 8px / radius --dsw-radius-md
-   *     font-size 13px / line-height 20px / color --dsw-alias-label-primary
-   */
-  var MENU_ITEM = {
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    width: "100%",
-    minHeight: "34px",
-    padding: "6px 8px",
-    border: "none",
-    borderRadius: "var(--dsw-radius-md, 8px)",
-    background: "transparent",
-    cursor: "pointer",
-    fontSize: "13px",
-    lineHeight: "20px",
-    color: "var(--dsw-alias-label-primary, rgba(128,128,128,.95))",
-    textAlign: "left",
-    fontFamily: "inherit",
-  };
-
-  /** 勾那一列 —— 照原生 `.itemIcon`（14×14，用 menu-icon 那个色）。 */
-  var MENU_MARK = {
-    display: "inline-flex",
-    flex: "none",
-    width: "14px",
-    height: "14px",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "var(--dsw-alias-menu-icon, rgba(128,128,128,.9))",
-  };
-
-  /** 项的主文字 —— 照原生 `.itemLabel`（占满、省略号）。 */
-  var MENU_TEXT = {
-    flex: "1 1 auto",
-    minWidth: "0",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  };
-
-  /** 项的副文字 —— 照原生 `.shortcut`（靠右、更淡更小）。 */
-  var MENU_HINT = {
-    flex: "none",
-    marginInlineStart: "auto",
-    color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
-    fontSize: "11px",
-    lineHeight: "16px",
-  };
-
-  /** 划过去的高亮 —— 照原生 `.item:hover`（跟选中用的是同一个填充）。 */
-  var MENU_ITEM_HOVER = Object.assign({}, MENU_ITEM, {
-    background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12))",
-  });
-
-  /** 选中态 —— 照原生 `.selectedFill`（**就是 hover 那个填充**，不是另造一个色）。 */
-  var MENU_ITEM_ON = Object.assign({}, MENU_ITEM, {
-    background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12))",
-  });
-
-  /** 分隔线 —— 照原生 `.separator`（.5px、左右缩 2px）。 */
-  var MENU_SEP = {
-    height: ".5px",
-    margin: "3px 2px",
-    background: "var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
-  };
-        var PANEL_SM = Object.assign({}, PANEL, { maxWidth: "560px" });
-        var PANEL_HEAD = {
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "8px",
-          padding: "10px 12px",
-          borderBottom: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
-        };
-        var PANEL_BODY = { padding: "10px 12px", overflow: "auto", flex: "1 1 auto" };
-        var PANEL_FOOT = {
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "8px",
-          padding: "10px 12px",
-          borderTop: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
-          flexWrap: "wrap",
-        };
 
         // ── 面板 / 卡片 / 表单：给 chunk 用的样式 ─────────────────────────
         //
@@ -669,23 +519,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         gap: "6px 10px",
         margin: "0 0 10px",
       };
-      var DETAIL_BTN = {
-        font: "inherit",
-        fontSize: "12px",
-        lineHeight: "18px",
-        padding: "3px 10px",
-        borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.45))",
-        background: "transparent",
-        color: "var(--dsw-alias-label-primary, inherit)",
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-      };
-      var DETAIL_BTN_BUSY = Object.assign({}, DETAIL_BTN, { opacity: 0.5, cursor: "default" });
-      var DETAIL_BTN_DANGER = Object.assign({}, DETAIL_BTN, {
-        color: "var(--dsw-alias-state-error-primary, #ef4444)",
-        borderColor: "var(--dsw-alias-state-error-primary, rgba(239,68,68,.6))",
-      });
       var DOT = {
         width: "6px",
         height: "6px",
@@ -716,20 +549,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         flex: "none",
       };
       var FORM = { display: "flex", flexDirection: "column", gap: "8px" };
-      var FORM_INPUT = {
-        font: "inherit",
-        fontSize: "12px",
-        lineHeight: "18px",
-        padding: "4px 8px",
-        borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l4, rgba(128,128,128,.45))",
-        background: "var(--dsw-alias-bg-layer-1, transparent)",
-        color: "var(--dsw-alias-label-primary, inherit)",
-        flex: "1 1 150px",
-        minWidth: "0",
-        outline: "none",
-      };
-      var FORM_INPUT_NUM = Object.assign({}, FORM_INPUT, { flex: "0 0 84px", minWidth: "84px" });
       var FORM_LABEL = {
         fontSize: "11px",
         lineHeight: "17px",
@@ -950,18 +769,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
     };
 
     /** 勾那一列 —— 固定宽度，免得没勾的行跟有勾的行对不齐。 */
-    /** 段落 tag —— 一行小胶囊，多个自动换行。 */
-    var TAG = {
-      display: "inline-flex",
-      alignItems: "center",
-      gap: "4px",
-      padding: "1px 8px",
-      border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
-      borderRadius: "999px",
-      cursor: "pointer",
-      fontSize: "12px",
-    };
-
     var ROW_MARK = {
       flex: "none",
       width: "14px",
@@ -979,26 +786,22 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
          */
         var CHUNK_API = {
           ui: {
+            ActionButton: ActionButton,
             Button: hostUi.Button,
             Checkbox: hostUi.Checkbox,
             Input: hostUi.Input,
-            MenuItemButton: hostUi.MenuItemButton,
-            MenuSurface: hostUi.MenuSurface,
+            Menu: hostUi.Menu,
             Modal: hostUi.Modal,
             Switch: hostUi.Switch,
             Tag: hostUi.Tag,
+            NativeInput: NativeInput,
+            NativeCheckbox: NativeCheckbox,
           },
           style: {
             ROW: ROW,
             ROW_ACTIVE: ROW_ACTIVE,
             ROW_MARK: ROW_MARK,
-            TAG: TAG,
             HERO_CHIP: HERO_CHIP,
-            BTN: BTN,
-            BTN_BUSY: BTN_BUSY,
-            BTN_ERR: BTN_ERR,
-            BTN_PRIMARY: BTN_PRIMARY,
-            BTN_DANGER: BTN_DANGER,
             ACTIONS: ACTIONS,
             BADGE: BADGE,
             BADGE_WARN: BADGE_WARN,
@@ -1009,21 +812,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             TEXTAREA: TEXTAREA,
             HINT_TEXT: HINT_TEXT,
             CARD_NOTICE: CARD_NOTICE,
-            OVERLAY: OVERLAY,
-            PANEL: PANEL,
-            MENU_LABEL: MENU_LABEL,
-            MENU_LABEL_ROW: MENU_LABEL_ROW,
-            MENU_ITEM: MENU_ITEM,
-            MENU_ITEM_ON: MENU_ITEM_ON,
-            MENU_ITEM_HOVER: MENU_ITEM_HOVER,
-            MENU_MARK: MENU_MARK,
-            MENU_TEXT: MENU_TEXT,
-            MENU_HINT: MENU_HINT,
-            MENU_SEP: MENU_SEP,
-            PANEL_SM: PANEL_SM,
-            PANEL_HEAD: PANEL_HEAD,
-            PANEL_BODY: PANEL_BODY,
-            PANEL_FOOT: PANEL_FOOT,
             ADVISE: ADVISE,
             CARD: CARD,
             CARDS_GRID: CARDS_GRID,
@@ -1047,9 +835,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             COMBO_SIDE_HL: COMBO_SIDE_HL,
             DD: DD,
             DETAILS_GRID: DETAILS_GRID,
-            DETAIL_BTN: DETAIL_BTN,
-            DETAIL_BTN_BUSY: DETAIL_BTN_BUSY,
-            DETAIL_BTN_DANGER: DETAIL_BTN_DANGER,
             DOT: DOT,
             DOT_DEFAULT: DOT_DEFAULT,
             DOT_ERR: DOT_ERR,
@@ -1058,8 +843,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             DT: DT,
             ERRBOX: ERRBOX,
             FORM: FORM,
-            FORM_INPUT: FORM_INPUT,
-            FORM_INPUT_NUM: FORM_INPUT_NUM,
             FORM_LABEL: FORM_LABEL,
             FORM_LINE: FORM_LINE,
             FORM_TEXTAREA: FORM_TEXTAREA,

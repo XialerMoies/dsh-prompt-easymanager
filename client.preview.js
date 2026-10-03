@@ -13,7 +13,6 @@ window.__ModuleLoader__.load({
     var module = { exports: {} };
     var exports = module.exports;
     var react = require("react");
-    var reactDom = require("react-dom");
 
     /**
      * 宿主调用入口，把「注册期就存在、chunk 等不到」的东西注入进来。
@@ -23,19 +22,6 @@ window.__ModuleLoader__.load({
      *    React 随即卸载整棵子树，表现是「点了之后控件全没了」。
      */
     function create(api) {
-      var HostButton = api.ui && api.ui.Button;
-      function ActionButton(props) {
-        if (!HostButton) return react.createElement("button", props, props.children);
-        var next = Object.assign({}, props);
-        delete next.children;
-        delete next.style;
-        delete next.className;
-        delete next.type;
-        next.style = { whiteSpace: "nowrap" };
-        next.variant = next.variant || "ghost";
-        next.size = next.size || "sm";
-        return react.createElement(HostButton, next, props.children);
-      }
       var SEC = api.style.SEC;
       var SEC_OURS = api.style.SEC_OURS;
       var MONO = api.style.MONO;
@@ -45,12 +31,6 @@ window.__ModuleLoader__.load({
       var MUTED = api.style.MUTED;
       var HEADING = api.style.HEADING;
       var SUMSUM = api.style.SUMSUM;
-      var OVERLAY = api.style.OVERLAY;
-      var PANEL_SM = api.style.PANEL_SM;
-      var PANEL = api.style.PANEL;
-      var PANEL_HEAD = api.style.PANEL_HEAD;
-      var BTN = api.style.BTN;
-      var PANEL_BODY = api.style.PANEL_BODY;
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
 
@@ -59,18 +39,10 @@ window.__ModuleLoader__.load({
       // ⚠️ 这里原来有一份**本地兜底**的 ADVISE（同一作用域重复 var，后声明者赢）——
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       function Overlay(props) {
-        return reactDom.createPortal(
-          react.createElement(
-            "div",
-            {
-              style: OVERLAY,
-              onClick: function (e) {
-                if (e.target === e.currentTarget) props.onClose();
-              },
-            },
-            react.createElement("div", { style: props.narrow ? PANEL_SM : PANEL }, props.children),
-          ),
-          document.body,
+        return react.createElement(
+          api.ui.Modal,
+          { open: true, onClose: props.onClose, title: "最终系统提示词预览", closeLabel: "关闭", headless: true },
+          props.children,
         );
       }
 
@@ -393,13 +365,7 @@ window.__ModuleLoader__.load({
         return react.createElement(
           Overlay,
           { onClose: props.onClose },
-          react.createElement(
-            "div",
-            { style: PANEL_HEAD },
-            react.createElement("strong", null, "最终系统提示词预览"),
-            react.createElement(ActionButton, { onClick: props.onClose }, "关闭"),
-          ),
-          react.createElement("div", { style: PANEL_BODY }, rows),
+          react.createElement("div", null, rows),
         );
       }
 
