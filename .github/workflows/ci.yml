@@ -37,3 +37,6 @@ jobs:
 
       - name: Verify package contents
         run: npm run pack:check
+
+      - name: Build and install release tarball
+        run: npm run release:check
