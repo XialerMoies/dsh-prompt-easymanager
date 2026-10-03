@@ -819,6 +819,8 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             NativeCheckbox: NativeCheckbox,
             PromptManagerIcon: PromptManagerIcon,
             IconChevronDownOutlineRegular: hostUi.IconChevronDownOutlineRegular,
+            IconCodeOutlineRegular: hostUi.IconCodeOutlineRegular,
+            DisclosureRow: hostUi.DisclosureRow,
           },
           style: {
             ROW: ROW,

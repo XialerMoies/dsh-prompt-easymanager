@@ -1081,6 +1081,9 @@ export function createSessionInjector({
         const body = `${t?.name ?? ""}\n${t?.description ?? ""}\n${schemaText}`;
         return {
           name: t?.name ?? "(未命名)",
+          description: typeof t?.description === "string" ? t.description : "",
+          parameters:
+            t?.parameters && typeof t.parameters === "object" ? t.parameters : {},
           deferLoading: t?.deferLoading === true,
           chars: body.length,
           tokens: estimateTokens(body),

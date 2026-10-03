@@ -33,6 +33,8 @@ window.__ModuleLoader__.load({
       var SUMSUM = api.style.SUMSUM;
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
+      var DisclosureRow = api.ui.DisclosureRow;
+      var IconCodeOutlineRegular = api.ui.IconCodeOutlineRegular;
 
       // ⚠️ 这里原来有一份**本地兜底**的 SEC（同一作用域重复 var，后声明者赢）——
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
@@ -335,7 +337,7 @@ window.__ModuleLoader__.load({
             });
           }
 
-          // 工具 schema
+          // 工具 schema：默认收起，避免工具定义把正文推到弹窗中间；展开后显示完整描述和参数。
           if ((data.tools || []).length) {
             rows.push(
               react.createElement(
@@ -347,17 +349,7 @@ window.__ModuleLoader__.load({
             );
             (data.tools || []).forEach(function (t, i) {
               if (!t || typeof t !== "object") return;
-              rows.push(
-                react.createElement("div", { key: "t" + i, style: SEC }, [
-                  react.createElement("span", { key: "i", style: MUTED }, i + 1 + ". "),
-                  react.createElement("strong", { key: "n" }, t.name),
-                  react.createElement(
-                    "span",
-                    { key: "t", style: MUTED },
-                    "  " + fmtTokens(t.tokens) + " · " + t.chars + " 字符" + (t.deferLoading ? " · deferLoading" : ""),
-                  ),
-                ]),
-              );
+              rows.push(react.createElement(ToolDisclosure, { key: "t" + i, tool: t, index: i }));
             });
           }
         }
@@ -365,8 +357,40 @@ window.__ModuleLoader__.load({
         return react.createElement(
           Overlay,
           { onClose: props.onClose },
-          react.createElement("div", null, rows),
+          react.createElement("div", { style: { maxHeight: "calc(100vh - 140px)", overflowY: "auto" } }, rows),
         );
+      }
+
+      function ToolDisclosure(props) {
+        var state = react.useState(false);
+        var open = state[0];
+        var setOpen = state[1];
+        var t = props.tool || {};
+        var parameters = "";
+        try {
+          parameters = JSON.stringify(t.parameters || {}, null, 2);
+        } catch (err) {
+          parameters = "{}";
+        }
+        var detail = [
+          t.description
+            ? react.createElement("div", { key: "d", style: MUTED }, t.description)
+            : react.createElement("div", { key: "d", style: MUTED }, "无工具描述"),
+          react.createElement("pre", { key: "p", style: MONO }, parameters),
+        ];
+        return react.createElement(DisclosureRow, {
+          icon: react.createElement(IconCodeOutlineRegular, { size: 14 }),
+          title:
+            props.index + 1 + ". " + (t.name || "(未命名)") +
+            "  " + fmtTokens(t.tokens) + " · " + t.chars + " 字符" +
+            (t.deferLoading ? " · deferLoading" : ""),
+          open: open,
+          expandable: true,
+          onToggle: function () { setOpen(function (value) { return !value; }); },
+          expandOnRowClick: true,
+          collapsedContent: react.createElement("span", { style: MUTED }, "展开查看描述和参数"),
+          children: react.createElement("div", { style: SEC }, detail),
+        });
       }
 
       // ── 会话头部的入口 ────────────────────────────────────────────────────

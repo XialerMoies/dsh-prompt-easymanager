@@ -2047,6 +2047,7 @@ const renderEditor = (props = {}) =>
   if (el) {
     const text = flattenText(el).join(" ");
     ok(text.includes("预览"), "渲染出预览按钮");
+    ok(text.includes("正在回炉重造，敬请期待"), "预览入口显示重构状态");
     ok(text.includes("↻"), "渲染出重载按钮");
     ok(countElements(el) > 3, "渲染出多个元素（" + countElements(el) + " 个）");
   }
@@ -2089,8 +2090,8 @@ const renderEditor = (props = {}) =>
     ],
     contexts: [{ name: "c1", text: "上下文", tokens: 10, chars: 3 }],
     tools: [
-      { name: "bash", tokens: 400, chars: 900 },
-      { name: "read", tokens: 100, chars: 200 },
+      { name: "bash", description: "执行命令", parameters: { type: "object", properties: { command: { type: "string" } } }, tokens: 400, chars: 900 },
+      { name: "read", description: "读取文件", parameters: { type: "object" }, tokens: 100, chars: 200 },
     ],
     variables: { model: "x", cwd: "X:\\test\\y" },
     conflict: null,
@@ -2119,6 +2120,7 @@ const renderEditor = (props = {}) =>
     ok(text.includes("第 3 轮 / 第 1 步"), "显示日志事件的轮次/步数");
     ok(text.includes("prompt-manager:gen4"), "section 列表在");
     ok(text.includes("bash"), "工具列表在");
+    ok(text.includes("展开查看描述和参数"), "工具默认收起，避免长列表挤走正文");
     // ⚠️ **别断言「总数是 1」** —— `shims.portals` 是**全局累积**的，
     //    别的用例（新会话页那个下拉框）也会各留一个。
     //    数自己的那个：取最后一个，确认它是 portal 到 body 的。

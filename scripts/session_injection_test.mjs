@@ -428,6 +428,8 @@ const S = "session-aaaa-1111";
   eq(p.prompts[1].order, 2900, "第二条的 order 也对");
   eq(p.sectionCount, 3, "section 总数");
   eq(p.toolCount, 1, "工具数");
+  eq(p.tools[0].description, "run", "预览保留工具描述");
+  eq(p.tools[0].parameters.type, "object", "预览保留工具参数 schema");
   eq(p.totalTokens, p.sectionTokens + p.contextTokens + p.toolTokens, "totalTokens 是三者和");
   // 「本插件的增量」—— 相对原生装配多花了多少
   //

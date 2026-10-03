@@ -134,6 +134,11 @@ export function createClientSandbox(shims, opts = {}) {
         ]),
         Input: (props) => h("input", props),
         IconChevronDownOutlineRegular: icon("chevron-down"),
+        IconCodeOutlineRegular: icon("code"),
+        DisclosureRow: (props) => h("div", { "data-disclosure-open": !!props.open }, [
+          h("button", { type: "button", onClick: props.onToggle }, [props.icon, props.title]),
+          props.open ? h("div", null, props.children) : props.collapsedContent,
+        ]),
         Menu: (props) => {
           const entries = (props && props.items || []).map((item) => {
             if (item && item.type === "label") return h("div", { role: "presentation" }, item.text);

@@ -580,7 +580,11 @@ window.__ModuleLoader__.load({
           },
           [
             react.createElement("span", { key: "label" }, label),
-            react.createElement(IconChevronDownOutlineRegular, { key: "chevron", size: 14 }),
+            react.createElement(
+              "span",
+              { key: "chevron", style: { color: "rgb(129, 133, 140)", display: "inline-flex" } },
+              react.createElement(IconChevronDownOutlineRegular, { size: 12 }),
+            ),
           ],
         );
         return open
@@ -1058,7 +1062,11 @@ window.__ModuleLoader__.load({
           },
           [
             react.createElement("span", { key: "label" }, label),
-            react.createElement(IconChevronDownOutlineRegular, { key: "chevron", size: 14 }),
+            react.createElement(
+              "span",
+              { key: "chevron", style: { color: "rgb(129, 133, 140)", display: "inline-flex" } },
+              react.createElement(IconChevronDownOutlineRegular, { size: 12 }),
+            ),
           ],
         );
 
@@ -1086,12 +1094,12 @@ window.__ModuleLoader__.load({
             {
               variant: "ghost",
               size: "sm",
-              disabled: busy,
-              onClick: openPreview,
-              title: "预览最终系统提示词",
+              disabled: true,
+              title: "预览功能正在回炉重造，敬请期待",
               "data-prompt-preview": "1",
+              "data-prompt-preview-status": "rebuilding",
             },
-            "预览",
+            "预览（正在回炉重造，敬请期待）",
           ),
           react.createElement(
             ActionButton,
