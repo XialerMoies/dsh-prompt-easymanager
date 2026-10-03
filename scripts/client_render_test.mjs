@@ -4016,6 +4016,55 @@ function makeSectionsData(over = {}) {
     }
   }
 
+  // 设置页和会话页的显示语义一致：纯原生合并，改写预设显示「系统提示词 · 改」。
+  {
+    const consistent = {
+      ...presetData,
+      presets: [
+        { id: "native-copy", name: "系统提示词（原生）", prompts: [], selection: {}, isNative: true, label: "系统提示词" },
+        { id: "edit-a", name: "系统提示词（原生）", prompts: [], selection: { sections: { s1: { text: "x" } } }, label: "系统提示词" },
+        { id: "edit-b", name: "系统提示词（原生）", prompts: [], selection: { sections: { s1: { text: "x" } } }, label: "系统提示词" },
+      ],
+      global: { enabled: true, presetId: "native-copy" },
+    };
+    shims.setStates([...base, consistent, false, "", null]);
+    const consistentEl = renderEditor({});
+    const consistentSel = findEl(consistentEl, (n) => n.type === "select");
+    const labels = [];
+    (function walk(n) {
+      if (!n || typeof n !== "object") return;
+      if (n.type === "option") labels.push(flattenText(n).join(""));
+      for (const child of n.children || []) walk(child);
+    })(consistentSel);
+    eq(consistentSel.props.value, "__native", "纯原生预设在设置页也归并到原生入口");
+    ok(labels.includes("系统提示词（原生）"), "设置页保留唯一原生入口");
+    ok(labels.includes("系统提示词 · 改"), "设置页改写预设显示系统提示词 · 改");
+    shims.setStates([...base, presetData, false, "", null]);
+  }
+
+  // 当前选中的改写预设，卡片标题和保存/删除提示也必须与下拉选项一致。
+  {
+    const selectedEdit = {
+      ...presetData,
+      global: { enabled: true, presetId: "系统提示词（原生）-3" },
+      presets: [
+        { id: "系统提示词（原生）-3", name: "系统提示词（原生）", prompts: [], selection: { sections: { s1: { text: "x" } } } },
+      ],
+    };
+    shims.setStates([...base, selectedEdit, false, "", null]);
+    const selectedEl = renderEditor({});
+    const selectedText = flattenText(selectedEl).join(" ");
+    ok(selectedText.includes("系统提示词 · 改"), "设置页当前改写预设标题使用统一标签");
+    const selectedButtons = [];
+    (function walk(n) {
+      if (!n || typeof n !== "object") return;
+      if (n.type === "button" && n.props && n.props.title) selectedButtons.push(n.props.title);
+      for (const child of n.children || []) walk(child);
+    })(selectedEl);
+    ok(selectedButtons.some((x) => x.includes("预设「系统提示词 · 改」")), "保存/删除提示使用统一标签");
+    shims.setStates([...base, presetData, false, "", null]);
+  }
+
   // 勾选清单还在（它现在就是「改这套配置」的手段）
   ok(text.includes("格式契约"), "勾选清单里有格式契约");
   ok(text.includes("编码规范"), "勾选清单里有编码规范");
