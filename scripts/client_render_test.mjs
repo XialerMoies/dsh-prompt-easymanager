@@ -772,6 +772,28 @@ const editorBox = modEditor.create(strict.api);
     const chip = shims.render(pickerBox.HeroPresetChip, {});
     ok(flattenText(chip).join(" ").includes("写代码"), "**按钮上显示全局那条预设的名字**");
 
+    // 外部入口和展开菜单必须使用同一个标签算法；改写预设的存储名可能仍是
+    // 「系统提示词（原生）」，但按钮不能因此误显示成原生。
+    const editedGlobal = {
+      presets: [
+        {
+          id: "edited",
+          name: "系统提示词（原生）",
+          prompts: [],
+          selection: { sections: { "harness:identity": { text: "改写正文" } } },
+          label: "系统提示词",
+        },
+      ],
+      global: { enabled: true, presetId: "edited" },
+    };
+    shims.setStates([editedGlobal, false]);
+    const editedChip = shims.render(pickerBox.HeroPresetChip, {});
+    eq(
+      flattenText(editedChip).join(" "),
+      "系统提示词 · 改",
+      "新会话外部入口与菜单使用同一套改写标签",
+    );
+
     // 点开面板 → 点另一条 → 应该 POST /global
     shims.setStates([HERO_DATA, true]);
     shims.portals.length = 0; // ⚠️ 清掉，免得污染「弹窗被 portal 到 body」那条计数

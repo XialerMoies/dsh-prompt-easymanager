@@ -679,7 +679,7 @@ window.__ModuleLoader__.load({
               )
             : [];
           for (var i = 0; i < list.length; i++) {
-            if (list[i] && list[i].id === data.global.presetId) label = list[i].name || list[i].label;
+            if (list[i] && list[i].id === data.global.presetId) label = presetLabelOf(list[i]);
           }
         }
 
