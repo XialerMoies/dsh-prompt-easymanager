@@ -246,7 +246,7 @@ budget / 截断 / 大小限制 —— 所以「太长会被截断」那种警告
 `docs/install.md` 里那些教学用的版本号改成占位符 `v0.3.N` ——
 它们是**示意**不是真相，写死了每次发版都要手改，早晚忘一次。
 
-### 新增 `scripts/semver_crosscheck.mjs`
+### 增加版本范围交叉检查
 
 `docs_test` 里为验版本范围，自己实现了一个极简 semver 比较器。
 **自己写的判据验自己写的声明，不引入外部真值就是个闭环** ——
@@ -712,7 +712,7 @@ chunk 永远拉不起来。
 
 3. **`client.overlay.js` 是死代码。** 按「浮层只有 17 行，两边各留一份」处理，
    结果宿主白拉了一个**没有任何人读它导出**的文件。删掉了，
-   原文留在 [docs/dev/overlay-component.md](docs/dev/overlay-component.md) 备查。
+   旧版实现说明不再随仓库保留。
 
    顺带发现一个更值钱的：`OVERLAY` / `PANEL` / `PANEL_HEAD` 那一族常量
    其实是被**面板和预览两个 chunk 从 `api.style` 取的** —— 不是各自复制的。

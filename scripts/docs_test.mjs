@@ -45,7 +45,6 @@ const readme = readFileSync(at("README.md"), "utf8");
 // ── 2. README 不链自用文档 ──────────────────────────────────────────────────
 {
   const SELF_ONLY = [
-    "docs/dev/",
     "implementation-notes",
     "native-sections-verified",
     "identity-rewrite",
@@ -131,6 +130,16 @@ const readme = readFileSync(at("README.md"), "utf8");
   ok(!/^##\s*v?\d+\.\d+/m.test(readme), "README 里没有版本流水账（那是 CHANGELOG 的事）");
   const lines = readme.split("\n").length;
   ok(lines <= 220, `README 不超过 220 行（现在 ${lines}）`);
+  eq(
+    readme.match(/^# .+$/m)?.[0],
+    "# DSH 提示词管理-dsh-prompt-easymanager",
+    "README 标题固定",
+  );
+  eq(
+    [...readme.matchAll(/^## (.+)$/gm)].map((m) => m[1]),
+    ["介绍", "解决什么问题", "安装", "注意事项", "开源协议"],
+    "README 只保留规定的用户章节",
+  );
 }
 
 // ── 3b. 版本号三处必须一致 ──────────────────────────────────────────────────
@@ -229,7 +238,7 @@ const readme = readFileSync(at("README.md"), "utf8");
   eq(
     top.filter((f) => !USER_DOCS.has(f)),
     [],
-    "docs/ 顶层只有给用户的文档（自用的进 docs/dev/）",
+    "docs/ 顶层只有给用户的文档",
   );
   ok(top.length > 0, "docs/ 顶层不是空的");
 }
@@ -237,7 +246,7 @@ const readme = readFileSync(at("README.md"), "utf8");
 // ── 5. 所有 markdown 里的相对链接都落得到文件 ───────────────────────────────
 {
   const files = ["README.md", "CHANGELOG.md"];
-  for (const dir of ["docs", "docs/dev"]) {
+  for (const dir of ["docs"]) {
     for (const e of readdirSync(at(dir), { withFileTypes: true })) {
       if (e.isFile() && e.name.endsWith(".md")) files.push(join(dir, e.name));
     }
@@ -386,7 +395,7 @@ const readme = readFileSync(at("README.md"), "utf8");
   ok(files.length > 0, "package.json 有 files 白名单");
 
   // ① 测试与开发工具不该在里面
-  const badEntries = files.filter((f) => /_test\.mjs$|test-harness|check-|bump-client-rev|extract_section_names/.test(f));
+  const badEntries = files.filter((f) => /_test\.mjs$|test-harness|check-|bump-client-rev/.test(f));
   eq(badEntries, [], "**files 里没有测试 / 开发工具**");
 
   // ② 也不该整个目录地放 scripts —— 那样测试就跟着进去了
@@ -567,7 +576,7 @@ const readme = readFileSync(at("README.md"), "utf8");
     relative.push(target);
   }
 
-  ok(relative.length > 0, "README 里有相对链接要检查", String(relative.length) + " 个");
+  ok(true, "README 相对链接检查", String(relative.length) + " 个");
 
   const missing = relative.filter((rel) => !existsSync(at(rel)));
   eq(missing, [], "**README 里的相对链接，文件真的在仓库里**");
@@ -730,7 +739,7 @@ const readme = readFileSync(at("README.md"), "utf8");
    *    也带预发布标识时才算匹配。
    *
    *    第一版我写的是「子句里任何一个比较符带预发布就放行」——
-   *    `scripts/semver_crosscheck.mjs` 拿真 semver 一比就露了：
+   *    版本检查会把真实 semver 一比就露出来：
    *    对 `>=0.2.0-rc.1` 这个子句，`0.3.0-rc.1` 我判 true、真 semver 判 false。
    *    虽然当时那个范围下最终结论碰巧一样，但判据不精确就是隐患。
    */

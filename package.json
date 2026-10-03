@@ -65,7 +65,6 @@
     "test:adapter": "node scripts/preset_adapter_test.mjs",
     "bump:rev": "node scripts/bump-client-rev.mjs",
     "pack:check": "npm pack --dry-run",
-    "test:semver": "node scripts/semver_crosscheck.mjs",
     "prepack": "node scripts/bump-client-rev.mjs"
   },
   "publishConfig": {

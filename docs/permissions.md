@@ -277,7 +277,6 @@ dsh plugin --profile <profile> remove dsh-prompt-easymanager
 ✔ 正确地没有  scripts/client_render_test.mjs     （测试）
 ✔ 正确地没有  scripts/heartbeat_test.mjs         （测试）
 ✔ 正确地没有  scripts/bump-client-rev.mjs        （开发工具）
-✔ 正确地没有  scripts/semver_crosscheck.mjs      （开发工具）
 ✔ 正确地没有  prompts                            （运行时数据）
 ✔ 正确地没有  assets                             （仓库门面图）
 ```
