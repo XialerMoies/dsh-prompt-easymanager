@@ -41,7 +41,7 @@ window.__ModuleLoader__.load({
       function Overlay(props) {
         return react.createElement(
           api.ui.Modal,
-          { open: true, onClose: props.onClose, title: "最终系统提示词预览", closeLabel: "关闭", headless: true },
+          { open: true, onClose: props.onClose, title: "最终系统提示词预览", closeLabel: "关闭" },
           props.children,
         );
       }

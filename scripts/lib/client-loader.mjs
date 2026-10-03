@@ -134,14 +134,21 @@ export function createClientSandbox(shims, opts = {}) {
         ]),
         Input: (props) => h("input", props),
         IconChevronDownOutlineRegular: icon("chevron-down"),
-        Menu: (props) => h("div", { role: "menu" }, (props && props.items || []).map((item) =>
-          h("button", {
-            type: "button",
-            role: "menuitem",
-            "aria-selected": props.selectedId === item.id ? "true" : undefined,
-            onClick: () => props.onSelect(item.id),
-          }, (item.icon ? item.icon + " " : "") + item.label),
-        )),
+        Menu: (props) => {
+          const entries = (props && props.items || []).map((item) => {
+            if (item && item.type === "label") return h("div", { role: "presentation" }, item.text);
+            if (item && item.type === "separator") return h("hr", { role: "separator" });
+            return h("button", {
+              type: "button",
+              role: "menuitem",
+              "aria-selected": props.selectedId === item.id ? "true" : undefined,
+              onClick: () => props.onSelect(item.id),
+            }, item.label);
+          });
+          const menu = h("div", { role: "menu" }, entries);
+          if (props && props.open && props.portal) shims.reactDom.createPortal(menu, documentShim.body);
+          return h("span", null, [props && props.anchor, props && props.open ? menu : null]);
+        },
         Modal: (props) => props && props.open
           ? shims.reactDom.createPortal(
               h("div", { role: "dialog", "aria-label": props.title }, [

@@ -71,15 +71,6 @@ window.__ModuleLoader__.load({
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       // ⚠️ 这里原来有一份**本地兜底**的 ROW（同一作用域重复 var，后声明者赢）——
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
-      /** 组件共用的浮层外壳：portal 到 body，点遮罩关闭。 */
-      function Overlay(props) {
-        return react.createElement(
-          api.ui.Modal,
-          { open: true, onClose: props.onClose, title: props.title || "提示词选择", closeLabel: "关闭", headless: true },
-          props.children,
-        );
-      }
-
       // ── 多选面板 ──────────────────────────────────────────────────────────
       /**
        * 会话页那个**预设下拉框**。
@@ -180,33 +171,16 @@ window.__ModuleLoader__.load({
         // ── ────────────────────────────────────────────────────────
         // 「当前实际用哪条」（宿主算好的，面板不自己猜）
         // ──────────────────────────────────────────────────────────
-        // ⚠️ 头用 **MENU_LABEL_ROW**（照原生菜单的 `.label`），不是 PANEL_HEAD。
-        //    PANEL_HEAD 自带 `borderBottom` —— 那条分隔线加上「项没有内边距」，
-        //    就成了用户报的「选项紧贴分隔线」。原生菜单的标题是**一小行灰字**，
-        //    没有分隔线。
-        var head = react.createElement("div", { key: "h" }, [
-          react.createElement("strong", { key: "t" }, "这个会话用什么"),
-          react.createElement(
-            ActionButton,
-            { key: "x", onClick: onClose },
-            "关闭",
-          ),
-        ]);
-        rows.push(head);
+        var menuItems = [{ type: "label", id: "session-title", text: "这个会话用什么" }];
+        if (err) menuItems.push({ type: "label", id: "session-error", text: err });
+        else if (msg) menuItems.push({ type: "label", id: "session-message", text: msg });
 
-        if (err) {
-          rows.push(react.createElement("div", { key: "e", style: MSG_ERR }, err));
-        } else if (msg) {
-          rows.push(react.createElement("div", { key: "m", style: MSG_OK }, msg));
-        }
-
-        var menuItems = presets.map(function (o) {
+        menuItems = menuItems.concat(presets.map(function (o) {
           return {
             id: o.kind + ":" + (o.id || ""),
             label: o.label,
-            icon: o.active ? "✓" : undefined,
           };
-        });
+        }));
         var activeOption = presets.find(function (o) { return o.active; });
         var activeId = activeOption ? activeOption.kind + ":" + (activeOption.id || "") : undefined;
         var selectOption = function (id) {
@@ -219,32 +193,27 @@ window.__ModuleLoader__.load({
           }));
         };
 
-        if (presets.length === 0) {
-          rows.push(react.createElement("div", { key: "none", style: MUTED }, "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。"));
-        } else {
-          rows.push(react.createElement(Menu, {
-            key: "menu",
-            open: true,
-            anchor: null,
-            items: menuItems,
-            selectedId: activeId,
-            onSelect: selectOption,
-            onClose: onClose,
-            portal: false,
-          }));
-        }
-
-        // ⚠️ 加载中**不要**渲染成「空列表」—— 那会闪一下「还没有任何提示词组合」，
-        //    看着像数据丢了。
         if (!data) {
-          return react.createElement(
-            Overlay,
-            { narrow: true, onClose: onClose },
-            react.createElement("div", { style: MUTED }, "读取中…"),
-          );
+          menuItems.push({ type: "label", id: "session-loading", text: "读取中…" });
+        } else if (presets.length === 0) {
+          menuItems.push({
+            type: "label",
+            id: "session-empty",
+            text: "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
+          });
         }
 
-        return react.createElement(Overlay, { narrow: true, onClose: onClose }, rows);
+        return react.createElement(Menu, {
+          open: props.open,
+          anchor: props.anchor,
+          items: menuItems,
+          selectedId: activeId,
+          onSelect: selectOption,
+          onClose: onClose,
+          align: "start",
+          side: "bottom",
+          portal: true,
+        });
       }
 
       /** 「跟随全局」这个选项在内部用一个哨兵值表示（不是字符串 id）。 */
@@ -597,39 +566,34 @@ window.__ModuleLoader__.load({
           }
         }
 
-        return react.createElement(
-          react.Fragment,
-          null,
+        var anchor = react.createElement(
+          ActionButton,
+          {
+            size: "sm",
+            icon: react.createElement(PromptManagerIcon, { size: 14 }),
+            "aria-haspopup": "menu",
+            "aria-expanded": open ? "true" : "false",
+            title: "这个新会话用哪套提示词组合",
+            onClick: function () {
+              setOpen(function (value) { return !value; });
+            },
+          },
           [
-            react.createElement(
-              ActionButton,
-              {
-                key: "b",
-                size: "sm",
-                icon: react.createElement(PromptManagerIcon, { size: 14 }),
-                "aria-haspopup": "menu",
-                "aria-expanded": open ? "true" : "false",
-                title: "这个新会话用哪套提示词组合",
-                onClick: function () {
-                  setOpen(true);
-                },
-              },
-              [
-                react.createElement("span", { key: "label" }, label),
-                react.createElement(IconChevronDownOutlineRegular, { key: "chevron", size: 14 }),
-              ],
-            ),
-            open
-              ? react.createElement(HeroPresetPanel, {
-                  data: data,
-                  onClose: function () {
-                    setOpen(false);
-                  },
-                  onApplied: load,
-                })
-              : null,
+            react.createElement("span", { key: "label" }, label),
+            react.createElement(IconChevronDownOutlineRegular, { key: "chevron", size: 14 }),
           ],
         );
+        return open
+          ? react.createElement(HeroPresetPanel, {
+              data: data,
+              open: true,
+              anchor: anchor,
+              onClose: function () {
+                setOpen(false);
+              },
+              onApplied: load,
+            })
+          : anchor;
       }
 
       /**
@@ -697,18 +661,6 @@ window.__ModuleLoader__.load({
               g.presetId,
             )
           : [];
-        var rows = [
-          react.createElement("div", { key: "h" }, [
-            react.createElement("strong", { key: "t" }, "新会话用哪套"),
-            react.createElement(
-              ActionButton,
-              { key: "x", onClick: props.onClose },
-              "关闭",
-            ),
-          ]),
-        ];
-        if (err) rows.push(react.createElement("div", { key: "e", style: MSG_ERR }, err));
-
         // ── ① 回到原生 ────────────────────────────────────────────────────
         //
         // ⚠️ 这一项**必须有** —— 用户报的「只有预设选择没有原生提示词选择，
@@ -738,9 +690,11 @@ window.__ModuleLoader__.load({
             active: active,
           });
         }
-        var menuItems = options.map(function (o) {
-          return { id: o.id, label: o.label, icon: o.icon };
-        });
+        var menuItems = [{ type: "label", id: "hero-title", text: "新会话用哪套" }];
+        if (err) menuItems.push({ type: "label", id: "hero-error", text: err });
+        menuItems = menuItems.concat(options.map(function (o) {
+          return { id: o.id, label: o.label };
+        }));
         var activeMenuId = options.find(function (o) { return o.active; });
         var selectOption = function (id) {
           var chosen = options.find(function (o) { return o.id === id; });
@@ -752,19 +706,23 @@ window.__ModuleLoader__.load({
           pick(chosen.preset);
         };
         if (list.length === 0) {
-          rows.push(react.createElement("div", { key: "none", style: MUTED }, "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。"));
+          menuItems.push({
+            type: "label",
+            id: "hero-empty",
+            text: "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
+          });
         }
-        rows.push(react.createElement(Menu, {
-          key: "menu",
-          open: true,
-          anchor: null,
+        return react.createElement(Menu, {
+          open: props.open,
+          anchor: props.anchor,
           items: menuItems,
           selectedId: activeMenuId && activeMenuId.id,
           onSelect: selectOption,
           onClose: props.onClose,
-          portal: false,
-        }));
-        return react.createElement(Overlay, { narrow: true, onClose: props.onClose }, rows);
+          align: "start",
+          side: "bottom",
+          portal: true,
+        });
       }
 
       function PromptPicker(props) {
@@ -1081,29 +1039,48 @@ window.__ModuleLoader__.load({
         }
         var title = "个人提示词 · " + statusText;
 
+        var presetAnchor = react.createElement(
+          ActionButton,
+          {
+            type: "button",
+            variant: hasErr ? "outline" : "ghost",
+            size: "sm",
+            icon: react.createElement(PromptManagerIcon, { size: 14 }),
+            disabled: busy,
+            onClick: function () {
+              setPicking(function (value) { return !value; });
+            },
+            title: title + "（点击选择）",
+            "aria-haspopup": "menu",
+            "aria-expanded": picking ? "true" : "false",
+            "data-prompt-manager": hasErr ? "error" : currentIds.join(",") || "none",
+            "data-prompt-source": hasExplicit ? "explicit" : "default",
+          },
+          [
+            react.createElement("span", { key: "label" }, label),
+            react.createElement(IconChevronDownOutlineRegular, { key: "chevron", size: 14 }),
+          ],
+        );
+
         return react.createElement(
           "span",
           { style: ROW },
           react.createElement("span", { style: dotStyle, title: statusText }),
           hasErr ? react.createElement("span", { style: ERRBOX, title: err }, "✕ " + err) : null,
-          react.createElement(
-            ActionButton,
-            {
-              type: "button",
-              variant: hasErr ? "outline" : "ghost",
-              size: "sm",
-              disabled: busy,
-              onClick: function () {
-                setPicking(true);
-              },
-              title: title + "（点击选择）",
-              "data-prompt-manager": hasErr ? "error" : currentIds.join(",") || "none",
-              "data-prompt-source": hasExplicit ? "explicit" : "default",
-            },
-            // ⚠️ **不带 ▾** —— 那是原生 `<select>` 的视觉语言。会话页头部
-            //    跟新会话页那一行都统一成「只有文字」。
-            label,
-          ),
+          picking
+            ? react.createElement(PresetDropdown, {
+                data: data,
+                sessionId: sessionId,
+                busy: busy,
+                open: true,
+                anchor: presetAnchor,
+                onClose: function () {
+                  setPicking(false);
+                },
+                // ⚠️ 点选成功后由面板刷新自己的 /presets，再关闭菜单。
+                onApplied: load,
+              })
+            : presetAnchor,
           react.createElement(
             ActionButton,
             {
@@ -1134,19 +1111,6 @@ window.__ModuleLoader__.load({
                 { style: hasErr ? MSG_ERR : MSG_OK, title: message, "data-prompt-message": "1" },
                 message,
               )
-            : null,
-          picking
-            ? react.createElement(PresetDropdown, {
-                data: data,
-                sessionId: sessionId,
-                busy: busy,
-                onClose: function () {
-                  setPicking(false);
-                },
-                // ⚠️ 新语义：**点一下就生效**，没有「应用」按钮 ——
-                  //    所以这里是 onApplied（写完之后刷新），不是 onApply。
-                  onApplied: load,
-              })
             : null,
           preview
             ? react.createElement(props.PreviewPanel, {

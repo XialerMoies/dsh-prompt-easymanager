@@ -1033,19 +1033,16 @@ ok(!!modPreview, "拿得到 preview chunk 模块");
 const previewBox = modPreview.create(strict.api);
 ok(typeof previewBox.PreviewPanel === "function", "create(api) 造出了 PreviewPanel");
 
-// 浮层外壳：面板和预览各自带一份（没有独立 chunk —— 拆包时那个 chunk 是死代码，删了）。
-// 这里只确认两边都真的定义了自己的 Overlay，别哪天又变成「引用了别人文件里的名字」。
+// 预览保留自己的 Modal 适配层；选择器直接使用 dsh Menu anchor，不再套自制浮层。
 {
   const each = [
-    // ⚠️ 标签原来写的是「多选面板」—— picker 早就改成**一个预设下拉框**了，
-    //    留着旧名字会让人以为这里还有一个多选面板。
-    ["client.picker.js", "预设下拉框"],
     ["client.preview.js", "预览"],
   ];
   for (const [file, what] of each) {
     const one = readFileSync(join(HERE, "..", file), "utf8");
     ok(/function Overlay\(props\)/.test(one), what + "自带 Overlay 定义");
   }
+  ok(!/function Overlay\(props\)/.test(readFileSync(join(HERE, "..", "client.picker.js"), "utf8")), "选择器不再定义自制 Overlay");
 }
 
 /** 渲染 Picker —— 走影子层「按真 React 语义」那条路（同一实例、可重试）。 */
