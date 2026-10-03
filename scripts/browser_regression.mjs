@@ -129,10 +129,50 @@ try {
     controls: [...document.querySelectorAll("[aria-label],a,[role=button]")].map((x) => ({ tag: x.tagName, text: x.innerText?.trim() || "", aria: x.getAttribute("aria-label"), title: x.title, href: x.href || "" })).filter((x) => x.text || x.aria || x.title),
     selects: [...document.querySelectorAll("select")].map((x) => ({ value: x.value, options: [...x.options].map((o) => o.text) })),
   })`);
+
+  // 新会话页的外部入口和展开菜单必须显示同一个当前预设。
+  // 这个断言专门覆盖：改写预设的存储名仍可能是「系统提示词（原生）」时，
+  // 外部入口不能错误回退成原生标签。
+  const heroBefore = await cdp.eval(`(() => {
+    const b = document.querySelector('button[title="这个新会话用哪套提示词组合"]');
+    return b ? b.innerText.trim() : null;
+  })()`);
+  let heroMenu = null;
+  if (heroBefore) {
+    await cdp.eval(`(() => {
+      const b = document.querySelector('button[title="这个新会话用哪套提示词组合"]');
+      if (b) b.click();
+      return !!b;
+    })()`);
+    await waitFor(() => !![...document.querySelectorAll("button")].find((x) => x.innerText.trim() === "关闭"), "新会话预设菜单");
+    heroMenu = await cdp.eval(`(() => {
+      const selected = [...document.querySelectorAll("button")]
+        .map((x) => x.innerText.trim())
+        .find((x) => x.startsWith("✓ ")) || null;
+      return {
+        selected,
+        text: document.body?.innerText || "",
+        buttons: [...document.querySelectorAll("button")].map((x) => x.innerText.trim()).filter(Boolean),
+      };
+    })()`);
+    const selectedLabel = heroMenu.selected ? heroMenu.selected.replace(/^✓\s*/, "") : null;
+    if (selectedLabel && selectedLabel !== heroBefore) {
+      throw new Error(`新会话选择器外部标签与菜单不一致：外部「${heroBefore}」，菜单「${selectedLabel}」`);
+    }
+    await cdp.eval(`(() => {
+      const b = [...document.querySelectorAll("button")].find((x) => x.innerText.trim() === "关闭");
+      if (b) b.click();
+      return !!b;
+    })()`);
+  }
+
   // 真实会话页：点击原生选择器，确认三种入口和用户预设来自同一菜单。
-  await cdp.eval(`(() => { const b = [...document.querySelectorAll("button")].find((x) => x.innerText.includes("系统提示词（原生）")); if (!b) return false; b.click(); return true; })()`);
-  await sleep(400);
-  const menu = await cdp.eval(`({ text: document.body?.innerText || "", buttons: [...document.querySelectorAll("button")].map((x) => x.innerText.trim()).filter(Boolean) })`);
+  let menu = heroMenu;
+  if (!menu) {
+    await cdp.eval(`(() => { const b = [...document.querySelectorAll("button")].find((x) => x.innerText.includes("系统提示词（原生）")); if (!b) return false; b.click(); return true; })()`);
+    await sleep(400);
+    menu = await cdp.eval(`({ text: document.body?.innerText || "", buttons: [...document.querySelectorAll("button")].map((x) => x.innerText.trim()).filter(Boolean) })`);
+  }
   await cdp.eval(`(() => { const b = document.querySelector('[aria-label="设置"]'); if (!b) return false; b.click(); return true; })()`);
   await sleep(700);
   const settings = await cdp.eval(`({ text: document.body?.innerText || "", buttons: [...document.querySelectorAll("button")].map((x) => x.innerText.trim()).filter(Boolean) })`);
@@ -223,7 +263,6 @@ try {
     const saveButton = await cdp.eval(`([...document.querySelectorAll('button')].find((x) => x.title?.startsWith('把当前勾选覆盖')) || null) !== null`);
     if (!saveButton) throw new Error("真实管理页没有找到当前预设的保存按钮");
     await cdp.eval(`(() => { const x = [...document.querySelectorAll('button')].find((x) => x.title?.startsWith('把当前勾选覆盖')); if (x) x.click(); return true; })()`);
-    await waitFor(async () => false, "占位", 1).catch(() => {});
     await sleep(700);
     const appliedSections = await pageApi("/api/prompt-easymanager/sections");
     if (!appliedSections.applied?.some((x) => x.name === nativeName && x.text === marker)) {
@@ -255,7 +294,14 @@ try {
     await pageApi("/api/prompt-easymanager/global", { method: "POST", headers: { "content-type": "application/json" }, body: originalGlobal }).catch(() => {});
   }
 
-  snapshot.browserRegression = { nativeName, marker, pending: true, savedInjection: true, nativeExclusionIsolated: true };
+  snapshot.browserRegression = {
+    nativeName,
+    marker,
+    pending: true,
+    savedInjection: true,
+    nativeExclusionIsolated: true,
+    heroLabelMatchesMenu: heroBefore ? heroMenu?.selected?.replace(/^✓\s*/, "") === heroBefore : null,
+  };
   writeFileSync(process.env.BROWSER_SNAPSHOT || "browser-regression-snapshot.json", JSON.stringify(snapshot, null, 2));
 
   console.log(JSON.stringify({ ok: true, url: snapshot.url, title: snapshot.title, presetCount: presets.length, snapshot: process.env.BROWSER_SNAPSHOT || "browser-regression-snapshot.json" }));
