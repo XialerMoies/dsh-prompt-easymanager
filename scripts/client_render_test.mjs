@@ -771,6 +771,14 @@ const editorBox = modEditor.create(strict.api);
     shims.setStates([HERO_DATA, false]);
     const chip = shims.render(pickerBox.HeroPresetChip, {});
     ok(flattenText(chip).join(" ").includes("写代码"), "**按钮上显示全局那条预设的名字**");
+    ok(
+      !!findEl(chip, (n) => n.type === "svg" && n.props && n.props["data-pm-icon"] === "prompt-manager"),
+      "会话入口复用提示词管理图标",
+    );
+    ok(
+      !!findEl(chip, (n) => n.type === "svg" && n.props && n.props["data-icon"] === "chevron-down"),
+      "会话入口显示 dsh 原生下拉箭头",
+    );
 
     // 外部入口和展开菜单必须使用同一个标签算法；改写预设的存储名可能仍是
     // 「系统提示词（原生）」，但按钮不能因此误显示成原生。

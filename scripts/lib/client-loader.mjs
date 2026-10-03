@@ -119,8 +119,9 @@ export function createClientSandbox(shims, opts = {}) {
     if (id === "react-dom") return shims.reactDom;
     if (id === "@deepseek-ai/dsh-client-ui-primitives") {
       const h = (type, props, children) => shims.react.createElement(type, props, children);
+      const icon = (name) => (props) => h("svg", { ...(props || {}), "data-icon": name });
       return {
-        Button: (props) => h("button", { ...(props || {}), type: "button" }, props && props.children),
+        Button: (props) => h("button", { ...(props || {}), type: "button" }, [props && props.icon, props && props.children]),
         Checkbox: (props) => h("label", { title: props && props.title }, [
           h("input", {
             type: "checkbox",
@@ -132,6 +133,7 @@ export function createClientSandbox(shims, opts = {}) {
           h("span", null, props.label),
         ]),
         Input: (props) => h("input", props),
+        IconChevronDownOutlineRegular: icon("chevron-down"),
         Menu: (props) => h("div", { role: "menu" }, (props && props.items || []).map((item) =>
           h("button", {
             type: "button",

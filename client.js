@@ -253,6 +253,27 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         function NativeCheckbox(props) {
           return react.createElement(hostUi.Checkbox, props);
         }
+        function PromptManagerIcon(props) {
+          return react.createElement(
+            "svg",
+            {
+              width: props && props.size ? props.size : 16,
+              height: props && props.size ? props.size : 16,
+              viewBox: "0 0 16 16",
+              fill: "none",
+              "data-pm-icon": "prompt-manager",
+              "aria-hidden": "true",
+              focusable: "false",
+            },
+            react.createElement("path", {
+              d: "M11.2 2.3l2.5 2.5-8 8L3 13.4l.6-2.7 7.6-8.4z",
+              stroke: "currentColor",
+              "strokeWidth": "1.3",
+              "strokeLinejoin": "round",
+              "strokeLinecap": "round",
+            }),
+          );
+        }
 
         var inject = ["slots"];
 
@@ -796,6 +817,8 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             Tag: hostUi.Tag,
             NativeInput: NativeInput,
             NativeCheckbox: NativeCheckbox,
+            PromptManagerIcon: PromptManagerIcon,
+            IconChevronDownOutlineRegular: hostUi.IconChevronDownOutlineRegular,
           },
           style: {
             ROW: ROW,

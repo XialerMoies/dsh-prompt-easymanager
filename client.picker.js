@@ -23,6 +23,8 @@ window.__ModuleLoader__.load({
      */
     function create(api) {
       var ActionButton = api.ui.ActionButton;
+      var PromptManagerIcon = api.ui.PromptManagerIcon;
+      var IconChevronDownOutlineRegular = api.ui.IconChevronDownOutlineRegular;
       var Menu = api.ui.Menu;
       var SELECT_SM = api.style.SELECT_SM;
       var HERO_CHIP = api.style.HERO_CHIP;
@@ -604,6 +606,7 @@ window.__ModuleLoader__.load({
               {
                 key: "b",
                 size: "sm",
+                icon: react.createElement(PromptManagerIcon, { size: 14 }),
                 "aria-haspopup": "menu",
                 "aria-expanded": open ? "true" : "false",
                 title: "这个新会话用哪套提示词组合",
@@ -611,9 +614,10 @@ window.__ModuleLoader__.load({
                   setOpen(true);
                 },
               },
-              // ⚠️ **不带 ▾** —— 那是原生 `<select>` 的视觉语言，而这一行里
-              //    工作区 / 模式那两个也都是**没有箭头**的（用户指出过）。
-              label,
+              [
+                react.createElement("span", { key: "label" }, label),
+                react.createElement(IconChevronDownOutlineRegular, { key: "chevron", size: 14 }),
+              ],
             ),
             open
               ? react.createElement(HeroPresetPanel, {
