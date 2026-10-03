@@ -23,6 +23,19 @@ window.__ModuleLoader__.load({
      *    React 随即卸载整棵子树，表现是「点了之后控件全没了」。
      */
     function create(api) {
+      var HostButton = api.ui && api.ui.Button;
+      function ActionButton(props) {
+        if (!HostButton) return react.createElement("button", props, props.children);
+        var next = Object.assign({}, props);
+        delete next.children;
+        delete next.style;
+        delete next.className;
+        delete next.type;
+        next.style = { whiteSpace: "nowrap" };
+        next.variant = next.variant || "ghost";
+        next.size = next.size || "sm";
+        return react.createElement(HostButton, next, props.children);
+      }
       var SEC = api.style.SEC;
       var SEC_OURS = api.style.SEC_OURS;
       var MONO = api.style.MONO;
@@ -384,7 +397,7 @@ window.__ModuleLoader__.load({
             "div",
             { style: PANEL_HEAD },
             react.createElement("strong", null, "最终系统提示词预览"),
-            react.createElement("button", { type: "button", style: BTN, onClick: props.onClose }, "关闭"),
+            react.createElement(ActionButton, { onClick: props.onClose }, "关闭"),
           ),
           react.createElement("div", { style: PANEL_BODY }, rows),
         );

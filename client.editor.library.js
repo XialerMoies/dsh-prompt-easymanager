@@ -23,6 +23,19 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     function create(api) {
+      var HostButton = api.ui && api.ui.Button;
+      function ActionButton(props) {
+        if (!HostButton) return react.createElement("button", props, props.children);
+        var next = Object.assign({}, props);
+        delete next.children;
+        delete next.style;
+        delete next.className;
+        delete next.type;
+        next.style = { whiteSpace: "nowrap" };
+        next.variant = next.variant || "ghost";
+        next.size = next.size || "sm";
+        return react.createElement(HostButton, next, props.children);
+      }
       var fmtTokens = api.tokens;
       var CARD = api.style.CARD;
       var CARDS_GRID = api.style.CARDS_GRID;
@@ -332,7 +345,7 @@ window.__ModuleLoader__.load({
         ),
         react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
         react.createElement(
-          "button",
+          ActionButton,
           {
             key: "c",
             type: "button",
@@ -345,7 +358,7 @@ window.__ModuleLoader__.load({
           "取消",
         ),
         react.createElement(
-          "button",
+          ActionButton,
           {
             key: "s",
             type: "button",
@@ -567,7 +580,7 @@ window.__ModuleLoader__.load({
                     : null,
                   react.createElement("div", { key: "act", style: CARD_ACTIONS }, [
                     react.createElement(
-                      "button",
+                      ActionButton,
                       {
                         key: "e",
                         type: "button",
@@ -590,11 +603,12 @@ window.__ModuleLoader__.load({
                       "编辑",
                     ),
                     react.createElement(
-                      "button",
+                      ActionButton,
                       {
                         key: "d",
                         type: "button",
                         className: "pm-btn", style: props.busy ? DETAIL_BTN_BUSY : DETAIL_BTN_DANGER,
+                        variant: "outline",
                         disabled: props.busy,
                         title: "删除这条（正文文件一并删除）",
                         onClick: function () {
@@ -643,7 +657,7 @@ window.__ModuleLoader__.load({
       ? react.createElement("span", { key: "m", style: props.err ? MSG_ERR : MSG_OK, title: props.message }, props.message)
       : null,
     react.createElement(
-      "button",
+      ActionButton,
       {
         key: "n",
         type: "button",
@@ -654,8 +668,8 @@ window.__ModuleLoader__.load({
       "新建",
     ),
     react.createElement(
-      "button",
-      { key: "r", type: "button", className: "pm-btn", style: DETAIL_BTN, disabled: props.busy, onClick: props.load },
+      ActionButton,
+      { key: "r", disabled: props.busy, onClick: props.load },
       "刷新",
     ),
     ],

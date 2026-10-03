@@ -229,6 +229,14 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         req = require;
         react = require("react");
         var reactDom = require("react-dom");
+        // dsh 的官方插件共用这一组 UI primitives。它们由宿主模块加载器提供，
+        // 不打进插件包；旧宿主/测试沙箱拿不到时保留现有渲染回退。
+        var hostUi = {};
+        try {
+          hostUi = require("@deepseek-ai/dsh-client-ui-primitives") || {};
+        } catch (_) {
+          hostUi = {};
+        }
 
         var inject = ["slots"];
 
@@ -970,6 +978,16 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
          *    `import failed: [object Promise]`。
          */
         var CHUNK_API = {
+          ui: {
+            Button: hostUi.Button,
+            Checkbox: hostUi.Checkbox,
+            Input: hostUi.Input,
+            MenuItemButton: hostUi.MenuItemButton,
+            MenuSurface: hostUi.MenuSurface,
+            Modal: hostUi.Modal,
+            Switch: hostUi.Switch,
+            Tag: hostUi.Tag,
+          },
           style: {
             ROW: ROW,
             ROW_ACTIVE: ROW_ACTIVE,

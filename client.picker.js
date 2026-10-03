@@ -23,6 +23,20 @@ window.__ModuleLoader__.load({
      *    React 随即卸载整棵子树，表现是「点了之后控件全没了」。
      */
     function create(api) {
+      var HostButton = api.ui && api.ui.Button;
+      // dsh 原生按钮；旧宿主没有 primitives 时保留可用的 HTML 回退。
+      function ActionButton(props) {
+        if (!HostButton) return react.createElement("button", props, props.children);
+        var next = Object.assign({}, props);
+        delete next.children;
+        delete next.style;
+        delete next.className;
+        delete next.type;
+        next.style = { whiteSpace: "nowrap" };
+        next.variant = next.variant || "ghost";
+        next.size = next.size || "sm";
+        return react.createElement(HostButton, next, props.children);
+      }
       var SELECT_SM = api.style.SELECT_SM;
       var HERO_CHIP = api.style.HERO_CHIP;
       var SLOT_HEAD = api.style.SLOT_HEAD;
@@ -217,8 +231,8 @@ window.__ModuleLoader__.load({
         var head = react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
           react.createElement("span", { key: "t", style: MENU_LABEL }, "这个会话用什么"),
           react.createElement(
-            "button",
-            { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: onClose },
+            ActionButton,
+            { key: "x", onClick: onClose },
             "关闭",
           ),
         ]);
@@ -688,14 +702,10 @@ window.__ModuleLoader__.load({
           null,
           [
             react.createElement(
-              "button",
+              ActionButton,
               {
                 key: "b",
-                type: "button",
-                className: "pm-btn",
-                // ⚠️ 用 HERO_CHIP（照原生 .select 抄的），不是 SELECT_SM ——
-                //    后者是带边框的输入框，插到那一行里长得完全不一样。
-                style: HERO_CHIP,
+                size: "sm",
                 "aria-haspopup": "menu",
                 "aria-expanded": open ? "true" : "false",
                 title: "这个新会话用哪套提示词组合",
@@ -794,8 +804,8 @@ window.__ModuleLoader__.load({
           react.createElement("div", { key: "h", style: MENU_LABEL_ROW }, [
             react.createElement("span", { key: "t", style: MENU_LABEL }, "新会话用哪套"),
             react.createElement(
-              "button",
-              { key: "x", type: "button", className: "pm-btn", style: BTN, onClick: props.onClose },
+              ActionButton,
+              { key: "x", onClick: props.onClose },
               "关闭",
             ),
           ]),
@@ -1222,10 +1232,11 @@ window.__ModuleLoader__.load({
           react.createElement("span", { style: dotStyle, title: statusText }),
           hasErr ? react.createElement("span", { style: ERRBOX, title: err }, "✕ " + err) : null,
           react.createElement(
-            "button",
+            ActionButton,
             {
               type: "button",
-              style: hasErr ? BTN_ERR : busy ? BTN_BUSY : BTN,
+              variant: hasErr ? "outline" : "ghost",
+              size: "sm",
               disabled: busy,
               onClick: function () {
                 setPicking(true);
@@ -1239,10 +1250,10 @@ window.__ModuleLoader__.load({
             label,
           ),
           react.createElement(
-            "button",
+            ActionButton,
             {
-              type: "button",
-              style: BTN,
+              variant: "ghost",
+              size: "sm",
               disabled: busy,
               onClick: openPreview,
               title: "预览最终系统提示词",
@@ -1251,10 +1262,10 @@ window.__ModuleLoader__.load({
             "预览",
           ),
           react.createElement(
-            "button",
+            ActionButton,
             {
-              type: "button",
-              style: BTN,
+              variant: "ghost",
+              size: "sm",
               disabled: busy,
               onClick: doReload,
               title: "重新读取 prompts/catalog.json",

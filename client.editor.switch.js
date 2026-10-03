@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({
      *    （这个仓库已经踩过多次：SECTION 的 gap、NAV_TITLE、CARDS_GRID）。
      */
     function create(api) {
+      var HostSwitch = api.ui && api.ui.Switch;
       var CARD = api.style.CARD;
       var HEADING_COUNT = api.style.HEADING_COUNT;
 
@@ -111,6 +112,35 @@ window.__ModuleLoader__.load({
           function thumbStyle() {
             return THUMB_FALLBACK;
           }
+
+          function NativeSwitch(props) {
+            if (HostSwitch) {
+              return react.createElement(HostSwitch, {
+                checked: props.on,
+                onChange: props.onToggle,
+                label: "提示词全局注入",
+                title: props.help,
+                disabled: props.busy,
+              });
+            }
+            return react.createElement(
+              "button",
+              {
+                type: "button",
+                role: "switch",
+                "aria-checked": props.on,
+                "aria-label": "提示词全局注入",
+                className: NATIVE_SWITCH,
+                title: props.help,
+                disabled: props.busy,
+                onClick: function () {
+                  props.onToggle(!props.on);
+                },
+                style: switchStyle(props.on),
+              },
+              react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle() }),
+            );
+          }
   
           /**
            * 提示词全局注入开关。
@@ -157,24 +187,15 @@ window.__ModuleLoader__.load({
                 react.createElement("div", { key: "row", style: { display: "flex", alignItems: "center", gap: "10px" } }, [
                   // 结构照抄原生：button[role=switch][aria-checked] + span(thumb)。
                   // 视觉状态由 aria-checked 驱动，所以别再往里塞自己的 display 样式。
-                  react.createElement(
-                    "button",
-                    {
-                      key: "sw",
-                      type: "button",
-                      role: "switch",
-                      "aria-checked": on,
-                      "aria-label": "提示词全局注入",
-                      className: NATIVE_SWITCH,
-                      title: help,
-                      disabled: busy,
-                      onClick: function () {
-                        props.onToggle(!on);
-                      },
-                      style: switchStyle(on),
+                  react.createElement(NativeSwitch, {
+                    key: "sw",
+                    on: on,
+                    busy: busy,
+                    help: help,
+                    onToggle: function (next) {
+                      props.onToggle(next);
                     },
-                    react.createElement("span", { className: NATIVE_THUMB, style: thumbStyle() }),
-                  ),
+                  }),
                   react.createElement(
                     "span",
                     { key: "t", style: { fontSize: "13px", fontWeight: 600 } },

@@ -23,6 +23,19 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     function create(api) {
+      var HostButton = api.ui && api.ui.Button;
+      function ActionButton(props) {
+        if (!HostButton) return react.createElement("button", props, props.children);
+        var next = Object.assign({}, props);
+        delete next.children;
+        delete next.style;
+        delete next.className;
+        delete next.type;
+        next.style = { whiteSpace: "nowrap" };
+        next.variant = next.variant || "ghost";
+        next.size = next.size || "sm";
+        return react.createElement(HostButton, next, props.children);
+      }
       // 段落名 → 中文标签（宿主给的那一份，别在这儿再写一个）
       var sectionLabel = api.label;
       var ACTIONS = api.style.ACTIONS;
@@ -131,7 +144,7 @@ window.__ModuleLoader__.load({
                 react.createElement("strong", { key: "t" }, "官方更新过这一段。"),
                 "你改的版本照旧生效。点「知道了」消掉这条提醒，或点「还原默认」改用官方新版。",
                 react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "a",
                     type: "button",
@@ -182,12 +195,13 @@ window.__ModuleLoader__.load({
               }),
               react.createElement("div", { key: "act", style: ACTIONS }, [
                 react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "s",
                     type: "button",
                     className: "pm-btn",
                     style: props.sectionsBusy ? BTN_BUSY : BTN_PRIMARY,
+                    variant: "primary",
                     disabled: props.sectionsBusy,
                     onClick: function () {
                       props.applySection(row.name, "replace", draft).then(function () {
@@ -202,7 +216,7 @@ window.__ModuleLoader__.load({
                   "保存改写",
                 ),
                 react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "c",
                     type: "button",
@@ -226,7 +240,7 @@ window.__ModuleLoader__.load({
               react.createElement("pre", { key: "pre", style: PRE }, shown || "（空）"),
               react.createElement("div", { key: "act", style: ACTIONS }, [
                 react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "e",
                     type: "button",
@@ -261,7 +275,7 @@ window.__ModuleLoader__.load({
                 //       它现在等价于「取消勾选」。
                 changed
                   ? react.createElement(
-                      "button",
+                      ActionButton,
                       {
                         key: "r",
                         type: "button",
@@ -360,7 +374,7 @@ window.__ModuleLoader__.load({
             ),
             react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
             react.createElement(
-              "button",
+              ActionButton,
               {
                 key: "r",
                 type: "button",

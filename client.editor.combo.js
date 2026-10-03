@@ -26,6 +26,20 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     function create(api) {
+      var HostButton = api.ui && api.ui.Button;
+      var HostCheckbox = api.ui && api.ui.Checkbox;
+      function ActionButton(props) {
+        if (!HostButton) return react.createElement("button", props, props.children);
+        var next = Object.assign({}, props);
+        delete next.children;
+        delete next.style;
+        delete next.className;
+        delete next.type;
+        next.style = { whiteSpace: "nowrap" };
+        next.variant = next.variant || "ghost";
+        next.size = next.size || "sm";
+        return react.createElement(HostButton, next, props.children);
+      }
       var BTN = api.style.BTN;
       var BTN_BUSY = api.style.BTN_BUSY;
       var CARD = api.style.CARD;
@@ -265,8 +279,22 @@ window.__ModuleLoader__.load({
         for (var oi = 0; oi < ordered.length; oi++) {
           (function (p) {
             var on = !!picked[p.id];
-            rows.push(
-              react.createElement(
+            var toggle = function () {
+              var next = on
+                ? activeIds.filter(function (x) { return x !== p.id; })
+                : activeIds.concat([p.id]);
+              props.setPresetDraft(next);
+            };
+            rows.push(HostCheckbox
+              ? react.createElement(HostCheckbox, {
+                  key: p.id,
+                  checked: on,
+                  disabled: props.presetsBusy,
+                  label: p.name || p.id,
+                  title: p.description || p.id,
+                  onChange: toggle,
+                })
+              : react.createElement(
                 "label",
                 {
                   key: p.id,
@@ -285,14 +313,7 @@ window.__ModuleLoader__.load({
                     type: "checkbox",
                     checked: on,
                     disabled: props.presetsBusy,
-                    onChange: function () {
-                      var next = on
-                        ? activeIds.filter(function (x) { return x !== p.id; })
-                        : activeIds.concat([p.id]);
-                      // ⚠️ **只改草稿** —— 保存时才写进预设。
-                      //    预设是唯一载体，所以勾选不是「另一份生效列表」。
-                      props.setPresetDraft(next);
-                    },
+                    onChange: toggle,
                   }),
                   // 名字占满剩余宽度。
                   // ⚠️ 这里原来还跟了 `order 950` 和 `1 tokens` —— 用户明确说
@@ -313,8 +334,7 @@ window.__ModuleLoader__.load({
                     p.name || p.id,
                   ),
                 ],
-              ),
-            );
+              ));
           })(ordered[oi]);
         }
 
@@ -610,7 +630,7 @@ window.__ModuleLoader__.load({
             // 改名铅笔：只有「当前这套是一条真预设」时才有意义
             currentId && currentId !== "__native" && !props.renaming
               ? react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "pen",
                     type: "button",
@@ -627,7 +647,7 @@ window.__ModuleLoader__.load({
                 )
               : null,
             react.createElement(
-              "button",
+              ActionButton,
               {
                 key: "new",
                 type: "button",
@@ -686,7 +706,7 @@ window.__ModuleLoader__.load({
                 ),
                 // 保存：当前这套有名字就覆盖它自己，没名字就存新的
                 react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "sav",
                     type: "button",
@@ -709,7 +729,7 @@ window.__ModuleLoader__.load({
                 //    都要跟着挪。做完就走，反馈交给 flash。
                 currentId
                   ? react.createElement(
-                      "button",
+                      ActionButton,
                       {
                         key: "del",
                         type: "button",
@@ -725,7 +745,7 @@ window.__ModuleLoader__.load({
                     )
                   : null,
                 react.createElement(
-                  "button",
+                  ActionButton,
                   {
                     key: "r",
                     type: "button",
