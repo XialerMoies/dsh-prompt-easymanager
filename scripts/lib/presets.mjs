@@ -319,6 +319,7 @@ export function presetLabel(preset) {
   const n = new Set([
     ...(Array.isArray(p.selection?.listed) ? p.selection.listed : []),
     ...(Array.isArray(p.selection?.excluded) ? p.selection.excluded : []),
+    ...Object.keys(p.selection?.sections ?? {}),
   ]).size;
   return n > 0 ? "系统提示词 · 改" : "系统提示词";
 }

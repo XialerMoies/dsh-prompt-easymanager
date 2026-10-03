@@ -312,12 +312,18 @@ window.__ModuleLoader__.load({
         // 预设是用户明确命名的配置。即使它只包含系统段落，也要显示这个名字，
         // 否则会和“系统提示词（原生）”混成同一项，选中后无法确认自己用的是哪套。
         if (typeof p.name === "string" && p.name.trim() && p.name !== "系统提示词（原生）") return p.name.trim();
-        if (typeof p.label === "string" && p.label) return p.label;
         var ps = Array.isArray(p.prompts) ? p.prompts : [];
         if (ps.length > 0) return p.name || "（无名预设）";
-        var n = p.selection && p.selection.sections && typeof p.selection.sections === "object"
-          ? Object.keys(p.selection.sections).length : 0;
-        return n > 0 ? "系统提示词 · 改" : "系统提示词";
+        var selection = p.selection && typeof p.selection === "object" ? p.selection : {};
+        var legacySections = p.sections && typeof p.sections === "object" ? p.sections : {};
+        var n = selection.sections && typeof selection.sections === "object"
+          ? Object.keys(selection.sections).length : Object.keys(legacySections).length;
+        n += Array.isArray(selection.listed) ? selection.listed.length : 0;
+        n += Array.isArray(selection.excluded) ? selection.excluded.length : 0;
+        // 旧服务端可能仍把改写预设标成 label="系统提示词"；正文才是权威信号。
+        if (n > 0) return "系统提示词 · 改";
+        if (typeof p.label === "string" && p.label) return p.label;
+        return "系统提示词";
       }
 
       /** 纯原生预设与选择器里的“系统提示词（原生）”是同一个效果，隐藏重复项。 */
@@ -773,6 +779,11 @@ window.__ModuleLoader__.load({
 
         var d = props.data;
         var g = (d && d.global) || {};
+        var nativeGlobal = d && Array.isArray(d.presets)
+          ? d.presets.some(function (p) {
+              return p && p.id === g.presetId && isNativePreset(p);
+            })
+          : false;
         var list = d && Array.isArray(d.presets)
           ? mergeEquivalentPresets(
               d.presets.filter(function (p) { return !isNativePreset(p); }),
@@ -798,7 +809,9 @@ window.__ModuleLoader__.load({
         //
         //    当前项判据：全局**没**指任何预设（`presetId` 为空）——
         //    那正是「新会话不挂任何自设提示词」的状态。
-        var nativeOn = !g.presetId;
+        // 旧状态可能仍把全原生预设的 id 挂在 global 上；它和回到原生
+        // 是同一个效果，选择器应合并成这一项并正确显示当前勾选。
+        var nativeOn = !g.presetId || nativeGlobal;
         rows.push(
           react.createElement(
             "button",

@@ -230,6 +230,11 @@ const ov = (action, text) => ({ action, text: text ?? "", original: "", original
     "系统提示词 · 改",
     "**只改系统提示词 → 不显示预设名**，显示「系统提示词 · 改」",
   );
+  eq(
+    presetLabel(normalizePreset({ name: "改名", selection: { sections: { s1: { text: "改写正文" } } } })),
+    "系统提示词 · 改",
+    "只有改写正文、尚未勾选 → 仍显示「系统提示词 · 改」",
+  );
 
   // ③ 只用个人提示词
   eq(

@@ -756,6 +756,13 @@ const editorBox = modEditor.create(strict.api);
           label: "翻译副本",
           summary: "内容相同",
         },
+        {
+          id: "legacy-edit",
+          name: "系统提示词（原生）",
+          prompts: [],
+          selection: { sections: { "harness:identity": { text: "旧服务端标签" } } },
+          label: "系统提示词",
+        },
       ],
       global: { enabled: true, presetId: "写代码" },
       session: null,
@@ -794,6 +801,7 @@ const editorBox = modEditor.create(strict.api);
     ok(panelText.includes("翻译"), "面板里列得出别的预设");
     ok(panelText.includes("翻译"), "**那条预设按 label 显示**");
     ok(!panelText.includes("翻译副本"), "内容一致的预设在选择器里合并成一项");
+    ok(panelText.includes("系统提示词 · 改"), "带改写正文的旧标签预设显示为系统提示词 · 改");
     ok(target.length > 0, "找得到「翻译」那个选项");
     if (target[0]) target[0].props.onClick();
 
@@ -809,6 +817,30 @@ const editorBox = modEditor.create(strict.api);
       !panelText.includes("跟随全局"),
       "**没有「跟随全局」选项**（那是按会话的状态，这里还没有会话）",
     );
+
+    // 旧状态可能仍挂着一条空的原生预设 id；它必须和固定的原生入口合并。
+    const nativeGlobal = {
+      presets: [
+        {
+          id: "native-copy",
+          name: "系统提示词（原生）",
+          prompts: [],
+          selection: { listed: [], excluded: [], sections: {}, known: [] },
+          isNative: true,
+          label: "系统提示词",
+        },
+      ],
+      global: { enabled: true, presetId: "native-copy" },
+    };
+    shims.setStates([nativeGlobal, true]);
+    shims.portals.length = 0;
+    shims.render(pickerBox.HeroPresetChip, {});
+    const nativePortal = shims.portals[shims.portals.length - 1];
+    const nativeText = (Array.isArray(nativePortal?.el) ? nativePortal.el : [nativePortal?.el])
+      .filter(Boolean)
+      .map((n) => flattenText(n).join(" "))
+      .join(" ");
+    ok(nativeText.includes("✓ 系统提示词（原生）"), "原生预设副本与固定原生入口合并并显示为当前项");
 
     globalThis.fetch = realFetch;
   }
