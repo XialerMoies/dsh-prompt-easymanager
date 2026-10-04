@@ -2897,6 +2897,20 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     ok(text.includes("取消"), "有取消按钮");
     ok(text.includes("保存到 prompts/a.md"), "提示保存位置");
     ok(text.includes("约 4 字符"), "显示正文长度");
+    const footer = findEl(el, (n) => {
+      if (!n.props || !n.props.style || n.props.style.display !== "flex") return false;
+      const variants = (n.children || [])
+        .filter((child) => child && child.props && child.props.variant)
+        .map((child) => child.props.variant);
+      return variants.includes("primary") && variants.includes("outline");
+    });
+    const footerButtons = footer
+      ? (footer.children || []).filter((child) => child && child.props && child.props.variant)
+      : [];
+    eq(footerButtons.map((button) => button.props.variant), ["primary", "outline"],
+      "编辑表单操作按钮使用主/次原生样式且保存在前");
+    eq(flattenText(footerButtons[0] || {}).join(""), "保存", "第一个操作按钮是保存");
+    eq(flattenText(footerButtons[1] || {}).join(""), "取消", "第二个操作按钮是取消");
     const textarea = findEl(el, (n) => n.type === "textarea");
     ok(!!textarea, "追加模式的正文使用多行输入框");
     eq(textarea && textarea.props.style.width, "100%", "正文输入框占满表单宽度");

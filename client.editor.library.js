@@ -365,20 +365,9 @@ window.__ModuleLoader__.load({
         react.createElement(
           ActionButton,
           {
-            key: "c",
-            type: "button",
-            disabled: props.busy,
-            onClick: function () {
-              props.setEdit(null);
-            },
-          },
-          "取消",
-        ),
-        react.createElement(
-          ActionButton,
-          {
             key: "s",
             type: "button",
+            variant: "primary",
             disabled: props.busy || !idOk,
             onClick: function () {
               props.send(
@@ -399,6 +388,19 @@ window.__ModuleLoader__.load({
             },
           },
           props.busy ? "保存中…" : "保存",
+        ),
+        react.createElement(
+          ActionButton,
+          {
+            key: "c",
+            type: "button",
+            variant: "outline",
+            disabled: props.busy,
+            onClick: function () {
+              props.setEdit(null);
+            },
+          },
+          "取消",
         ),
       ]),
     ]);
