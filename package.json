@@ -25,7 +25,7 @@
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
-    "dsh": ">=0.1.7-rc.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0"
+    "dsh": ">=0.1.7-rc.2 <0.2.0-0 || >=0.2.0-rc.1 <0.2.1-0 || >=0.2.1-alpha.1 <0.3.0-0"
   },
   "exports": {
     ".": "./index.js",
@@ -128,12 +128,31 @@
       }
     },
     "compatibility": {
-      "note": "只声明**有证据**的版本。`tested` = 在这个版本上真跑过；`api-identical` = 没跑过，但我们依赖的两个 dsh 包跟跑过的那个版本**逐字节相同**。没列出的版本不声称能用 —— 可能能用，出了问题欢迎反馈。",
+      "note": "`dshReleases` 使用 DSH Store 认可的兼容性枚举；详细测试、哈希比对和隔离启动记录见 `evidence`。未列出的版本不声称兼容。",
       "method": "比对这两个包的 lib/index.js（SHA-256 前 16 位）：dsh-system-prompt = FF422AFAC6BA85F8（17395 字节），dsh-agent-instructions = E15B1A6340EA1CB7（53316 字节）。复现：npm pack @deepseek-ai/<包名>@<版本> 后算哈希。",
       "dshReleases": {
-        "0.1.7-rc.2": "tested",
-        "0.2.0-rc.1": "api-identical",
-        "0.2.0-rc.2": "api-identical"
+        "0.1.7-rc.2": "compatible",
+        "0.2.0-rc.1": "compatible",
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-alpha.1": "compatible"
+      },
+      "evidence": {
+        "0.1.7-rc.2": {
+          "level": "tested",
+          "details": "在 Windows x64、Node 22.23.2 的真实 DSH Profile 中安装、启动和使用。"
+        },
+        "0.2.0-rc.1": {
+          "level": "api-identical",
+          "details": "dsh-system-prompt 与 dsh-agent-instructions 的 lib/index.js 哈希和 0.1.7-rc.2 完全一致。"
+        },
+        "0.2.0-rc.2": {
+          "level": "api-identical",
+          "details": "dsh-system-prompt 与 dsh-agent-instructions 的 lib/index.js 哈希和 0.1.7-rc.2 完全一致。"
+        },
+        "0.2.1-alpha.1": {
+          "level": "api-identical-plus-isolated-start",
+          "details": "两个提示词包哈希和 0.1.7-rc.2 一致；在隔离 Profile 中完成 tgz 安装、配置合成和启动，插件等待会话连接，未出现加载错误。"
+        }
       }
     },
     "data": {

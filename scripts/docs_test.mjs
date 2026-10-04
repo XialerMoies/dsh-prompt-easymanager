@@ -681,7 +681,8 @@ const readme = readFileSync(at("README.md"), "utf8");
 //    而且 `>=X` 这种形式**永远够不到下一个预发布版**（0.2.0-rc.1），
 //    所以只能按小版本逐个列：
 //
-//        >=0.1.7-rc.2 <0.2.0-0  ||  >=0.2.0-rc.1
+  //        >=0.1.7-rc.2 <0.2.0-0  ||  >=0.2.0-rc.1 <0.2.1-0
+  //        || >=0.2.1-alpha.1 <0.3.0-0
 //
 //    这个语义没法只靠读字符串验 —— 得真的算。所以这里自己实现了一个
 //    **够用的 semver 比较**（只处理 `x.y.z` 和 `x.y.z-pre.n`），
@@ -795,9 +796,9 @@ const readme = readFileSync(at("README.md"), "utf8");
 
   // ⓪ 当前范围必须**同时**做到：该匹配的匹配、没测过的不放行
   //
-  //    ⚠️ 这几条是**实测过的版本**（0.1.7-rc.2 上真跑过，0.2.0 的两版
-  //       比对过依赖包哈希）。多放行一个版本 = 声称了没验证过的事。
-  for (const v of ["0.1.7-rc.2", "0.2.0-rc.1", "0.2.0-rc.2"]) {
+  //    ⚠️ 这几条是当前有证据的版本（0.1.7-rc.2 真跑过，后续版本比对过
+  //       依赖包哈希并完成了隔离安装启动）。多放行一个版本 = 声称了没验证过的事。
+  for (const v of ["0.1.7-rc.2", "0.2.0-rc.1", "0.2.0-rc.2", "0.2.1-alpha.1"]) {
     eq(satisfies(v, range), true, "  engines.dsh 覆盖了 " + v);
   }
   for (const v of ["0.1.7-rc.1", "0.3.0-rc.1", "0.3.0", "0.0.9"]) {
@@ -810,22 +811,27 @@ const readme = readFileSync(at("README.md"), "utf8");
   const notInRange = listed.filter((v) => !satisfies(v, range));
   eq(notInRange, [], "**声明兼容的版本都在 engines.dsh 范围内**（否则自相矛盾）");
 
-  // ② 至少有一个是**真跑过**的 —— 全都只是「看着一样」不足以声称兼容
+  // ② 商城矩阵只能使用它认可的枚举；详细证据放在 evidence 里。
   const values = Object.values(pkg.dsh.compatibility.dshReleases);
   ok(
-    values.includes("tested"),
-    "**至少有一个版本标了 `tested`**（全程没跑过就不该声明兼容）",
+    values.every((value) => ["compatible", "incompatible", "unknown"].includes(value)),
+    "**dshReleases 使用 DSH Store 认可的兼容性枚举**",
     values.join(", "),
   );
+  ok(
+    pkg.dsh.compatibility.evidence?.["0.1.7-rc.2"]?.level === "tested",
+    "**保留至少一个真实运行证据**（0.1.7-rc.2）",
+    JSON.stringify(pkg.dsh.compatibility.evidence ?? {}),
+  );
 
-  // ③ 有 `api-identical` 就必须给出**比对方法**，否则那个说法没法复核
-  if (values.includes("api-identical")) {
+  // ③ 有哈希比对证据就必须给出可复核的方法
+  if (Object.values(pkg.dsh.compatibility.evidence ?? {}).some((item) => String(item?.level).includes("api-identical"))) {
     const method = pkg.dsh.compatibility.method ?? "";
     ok(/SHA-?256|哈希|hash/i.test(method), "**`api-identical` 附了可复核的方法**（哈希怎么算的）");
     ok(/[0-9A-F]{16}/i.test(method), "  方法里带了**具体哈希值**（不是空口说一样）");
   }
 
-  // ④ 标了 `tested` 的那个，要是**本机装的那个版本** —— 否则「跑过」从何而来
+  // ④ 真实运行证据对应本机安装版本 —— 否则「跑过」从何而来
   //
   //    ⚠️ 找不到安装目录就跳过（CI 上可能没有）—— 但**不能静默跳过**，
   //       要打印出来让人知道这条没验。
@@ -839,16 +845,16 @@ const readme = readFileSync(at("README.md"), "utf8");
     "package.json",
   );
   if (!existsSync(nm)) {
-    console.log("    ○ 跳过：本机找不到 dsh 安装目录，没法核对 `tested`");
+    console.log("    ○ 跳过：本机找不到 dsh 安装目录，没法核对真实运行证据");
   } else {
     const installed = JSON.parse(readFileSync(nm, "utf8")).version;
-    const tested = Object.entries(pkg.dsh.compatibility.dshReleases)
-      .filter(([, v]) => v === "tested")
+    const tested = Object.entries(pkg.dsh.compatibility.evidence ?? {})
+      .filter(([, evidence]) => evidence?.level === "tested")
       .map(([k]) => k);
     ok(
       tested.includes(installed),
-      "**本机装的版本被标了 `tested`**（它就是「跑过」的那个）",
-      "装的 " + installed + " vs 标了 tested 的 " + tested.join(", "),
+      "**本机装的版本有真实运行证据**",
+      "装的 " + installed + " vs 有真实运行证据的 " + tested.join(", "),
     );
   }
 }

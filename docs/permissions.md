@@ -12,7 +12,7 @@
 ```json
 "engines": {
   "node": "^22.19.0 || >=24.0.0",
-  "dsh":  ">=0.1.7-rc.2 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0"
+  "dsh":  ">=0.1.7-rc.2 <0.2.0-0 || >=0.2.0-rc.1 <0.2.1-0 || >=0.2.1-alpha.1 <0.3.0-0"
 }
 ```
 
@@ -45,19 +45,21 @@
 
 ### 声明里那个 `compatibility` 字段
 
-`package.json` 的 `dsh.compatibility.dshReleases` 逐版本标了**证据等级**：
+`package.json` 的 `dsh.compatibility.dshReleases` 使用 DSH Store 认可的兼容性枚举，
+详细证据放在同级的 `evidence` 字段：
 
 | 标记 | 含义 |
 |---|---|
-| `tested` | 在**这个版本上真跑过**（`0.1.7-rc.2`） |
-| `api-identical` | 没跑过，但我们依赖的两个 dsh 包跟跑过的那个版本**逐字节相同** |
+| `compatible` | 有足够证据支持该版本可用，商城可以识别 |
+| `incompatible` | 已确认不兼容 |
+| `unknown` | 没有足够证据，不做兼容承诺 |
 
-`api-identical` 不是拍脑袋：比的是 `dsh-system-prompt` 和
+`evidence` 中的 `api-identical` 不是拍脑袋：比的是 `dsh-system-prompt` 和
 `dsh-agent-instructions` 两个包的 `lib/index.js` 的 SHA-256 前 16 位。
 复现方法写在那个字段的 `method` 里。
 
-> `0.2.0-rc.1` / `0.2.0-rc.2` 就是 `api-identical` —— 两个包都跟
-> `0.1.7-rc.2` 的**完全相同**（`FF422AFAC6BA85F8` / `E15B1A6340EA1CB7`）。
+> `0.2.0-rc.1`、`0.2.0-rc.2` 和 `0.2.1-alpha.1` 的两个包都跟
+> `0.1.7-rc.2` **完全相同**（`FF422AFAC6BA85F8` / `E15B1A6340EA1CB7`）。
 
 ---
 
