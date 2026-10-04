@@ -50,6 +50,8 @@ import {
   presetSignature,
 } from "./scripts/lib/presets.mjs";
 import { findEmptySlots, SECTION_SLOTS } from "./scripts/lib/section-slots.mjs";
+import { toInjectorState, normalizeSectionsInput, selectionFromSectionsInput } from "./scripts/lib/state-helpers.mjs";
+import { createDiagnostics } from "./scripts/lib/diagnostics.mjs";
 import { migrateLibraryOutOfPackage } from "./scripts/lib/library-migration.mjs";
 import {
   isEmptySelection,
@@ -373,217 +375,25 @@ const diag = {
   editCount: 0,
 };
 
-/** 逐会话诊断（含失败原因）；注入器未就绪时返回空数组。 */
-function sessionStates() {
-  try {
-    return activeInjector ? activeInjector.explain() : [];
-  } catch (err) {
-    return [{ error: err?.message ?? String(err) }];
-  }
-}
-
-/** 提示词库清单（不含正文，正文体积大，按需通过 preview/raw 取）。 */
-function libraryList(ctx) {
-  try {
-    const lib = libraryOf(ctx); return lib ? lib.list() : [];
-  } catch (err) {
-    return [{ error: err?.message ?? String(err) }];
-  }
-}
-
-function libraryErrors() {
-  try {
-    return activeLibrary ? activeLibrary.errors() : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * 列出宿主里真实存在的 agent 及其关键能力。
- * 旧版的失败全都出在「我以为宿主长什么样」—— id 形式、ctx 上有没有 systemPrompt、
- * header 里有什么字段。这个函数把事实直接摆出来，不再靠推断。
- */
-function listAgentsDiag() {
-  try {
-    const c = hostCtxRef;
-    if (!c || !c.agents) return { error: "ctx.agents 不可用" };
-    const all = typeof c.agents.list === "function" ? c.agents.list() : [];
-    const roots = typeof c.agents.roots === "function" ? c.agents.roots() : [];
-    const shape = (a) => ({
-      id: a?.id ?? null,
-      sessionId: a?.session?.id ?? null,
-      hasCtx: !!a?.ctx,
-      hasInject: typeof a?.ctx?.inject === "function",
-      systemPromptDirect: !!a?.ctx?.systemPrompt,
-      origin: a?.session?.header?.origin ?? null,
-      delegationDepth: a?.session?.header?.delegationDepth ?? null,
-      parentSession: a?.session?.header?.parentSession ?? null,
-    });
-    return {
-      listCount: all.length,
-      rootsCount: roots.length,
-      list: all.map(shape),
-      roots: roots.map(shape),
-    };
-  } catch (err) {
-    return { error: err?.message ?? String(err) };
-  }
-}
-
-function publicDiag() {
-  return {
-    version: PLUGIN_VERSION,
-    routeRegistered: diag.routeRegistered,
-    routeError: diag.routeError,
-    lastPost: diag.lastPost,
-    lastSessionCheck: diag.lastSessionCheck,
-    lastPreview: diag.lastPreview,
-    assignCount: diag.assignCount,
-    reloadCount: diag.reloadCount,
-    catalogPath: CATALOG_PATH,
-    stateFile: STATE_FILE,
-    libraryErrors: libraryErrors(),
-  };
-}
-
-/**
- * 判断浏览器传来的 sessionId 是否可信。
- *
- * ⚠️ 不要写成「`ctx.agents.get()` 取不到就 404」—— 那会**误杀合法会话**：
- *    Agent 是会话被打开/运行时才实例化的，get() 在其它时刻就是 undefined。
- *
- *   - agents 服务不可用           → "unverifiable"（放行，无法判定不能当拒绝）
- *   - 能查到该 id                 → "verified"
- *   - 查不到但没有任何活动 agent  → "unverifiable"（放行，无从比较）
- *   - 查不到但确实有其它活动 agent → "reject"（可疑 id，拒绝）
- *
- * @returns {"verified"|"unverifiable"|"reject"}
- */
-function classifySession(ctx, sessionId) {
-  let registry;
-  try {
-    registry = ctx.agents;
-  } catch {
-    return "unverifiable";
-  }
-  if (!registry || typeof registry.get !== "function") return "unverifiable";
-  try {
-    if (registry.get(sessionId) !== undefined) return "verified";
-    const liveCount =
-      typeof registry.roots === "function"
-        ? (registry.roots() ?? []).length
-        : typeof registry.list === "function"
-          ? (registry.list() ?? []).length
-          : 0;
-    if (liveCount === 0) return "unverifiable";
-    return "reject";
-  } catch {
-    return "unverifiable";
-  }
-}
-
-/** 找到某会话对应的 agent（预览需要它来调 assemble）。 */
-function findAgentFor(ctx, sessionId) {
-  try {
-    const roots = ctx.agents?.roots?.() ?? [];
-    const list = typeof ctx.agents?.list === "function" ? ctx.agents.list() : roots;
-    const norm = (s) => String(s ?? "").replace(/^session-/, "").toLowerCase();
-    const want = norm(sessionId);
-    return [...list, ...roots].find((a) => norm(a?.id) === want || norm(a?.session?.id) === want);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * 把「预设的世界」翻译成「注入器的世界」。
- *
- * ⚠️ **这是这次改动最关键的一层胶水**，两个世界用的是不同的东西：
- *
- *     状态文件 / 界面   →  预设 id（`assignments[sid] = "写代码"`）
- *     注入器            →  提示词 id 数组（`explicit.get(sid) = ["格式契约"]`）
- *
- *     `createSessionInjector` 内部按「一堆裸 promptId」建模（1133 行、199 条
- *    测试），直接改它的内部表示风险太大。所以**保持它原样**，在这里翻译。
- *
- * 翻译规则（跟 `presetForSession` 一一对应）：
- *
- *     assignments[sid] 是预设 id  → explicit.set(sid, 那条预设的 prompts)
- *     assignments[sid] 是 null    → explicit.set(sid, [])   ← 注入器认「空数组 = 显式不注入」
- *     没有这个 sid                → **不设 explicit**，让它走 defaults
- *
- *     defaults ← 全局那条预设的 prompts（全局关掉时是空数组）
- *
- * ⚠️ 关键：**「跟随全局」和「显式不注入」在注入器里必须能分开** ——
- *    前者不设 explicit，后者设成空数组。搞混了就会「选了原生但还吃全局」。
- */
-function toInjectorState(state) {
-  const presets = state.presets ?? {};
-  const assignments = {};
-  for (const [sid, presetId] of Object.entries(state.assignments ?? {})) {
-    if (!sid) continue;
-    if (presetId === null) {
-      assignments[sid] = []; // 显式什么都不挂
-      continue;
-    }
-    const p = typeof presetId === "string" ? presets[presetId] : undefined;
-    if (!p) continue; // 指的预设不存在（被删了）→ 当没记录，走 defaults
-    assignments[sid] = [...p.prompts];
-  }
-  const g = state.global ?? {};
-  const gp = g.enabled === true && typeof g.presetId === "string" ? presets[g.presetId] : undefined;
-  return { assignments, defaults: gp ? [...gp.prompts] : [] };
-}
-
-/**
- * 归一化一份「段落内容」输入 —— **两种形状都收**。
- *
- * ⚠️ 为什么需要这个（踩出来的）：
- *
- *     界面「系统提示词」那一栏发的是老形状 `{ action, text }`。
- *     新模型（`prompt-selection.mjs`）只关心「改成什么」，所以发的是 `{ text }`。
- *
- *     而校验用的是老模型的 `normalizeOverrides()` —— 它**要求 `action` 合法**，
- *     没有就整条丢掉。于是新形状会被**静默丢弃**：
- *     界面上看着存进去了，实际预设里一段都没有。
- *
- *     （测试逮到的：存完预设之后 `selection.sections` 是空的，
- *       于是「会话选了自己的预设 → 按它那条走」那条断言红。）
- *
- * 做法：新形状补一个 `action: "replace"` 再交给老校验 ——
- * 这样返回的对象仍然带着 `action`，老界面的回应格式不用改。
- *
- * @param {object} raw
- * @returns {Record<string, object>}
- */
-function normalizeSectionsInput(raw) {
-  const out = {};
-  for (const [name, ov] of Object.entries(raw ?? {})) {
-    if (typeof name !== "string" || !name) continue;
-    if (!ov || typeof ov !== "object" || Array.isArray(ov)) continue;
-    // 已经有合法 action 的照原样；否则补一个，让它过得了老校验
-    const action = ov.action === "disable" ? "disable" : "replace";
-    out[name] = { ...ov, action };
-  }
-  return normalizeOverrides(out);
-}
-
-/** 把旧接口的段落表转换成唯一的 selection 字段。 */
-function selectionFromSectionsInput(raw) {
-  const normalized = normalizeSectionsInput(raw);
-  const listed = [];
-  const excluded = [];
-  const sections = {};
-  for (const [name, ov] of Object.entries(normalized)) {
-    if (ov.action === "disable") excluded.push(name);
-    else {
-      listed.push(name);
-      sections[name] = { text: ov.text ?? "", original: ov.original ?? "", originalHash: ov.originalHash ?? "", savedAt: ov.savedAt ?? "" };
-    }
-  }
-  return normalizeSelection({ listed, excluded, sections, known: [] });
-}
+const diagnostics = createDiagnostics({
+  diag,
+  pluginVersion: PLUGIN_VERSION,
+  catalogPath: CATALOG_PATH,
+  stateFile: STATE_FILE,
+  libraryOf,
+  getActiveInjector: () => activeInjector,
+  getActiveLibrary: () => activeLibrary,
+  getHostContext: () => hostCtxRef,
+});
+const {
+  sessionStates,
+  libraryList,
+  libraryErrors,
+  listAgentsDiag,
+  publicDiag,
+  classifySession,
+  findAgentFor,
+} = diagnostics;
 
 /**
  * 清掉**预设里**已经不存在的提示词 id。

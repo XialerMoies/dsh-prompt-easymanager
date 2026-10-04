@@ -98,6 +98,77 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
       return String(n || 0) + " tokens";
     }
 
+    // 预设选择器的纯数据规则集中在宿主层，设置页和会话页共用同一份。
+    function presetLabelOf(p) {
+      if (!p) return "系统提示词";
+      if (typeof p.name === "string" && p.name.trim() && p.name !== "系统提示词（原生）") return p.name.trim();
+      var prompts = Array.isArray(p.prompts) ? p.prompts : [];
+      if (prompts.length > 0) return p.name || "（无名预设）";
+      var selection = p.selection && typeof p.selection === "object" ? p.selection : {};
+      var legacySections = p.sections && typeof p.sections === "object" ? p.sections : {};
+      var n = selection.sections && typeof selection.sections === "object"
+        ? Object.keys(selection.sections).length : Object.keys(legacySections).length;
+      n += Array.isArray(selection.listed) ? selection.listed.length : 0;
+      n += Array.isArray(selection.excluded) ? selection.excluded.length : 0;
+      if (n > 0) return "系统提示词 · 改";
+      if (typeof p.label === "string" && p.label) return p.label;
+      return "系统提示词";
+    }
+
+    function isNativePreset(p) {
+      if (p && typeof p.isNative === "boolean") return p.isNative;
+      if (!p || (p.name !== "系统提示词（原生）" && p.name !== "系统提示词")) return false;
+      if (Array.isArray(p.prompts) && p.prompts.length > 0) return false;
+      var s = p.selection && typeof p.selection === "object" ? p.selection : {};
+      var sec = s.sections && typeof s.sections === "object" ? s.sections : (p.sections || {});
+      return Object.keys(sec).length === 0 &&
+        !(Array.isArray(s.listed) && s.listed.length > 0) &&
+        !(Array.isArray(s.excluded) && s.excluded.length > 0);
+    }
+
+    function presetKey(p) {
+      if (p && typeof p.signature === "string") return p.signature;
+      var s = p && p.selection && typeof p.selection === "object" ? p.selection : {};
+      var sec = s.sections && typeof s.sections === "object" ? s.sections : (p && p.sections) || {};
+      return JSON.stringify({
+        prompts: Array.isArray(p && p.prompts) ? p.prompts.slice().sort() : [],
+        listed: Array.isArray(s.listed) ? s.listed.slice().sort() : [],
+        excluded: Array.isArray(s.excluded) ? s.excluded.slice().sort() : [],
+        sections: Object.keys(sec).sort().map(function (k) { return [k, sec[k] && sec[k].text || ""]; }),
+      });
+    }
+
+    function mergeEquivalentPresets(list, preferredId) {
+      var out = [];
+      var seen = {};
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        if (!p) continue;
+        var key = presetKey(p);
+        if (!(key in seen)) {
+          seen[key] = out.length;
+          out.push(p);
+        } else if (p.id === preferredId) {
+          out[seen[key]] = p;
+        }
+      }
+      return out;
+    }
+
+    function presetDisplayLabel(list, index) {
+      var base = presetLabelOf(list[index]);
+      var count = 0;
+      var order = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (presetLabelOf(list[i]) === base) {
+          count++;
+          if (i <= index) order++;
+        }
+      }
+      if (base === "系统提示词（原生）") base += " · 预设";
+      return count > 1 ? base + "（" + order + "）" : base;
+    }
+
     // ── chunk 的加载器（模块级，只求值一次）────────────────────────────────
     //
     // loader 是缓存的键，每次渲染都新建的话缓存永远 miss —— 组件会一直加载不完。
@@ -827,6 +898,12 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             ROUTE_SECTIONS: ROUTE_SECTIONS,
             ROUTE_PRESETS: ROUTE_PRESETS,
           ROUTE_GLOBAL: ROUTE_GLOBAL,
+          },
+          preset: {
+            presetLabelOf: presetLabelOf,
+            isNativePreset: isNativePreset,
+            mergeEquivalentPresets: mergeEquivalentPresets,
+            presetDisplayLabel: presetDisplayLabel,
           },
         };
 

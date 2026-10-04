@@ -29,6 +29,11 @@ window.__ModuleLoader__.load({
       var Menu = api.ui.Menu;
       var StateDot = api.ui.StateDot;
       var Tag = api.ui.Tag;
+      var presetModel = api.preset;
+      var presetLabelOf = presetModel.presetLabelOf;
+      var isNativePreset = presetModel.isNativePreset;
+      var mergeEquivalentPresets = presetModel.mergeEquivalentPresets;
+      var presetDisplayLabel = presetModel.presetDisplayLabel;
       var SLOT_HEAD = api.style.SLOT_HEAD;
       var CARD_MAIN_ROW = api.style.CARD_MAIN_ROW;
       var SLOT_WHY = api.style.SLOT_WHY;
@@ -215,88 +220,6 @@ window.__ModuleLoader__.load({
        *    而 /state 的预设表没有 —— 这里补算，免得同一个预设
        *    在两处显示成不同的东西。
        */
-      function presetLabelOf(p) {
-        if (!p) return "系统提示词";
-        // 预设是用户明确命名的配置。即使它只包含系统段落，也要显示这个名字，
-        // 否则会和“系统提示词（原生）”混成同一项，选中后无法确认自己用的是哪套。
-        if (typeof p.name === "string" && p.name.trim() && p.name !== "系统提示词（原生）") return p.name.trim();
-        var ps = Array.isArray(p.prompts) ? p.prompts : [];
-        if (ps.length > 0) return p.name || "（无名预设）";
-        var selection = p.selection && typeof p.selection === "object" ? p.selection : {};
-        var legacySections = p.sections && typeof p.sections === "object" ? p.sections : {};
-        var n = selection.sections && typeof selection.sections === "object"
-          ? Object.keys(selection.sections).length : Object.keys(legacySections).length;
-        n += Array.isArray(selection.listed) ? selection.listed.length : 0;
-        n += Array.isArray(selection.excluded) ? selection.excluded.length : 0;
-        // 旧服务端可能仍把改写预设标成 label="系统提示词"；正文才是权威信号。
-        if (n > 0) return "系统提示词 · 改";
-        if (typeof p.label === "string" && p.label) return p.label;
-        return "系统提示词";
-      }
-
-      /** 纯原生预设与选择器里的“系统提示词（原生）”是同一个效果，隐藏重复项。 */
-      function isNativePreset(p) {
-        if (p && typeof p.isNative === "boolean") return p.isNative;
-        // 只隐藏内置默认预设。用户新建的空配置也许有自己的名字，不能因为内容
-        // 恰好为空就从选择器里抹掉。
-        if (!p || (p.name !== "系统提示词（原生）" && p.name !== "系统提示词")) return false;
-        if (!p || (Array.isArray(p.prompts) && p.prompts.length > 0)) return false;
-        if (p.sections && typeof p.sections === "object" && Object.keys(p.sections).length > 0) return false;
-        var s = p.selection;
-        if (!s || typeof s !== "object") return true;
-        return !(Array.isArray(s.listed) && s.listed.length > 0) &&
-          !(Array.isArray(s.excluded) && s.excluded.length > 0) &&
-          !(s.sections && typeof s.sections === "object" && Object.keys(s.sections).length > 0);
-      }
-
-      /** 服务端已按签名收敛重复项；前端只尊重服务端结果，不自行猜内容相等。 */
-      function mergeEquivalentPresets(list, preferredId) {
-        var out = [];
-        var positions = {};
-        for (var i = 0; i < list.length; i++) {
-          var p = list[i];
-          if (!p) continue;
-          // 没有 signature 只可能是旧 dsh 缓存/旧服务端响应；兼容一次，
-          // 新响应始终由服务端提供签名。
-          var key = typeof p.signature === "string" ? p.signature : legacyPresetKey(p);
-          if (!(key in positions)) {
-            positions[key] = out.length;
-            out.push(p);
-          } else if (p.id === preferredId) {
-            out[positions[key]] = p;
-          }
-        }
-        return out;
-      }
-
-      function legacyPresetKey(p) {
-        var s = p && p.selection && typeof p.selection === "object" ? p.selection : {};
-        var sec = s.sections && typeof s.sections === "object" ? s.sections : (p && p.sections) || {};
-        return JSON.stringify({
-          prompts: Array.isArray(p && p.prompts) ? p.prompts.slice().sort() : [],
-          listed: Array.isArray(s.listed) ? s.listed.slice().sort() : [],
-          excluded: Array.isArray(s.excluded) ? s.excluded.slice().sort() : [],
-          sections: Object.keys(sec).sort().map(function (k) { return [k, sec[k] && sec[k].text || ""]; }),
-        });
-      }
-
-      /** 给同名预设加序号，避免不同 id 在选择器里看起来像重复项。 */
-      function presetDisplayLabel(list, index) {
-        var p = list[index] || {};
-        var base = presetLabelOf(p);
-        var total = 0;
-        var order = 0;
-        for (var i = 0; i < list.length; i++) {
-          if (presetLabelOf(list[i]) === base) {
-            total++;
-            if (i <= index) order++;
-          }
-        }
-        // 选择器另有一条“系统提示词（原生）”入口；即使预设刚好也叫这个名字，
-        // 也要明确标出它是预设，避免出现两个一模一样的选项。
-        if (base === "系统提示词（原生）") base += " · 预设";
-        return total > 1 ? base + "（" + order + "）" : base;
-      }
       function metaOf(props) {
         var d = props.data;
         var out = [];

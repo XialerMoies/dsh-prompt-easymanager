@@ -38,12 +38,11 @@
 //   保留一条：`preview()` 仍然会检查**是不是别的插件**在做覆盖 ——
 //   dsh 自带的 persona 插件也能设 complete，那是它的事，我们只是把事实报出来。
 
-import { estimateTokens } from "./prompt-library.mjs";
-import { normalizeOverrides, planOverrides } from "./section-overrides.mjs";
+import { previewSession } from "./session-preview.mjs";
 // ⚠️ 注入路径现在走**勾选清单**（`prompt-selection.mjs`）。
-//    上面那两个是老模型的判定函数，`preview()` 和界面还在用 ——
-//    等第三步界面改完才能收掉。
+//    预览逻辑已拆到 `session-preview.mjs`，本文件只负责状态和挂载生命周期。
 import { projectSelection, applyProjection } from "./prompt-selection.mjs";
+import { listSectionsForAgent } from "./session-sections.mjs";
 
 const SECTION_DEFAULT = "prompt-manager:session-system-prompt";
 
@@ -64,151 +63,17 @@ function sessionIdOf(agent) {
   }
 }
 
-/** 把 SystemMessage 的内容块拼成纯文本。 */
-function messageTextOf(message) {
-  try {
-    const content = message?.content;
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-      .map((block) => {
-        if (typeof block === "string") return block;
-        if (block && typeof block.text === "string") return block.text;
-        return "";
-      })
-      .join("\n");
-  } catch {
-    return "";
-  }
-}
-
-/**
- * 是否属于"顶层用户会话"（排除子代理）。
- * 见文件头：只在**明确**为子代理时拒绝，避免误杀。
- */
+/** 是否属于顶层用户会话（排除明确标记为子代理的 agent）。 */
 function isTopLevelSession(agent) {
   try {
     const header = agent?.session?.header;
     if (!header) return true;
     if (header.origin === "subagent") return false;
-    if (typeof header.delegationDepth === "number" && header.delegationDepth > 0) {
-      return false;
-    }
+    if (typeof header.delegationDepth === "number" && header.delegationDepth > 0) return false;
     return true;
   } catch {
     return true;
   }
-}
-
-/**
- * 从**会话日志**里读出模型上一次实际收到的系统提示词。
- *
- * dsh 的 agent loop 每一步都会把渲染后的提示词写进日志
- * （dsh-agent-loop/lib/index.js:1032 `renderPrompt(assembly)` → `append("system/message", ...)`），
- * 那是**模型实际所见**，不依赖我能不能 import 到 renderPrompt。
- *
- * ⚠️ 注意：日志里**只有文字段落**，不含工具定义 —— 工具走的是模型 API 自己的
- *    `tools` 参数，不写进 system/message。
- *
- * ⚠️ 失败时必须**说清卡在哪**。早先的实现把「读不到」一律返回 null，界面上就显示成
- *    「这个会话还没有跑过模型步骤」—— 对已经跑了几十轮的会话来说那是**误导**。
- */
-function loggedSystemPrompt(agent) {
-  let session;
-  try {
-    session = agent?.session;
-  } catch {
-    return { ok: false, reason: "读取 agent.session 时抛错" };
-  }
-  if (!session) return { ok: false, reason: "agent 上没有 session" };
-
-  const snap = session.snapshotEvents;
-  if (typeof snap !== "function") {
-    let methods = [];
-    try {
-      methods = Object.keys(Object.getPrototypeOf(session) ?? {})
-        .concat(Object.keys(session))
-        .filter((k, i, a) => a.indexOf(k) === i && typeof session[k] === "function")
-        .slice(0, 40);
-    } catch {
-      /* 取不到就算了 */
-    }
-    return {
-      ok: false,
-      reason: "session 上没有 snapshotEvents()，取不到会话日志",
-      availableMethods: methods,
-    };
-  }
-
-  let events;
-  try {
-    events = snap.call(session) ?? [];
-  } catch (err) {
-    return { ok: false, reason: `调用 snapshotEvents() 抛错：${err?.message ?? String(err)}` };
-  }
-  if (!Array.isArray(events)) return { ok: false, reason: "snapshotEvents() 没有返回数组" };
-  if (events.length === 0) {
-    return { ok: false, reason: "会话日志是空的（事件数为 0）", eventCount: 0 };
-  }
-
-  const sysMsgs = [];
-  const typeCount = new Map();
-  for (const e of events) {
-    const t = e && e.type ? String(e.type) : "(无 type)";
-    typeCount.set(t, (typeCount.get(t) ?? 0) + 1);
-    if (t === "system/message") sysMsgs.push(e);
-  }
-  if (sysMsgs.length === 0) {
-    return {
-      ok: false,
-      reason: `日志里有 ${events.length} 条事件，但一条 system/message 都没有`,
-      eventCount: events.length,
-      eventTypes: [...typeCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15),
-    };
-  }
-
-  // ⚠️ 取**最后一条有正文的** system/message，不能只取最后一条。
-  //
-  //    dsh-agent-loop/lib/index.js:264 `project()` 有一个分支会先「把多余节点
-  //    replace 成空串」再更新 head：
-  //      const updates = nodes.slice(1).filter((n) => n.text !== "").map((n) => this.replace(n.seq, ""));
-  //      if (head.text !== rendered) updates.push(this.replace(head.seq, rendered));
-  //    当 head 已经正确、只是要清掉多余节点时，**最后追加的那条是空文本** ——
-  //    取它就会误报「最后一条取不到文本」。
-  //
-  //    另外：`system/message` **只在提示词变化时才写**（`project()` 里
-  //    `if (latest.text === rendered) return []`），所以这条日志的轮次看着旧，
-  //    内容却是当前生效的那份。界面上要说明这一点。
-  let last = null;
-  for (let i = sysMsgs.length - 1; i >= 0; i--) {
-    const candidate = messageTextOf(sysMsgs[i].data?.message);
-    if (candidate) {
-      last = { event: sysMsgs[i], text: candidate };
-      break;
-    }
-  }
-  if (!last) {
-    return {
-      ok: false,
-      reason: `找到 ${sysMsgs.length} 条 system/message，但没有一条带正文`,
-      eventCount: events.length,
-      messageCount: sysMsgs.length,
-    };
-  }
-  const text = last.text;
-  return {
-    ok: true,
-    text,
-    chars: text.length,
-    tokens: estimateTokens(text),
-    turn: last.event.data?.turn ?? null,
-    step: last.event.data?.step ?? null,
-    messageCount: sysMsgs.length,
-    atSeq: last.event.seq ?? null,
-    /** 这条是不是日志里最后一条 system/message（不是则说明后面还有空文本的清理记录） */
-    isLatestEvent: last.event === sysMsgs[sysMsgs.length - 1],
-    eventCount: events.length,
-  };
 }
 
 /** 去重并保持顺序。 */
@@ -996,231 +861,25 @@ export function createSessionInjector({
       // 各段落的文本），用哪个 agent 读到的段落集合是一样的。
       let agent = findAgent(sessionId);
       if (!agent && agents.size > 0) agent = agents.values().next().value;
-      if (!agent) {
-        return { outcome: "awaiting-agent", error: "还没有存活的会话，稍后再试", sections: [] };
-      }
-      const sp = agent.ctx?.systemPrompt;
-      if (!sp || typeof sp.assemble !== "function") {
-        return { outcome: "no-assemble-api", error: "该 agent 上取不到 systemPrompt.assemble", sections: [] };
-      }
-      let assembly;
-      try {
-        assembly = await sp.assemble({ agent, scope: agent, [READ_ORIGINAL]: true });
-      } catch (err) {
-        return { outcome: "assemble-threw", error: `组装失败：${err?.message ?? String(err)}`, sections: [] };
-      }
-      const sections = (assembly?.sections ?? [])
-        .filter((s) => s && typeof s.name === "string")
-        // ⚠️ **把本插件自己注入的段落剔除掉。**
-        //
-        // 「系统提示词」面板列的是 **dsh 原生的段落** —— 让用户逐段看、逐段改。
-        // 本插件注入的提示词不属于这一类：那是用户自己写的内容，归「提示词库」
-        // 那一块管，混进来会让人以为「这也是 dsh 自带的」。
-        //
-        // 真机上就出过这个歧义：列表里冒出 `prompt-manager:infinite-gen-3`
-        // （4290 字），用户第一反应是「这是什么东西」。
-        //
-        // 判据是段名前缀。默认注入名是 `prompt-manager:<promptId>`；
-        // 用户在 catalog 里自定义了 `sectionName` 的话不会被过滤掉 —— 那种情况
-        // 少见，而且名字是他自己起的，混进来也不算意外。
-        .filter((s) => !s.name.startsWith(SELF_PREFIX))
-        .map((s, index) => ({
-          name: s.name,
-          index,
-          text: typeof s.text === "string" ? s.text : "",
-        }));
-      return { outcome: "ok", agentId: sessionIdOf(agent), sections };
+      return listSectionsForAgent({
+        agent,
+        readOriginal: READ_ORIGINAL,
+        selfPrefix: SELF_PREFIX,
+        sessionIdOf,
+      });
     },
 
-    async preview(sessionId, { maxSectionChars = 20000 } = {}) {
-      const agent = findAgent(sessionId);
-      if (!agent) return { error: "该会话的 agent 未加载，无法预览", outcome: "awaiting-agent" };
-      const sp = agent.ctx?.systemPrompt;
-      if (!sp || typeof sp.assemble !== "function") {
-        return { error: "该 agent 上取不到 systemPrompt.assemble", outcome: "no-assemble-api" };
-      }
-      let assembly;
-      try {
-        // ⚠️ `agent` 和 `scope` **都要传**。只传 scope 会让读 context.agent 的
-        //    段落（approval:policy / sandbox:policy）拿到 undefined 并返回空串，
-        //    预览里就变成「上下文段 N 段 = 0 tokens」。官方用法见
-        //    dsh-agent/lib/types/dispatch.js:92 `assembleContextFor`。
-        assembly = await sp.assemble({ agent, scope: agent });
-      } catch (err) {
-        return {
-          error: `组装失败：${err?.message ?? String(err)}`,
-          outcome: "assemble-threw",
-          hint:
-            "常见原因：同时存在多个 complete 段落（比如 dsh 自带 persona 的覆盖开关和别的插件撞了）—— " +
-            "检查 dsh-persona 的 complete 配置。",
-        };
-      }
-
-      const cut = (t) => ({
-        chars: t.length,
-        tokens: estimateTokens(t),
-        truncated: t.length > maxSectionChars,
-        text: t.length > maxSectionChars ? t.slice(0, maxSectionChars) : t,
-      });
-
-      const sections = (assembly?.sections ?? []).map((s) => {
-        const text = typeof s.text === "string" ? s.text : String(s.text ?? "");
-        return { name: s.name, complete: s.complete === true, ...cut(text) };
-      });
-      const contexts = (assembly?.contexts ?? []).map((c) => {
-        const text = typeof c.text === "string" ? c.text : String(c.text ?? "");
-        return { name: c.name, ...cut(text) };
-      });
-      const tools = (assembly?.tools ?? []).map((t) => {
-        let schemaText = "";
-        try {
-          schemaText = JSON.stringify(t?.parameters ?? {});
-        } catch {
-          schemaText = "";
-        }
-        const body = `${t?.name ?? ""}\n${t?.description ?? ""}\n${schemaText}`;
-        return {
-          name: t?.name ?? "(未命名)",
-          description: typeof t?.description === "string" ? t.description : "",
-          parameters:
-            t?.parameters && typeof t.parameters === "object" ? t.parameters : {},
-          deferLoading: t?.deferLoading === true,
-          chars: body.length,
-          tokens: estimateTokens(body),
-        };
-      });
-
-      const sectionTokens = sections.reduce((n, s) => n + s.tokens, 0);
-      const contextTokens = contexts.reduce((n, c) => n + c.tokens, 0);
-      const toolTokens = tools.reduce((n, t) => n + t.tokens, 0);
-
-      // 本地渲染（renderPrompt）已移除 —— 从插件里 import 不到，界面上会永远显示
-      // 「不可用」，是纯噪音。真实内容走下面的会话日志那条路。
-      const logged = loggedSystemPrompt(agent);
-
-      const myIds = resolvedIds(sessionId);
-      const myPrompts = myIds
-        .map((id) => (typeof resolvePrompt === "function" ? resolvePrompt(id) : undefined))
-        .filter(Boolean);
-      const mySectionNames = new Set(myPrompts.map((p) => p.sectionName));
-      const mine = sections.filter((s) => mySectionNames.has(s.name));
-
-      // ── 「我们的增量」：相对**原生装配**多花了多少 ─────────────────────
-      //
-      // ⚠️ 为什么要有这个：总数（totalTokens）是**原生 + 我们**的合计，
-      //    用户看不出「我挂的这东西到底花了多少」。而答案分两块，
-      //    两块都算得出来，不用猜：
-      //
-      //      ① 我们自己的段落：名字是 `prompt-manager:<id>`，
-      //         在 sections 里能直接认出来 —— 这些**整段**都是我们加的
-      //
-      //      ② 段落改写：只改**已有**段落的正文，名字不变，认不出来 ——
-      //         但覆盖记录里存了 `original`（改之前的原文）和 `text`（改写后），
-      //         两者字数之差就是净增量。**这是准确值，不是估算。**
-      //
-      //    ⚠️ 只在能拿到覆盖记录时才算。拿不到就不报这个字段 ——
-      //       宁可没有，也不要给个看着像真的的错数字。
-      const oursSections = mine.reduce((n, s) => n + (s.tokens || 0), 0);
-      const oursSectionCount = mine.length;
-
-      let overridesDelta = null;
-      let overridesDeltaCount = null;
-      let overridesSectionsCleared = null;
-      try {
-        // ⚠️ 这里要**走完整条判定链**，不能只调一半：
-        //
-        //      resolveOverrides(全局表, 该会话的表)   合并两层
-        //        → normalizeOverrides(…)             校验，返回 {name: rec}
-        //        → planOverrides({ overrides, globalSections })   判定
-        //
-        //    第一版我漏了 `planOverrides`，直接拿 `normalizeOverrides` 的返回值
-        //    去取 `.apply` —— 那是个 `{name: rec}` 的字典，根本没有 `.apply`，
-        //    算出来会是 undefined 或垃圾。
-        const merged = normalizeOverrides(
-          typeof getSectionOverrides === "function" ? getSectionOverrides(sessionId) : {},
-        );
-        const plan = planOverrides({
-          overrides: merged,
-          // 官方原文的视图就是这次装配出来的 sections（它们的名字和顺序）
-          globalSections: sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
-        });
-
-        let delta = 0;
-        let n = 0;
-        let cleared = 0;
-        for (const row of plan?.apply ?? []) {
-          // ⚠️ 比的是 **`original`（当前官方原文）** 和 `text`（用户改写后）——
-          //    那才是这次装配实际发生的替换。
-          //    `basedOn` 是「当初依据的旧原文」，官方改过之后它跟现在的不一样，
-          //    拿它算会算错。
-          const before = typeof row.original === "string" ? row.original : "";
-          const after = typeof row.text === "string" ? row.text : "";
-          // ⚠️ **分别估算再相减**，不要用「字符数差」去套估算 ——
-          //    中文 1 字 ≈ 1 token、英文 4 字符 ≈ 1 token，
-          //    拿字符差换算在混排文本上会偏得离谱。
-          delta += estimateTokens(after) - estimateTokens(before);
-          n += 1;
-          if (row.action === "disable") cleared += 1;
-        }
-        overridesDelta = delta;
-        overridesDeltaCount = n;
-        overridesSectionsCleared = cleared;
-      } catch {
-        /* 算不出来就不报 —— 不编一个数 */
-      }
-
-      // 替换模式删除后，本插件不可能造成 complete 冲突。
-      // 但仍要报一件事：**别的插件**（dsh 自带的 persona）若开启了覆盖，
-      // 我们的 section 会整个消失 —— 那时用户看到「挂了却不在结果里」会困惑。
-      let conflict = null;
-      const completeElsewhere = sections.filter((s) => s.complete === true);
-      if (completeElsewhere.length > 0 && mine.length === 0) {
-        conflict = {
-          kind: "shadowed-by-complete",
-          message:
-            `有别的插件在这个会话上开启了「独占系统提示词」覆盖（section：` +
-            `${completeElsewhere.map((s) => s.name).join("、")}），` +
-            `本插件挂的 section 不在最终结果里。`,
-          sections: sections.map((s) => ({ name: s.name, complete: s.complete })),
-          hint: "检查 dsh 自带 persona 插件的覆盖开关（它的 Config 里有 complete）。" +
-            "覆盖模式下所有其他 section 都会被顶掉，这是 dsh 的设计。",
-        };
-      }
-
-      return {
-        outcome: "ok",
+    async preview(sessionId, options = {}) {
+      return previewSession({
         sessionId,
-        promptIds: myIds,
-        source: sourceOf(sessionId),
-        prompts: myPrompts.map((p) => ({ id: p.id, name: p.name, mode: p.mode, order: p.order })),
-        modes: myPrompts.map((p) => p.mode),
-        sectionCount: sections.length,
-        sectionTokens,
-        contextCount: contexts.length,
-        contextTokens,
-        toolCount: tools.length,
-        toolTokens,
-        totalTokens: sectionTokens + contextTokens + toolTokens,
-        sectionsOnlyTokens: sectionTokens,
-        // 「我们的增量」—— 原生装配之上多花的部分。分两块报，因为来源不同：
-        //   oursSectionsTokens   我们**自己加的段落**（整段都是我们的）
-        //   overridesDeltaTokens 段落**改写**带来的净增减（改的可能是原生段落）
-        // ⚠️ 拿不到覆盖记录时 overridesDelta* 是 null —— 不编数字。
-        oursSectionCount,
-        oursSectionsTokens: oursSections,
-        overridesDeltaCount,
-        overridesDeltaTokens: overridesDelta,
-        overridesSectionsCleared,
-        sections,
-        contexts,
-        tools,
-        variables: assembly?.variables ?? null,
-        // 模型实际看到的东西：会话日志里的 system/message（变量已由 dsh 替换）
-        logged,
-        conflict,
-      };
+        ...options,
+        findAgent,
+        resolvePrompt,
+        resolvedIds,
+        sourceOf,
+        getSectionOverrides,
+      });
     },
-
     /** 卸载用：卸载所有已挂载荷。 */
     disposeAll() {
       for (const sessionId of [...attached.keys()]) detach(sessionId);

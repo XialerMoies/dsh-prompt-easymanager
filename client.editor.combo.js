@@ -34,6 +34,11 @@ window.__ModuleLoader__.load({
       var IconEllipsisOutlineRegular = api.ui.IconEllipsisOutlineRegular;
       var Checkbox = api.ui.Checkbox;
       var Input = api.ui.Input;
+      var presetModel = api.preset;
+      var isNativePreset = presetModel.isNativePreset;
+      var mergeEquivalentPresets = presetModel.mergeEquivalentPresets;
+      var presetLabelOf = presetModel.presetLabelOf;
+      var presetDisplayLabel = presetModel.presetDisplayLabel;
       var CARD = api.style.CARD;
       var CARD_DETAILS = api.style.CARD_DETAILS;
       var CARD_HEAD = api.style.CARD_HEAD;
@@ -68,75 +73,6 @@ window.__ModuleLoader__.load({
           if (list[i] && list[i].id === d.global.presetId) return list[i];
         }
         return null;
-      }
-
-      // 设置页和会话页必须用同一套预设语义：纯原生是固定入口，
-      // 相同内容的预设只显示一次，只有改写正文才显示「系统提示词 · 改」。
-      function isNativePreset(p) {
-        if (p && typeof p.isNative === "boolean") return p.isNative;
-        if (!p || (p.name !== "系统提示词（原生）" && p.name !== "系统提示词")) return false;
-        if (Array.isArray(p.prompts) && p.prompts.length > 0) return false;
-        var s = p.selection && typeof p.selection === "object" ? p.selection : {};
-        var sec = s.sections && typeof s.sections === "object" ? s.sections : (p.sections || {});
-        return Object.keys(sec).length === 0 &&
-          !(Array.isArray(s.listed) && s.listed.length > 0) &&
-          !(Array.isArray(s.excluded) && s.excluded.length > 0);
-      }
-
-      function presetKey(p) {
-        if (p && typeof p.signature === "string") return p.signature;
-        var s = p && p.selection && typeof p.selection === "object" ? p.selection : {};
-        var sec = s.sections && typeof s.sections === "object" ? s.sections : (p && p.sections) || {};
-        return JSON.stringify({
-          prompts: Array.isArray(p && p.prompts) ? p.prompts.slice().sort() : [],
-          listed: Array.isArray(s.listed) ? s.listed.slice().sort() : [],
-          excluded: Array.isArray(s.excluded) ? s.excluded.slice().sort() : [],
-          sections: Object.keys(sec).sort().map(function (k) { return [k, sec[k] && sec[k].text || ""]; }),
-        });
-      }
-
-      function mergeEquivalentPresets(list, preferredId) {
-        var out = [];
-        var seen = {};
-        for (var i = 0; i < list.length; i++) {
-          var p = list[i];
-          if (!p) continue;
-          var key = presetKey(p);
-          if (!(key in seen)) {
-            seen[key] = out.length;
-            out.push(p);
-          } else if (p.id === preferredId) {
-            out[seen[key]] = p;
-          }
-        }
-        return out;
-      }
-
-      function presetLabelOf(p) {
-        if (!p) return "系统提示词";
-        if (typeof p.name === "string" && p.name.trim() && p.name !== "系统提示词（原生）") return p.name.trim();
-        var prompts = Array.isArray(p.prompts) ? p.prompts : [];
-        if (prompts.length > 0) return p.name || "（无名预设）";
-        var s = p.selection && typeof p.selection === "object" ? p.selection : {};
-        var sec = s.sections && typeof s.sections === "object" ? s.sections : (p.sections || {});
-        var changed = Object.keys(sec).length +
-          (Array.isArray(s.listed) ? s.listed.length : 0) +
-          (Array.isArray(s.excluded) ? s.excluded.length : 0);
-        if (changed > 0) return "系统提示词 · 改";
-        return typeof p.label === "string" && p.label ? p.label : "系统提示词";
-      }
-
-      function presetDisplayLabel(list, index) {
-        var base = presetLabelOf(list[index]);
-        var count = 0;
-        var order = 0;
-        for (var i = 0; i < list.length; i++) {
-          if (presetLabelOf(list[i]) === base) {
-            count++;
-            if (i <= index) order++;
-          }
-        }
-        return count > 1 ? base + "（" + order + "）" : base;
       }
 
       /**

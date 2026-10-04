@@ -7,26 +7,9 @@
 // 运行：node scripts/preset_adapter_test.mjs
 
 import { createSuite } from "./lib/test-harness.mjs";
+import { toInjectorState } from "./lib/state-helpers.mjs";
 
 const { ok, eq, done } = createSuite("预设翻译层测试");
-
-// ⚠️ 从 index.js 里抠出这个函数来测。
-//    index.js 顶层会读 DSH_HOME、建提示词库，不能直接 import，
-//    所以这里把源码里的那个函数**原样 eval 出来** —— 这样测的就是真身，
-//    不是抄一份（抄一份就会跟真身漂移，那这种测试没意义）。
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(HERE, "..", "index.js"), "utf8");
-const m = SRC.match(/function toInjectorState\(state\) \{[\s\S]*?\n\}/);
-if (!m) {
-  console.error("❌ 在 index.js 里找不到 toInjectorState");
-  process.exit(1);
-}
-// eslint-disable-next-line no-new-func
-const toInjectorState = new Function(`${m[0]}; return toInjectorState;`)();
 
 const P = {
   写代码: { name: "写代码", prompts: ["格式契约", "编码规范"], sections: {} },
