@@ -176,6 +176,9 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
     // require.async 收的是相对说明符（"./client.xxx.js"），**不是**注册键
     // "dsh-prompt-easymanager/client.xxx.js" —— 那个是 importChunk 自己拼的。
     var loadPicker = function () { return req.async("./client.picker.js"); };
+    var loadPickerShared = function () { return req.async("./client.picker.shared.js"); };
+    var loadPickerSession = function () { return req.async("./client.picker.session.js"); };
+    var loadPickerHero = function () { return req.async("./client.picker.hero.js"); };
     var loadPreview = function () { return req.async("./client.preview.js"); };
     var loadEditor = function () { return req.async("./client.editor.js"); };
     /** 设置页里的「总开关」那一块 + 共用的「?」图标。 */
@@ -271,11 +274,19 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
       //    才写得进去；不删的话卸载重挂会读到上一次的（形状可能已经变了）。
       chunkCache.delete(loadPromptUi);
       return loadPreview().then(function (previewMod) {
-        return loadPicker().then(function (pickerMod) {
+        return Promise.all([loadPicker(), loadPickerShared(), loadPickerSession(), loadPickerHero()]).then(function (mods) {
+          var pickerMod = mods[0];
           // 顺手把单件也缓存上 —— 面板以后要单独取预览
           chunkCache.set(loadPreview, previewMod);
           chunkCache.set(loadPicker, pickerMod);
-          return { previewMod: previewMod, pickerMod: pickerMod };
+          chunkCache.set(loadPickerShared, mods[1]);
+          chunkCache.set(loadPickerSession, mods[2]);
+          chunkCache.set(loadPickerHero, mods[3]);
+          return {
+            previewMod: previewMod,
+            pickerMod: pickerMod,
+            pickerParts: { shared: mods[1], session: mods[2], hero: mods[3] },
+          };
         });
       });
     }
@@ -920,7 +931,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         function HeaderSlot(props) {
           var ui = useChunk(loadPromptUi);
           if (!ui) return null;
-          if (!ui.pickerMod.box) ui.pickerMod.box = ui.pickerMod.create(CHUNK_API);
+          if (!ui.pickerMod.box) ui.pickerMod.box = ui.pickerMod.create(CHUNK_API, ui.pickerParts);
           if (!ui.previewMod.box) ui.previewMod.box = ui.previewMod.create(CHUNK_API);
           return react.createElement(
             ui.pickerMod.box.PromptPicker,
@@ -1145,9 +1156,14 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
          *    面板会去改**全局那条预设**（见上面那段说明）。
          */
         function mountHeroPicker(box) {
-          require.async("./client.picker.js").then(function (mod) {
+          Promise.all([loadPicker(), loadPickerShared(), loadPickerSession(), loadPickerHero()]).then(function (mods) {
+            var mod = mods[0];
             try {
-              var box2 = mod.create(CHUNK_API);
+              var box2 = mod.create(CHUNK_API, {
+                shared: mods[1],
+                session: mods[2],
+                hero: mods[3],
+              });
               if (typeof box2.installStyles === "function") box2.installStyles();
               reactDom.render(
                 react.createElement(box2.HeroPresetChip, { container: box }),

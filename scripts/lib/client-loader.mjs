@@ -211,9 +211,9 @@ export function createClientSandbox(shims, opts = {}) {
     const mod = factory(requireFn);
     if (typeof mod.create === "function") {
       const create = mod.create;
-      mod.create = (api) => {
+      mod.create = (api, ...args) => {
         seen.api = api;
-        return create(api);
+        return create(api, ...args);
       };
     }
     cache.set(key, mod);

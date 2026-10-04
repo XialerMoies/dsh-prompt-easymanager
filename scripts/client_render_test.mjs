@@ -659,8 +659,12 @@ ok(
   "预览 chunk 跟面板**一起**拉起（点预览那一刻才炸是这条链最容易断的地方）",
 );
 const modPicker = sandbox.cache.get("dsh-prompt-easymanager/client.picker.js");
+const modPickerShared = sandbox.cache.get("dsh-prompt-easymanager/client.picker.shared.js");
+const modPickerSession = sandbox.cache.get("dsh-prompt-easymanager/client.picker.session.js");
+const modPickerHero = sandbox.cache.get("dsh-prompt-easymanager/client.picker.hero.js");
 const modEditor = sandbox.cache.get("dsh-prompt-easymanager/client.editor.js");
 ok(!!modPicker, "拿得到 picker chunk 模块");
+ok(!!modPickerShared && !!modPickerSession && !!modPickerHero, "拿得到 picker 子模块");
 ok(!!modEditor, "拿得到 editor chunk 模块");
 
 const API = sandbox.lastApi;
@@ -676,7 +680,11 @@ ok(typeof modEditor.create === "function", "editor chunk 导出了 create");
 const strict = strictApi(API);
 // 注意：真正的宿主已经用 **自己那份 api** 调过 create 了（上面两个槽位）。
 // 这里再拿 strict 包过的 api 造一份，是为了让「缺常量」在测试里炸出来。
-const pickerBox = modPicker.create(strict.api);
+const pickerBox = modPicker.create(strict.api, {
+  shared: modPickerShared,
+  session: modPickerSession,
+  hero: modPickerHero,
+});
 const editorBox = modEditor.create(strict.api);
   // ── 新会话页那个下拉框（HeroPresetChip）────────────────────────────────
   //
@@ -1301,7 +1309,9 @@ const renderEditor = (props = {}) =>
 
   // ══ 菜单项使用 dsh primitives ═══════════════════════════════════════
   {
-    const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
+    const picker = ["client.picker.js", "client.picker.shared.js", "client.picker.session.js", "client.picker.hero.js"]
+      .map((file) => readFileSync(join(HERE, "..", file), "utf8"))
+      .join("\n");
     const combo = readFileSync(join(HERE, "..", "client.editor.combo.js"), "utf8");
     const host = readFileSync(join(HERE, "..", "client.js"), "utf8");
     ok(host.includes("function PresetSelector(props)"), "宿主提供共享预设选择器");
@@ -1428,7 +1438,9 @@ const renderEditor = (props = {}) =>
 //    ⚠️ 这类 bug 渲染测试**测不出来**（节点都在、文案都对），
 //       只能静态钉住「点选之后做了哪几件事」。
 {
-  const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
+  const picker = ["client.picker.js", "client.picker.shared.js", "client.picker.session.js", "client.picker.hero.js"]
+    .map((file) => readFileSync(join(HERE, "..", file), "utf8"))
+    .join("\n");
 
   /** 抠出一个函数的源码（按花括号配平 —— 别用 indexOf 切片，函数顺序不是想当然的）。 */
   function fnOf(src, name) {
@@ -2666,6 +2678,9 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
           const ALLOWED = {
             "client.editor.js": [],                       // 一个都不留
             "client.picker.js": ["ROW", "PILL_SWITCH"],
+            "client.picker.shared.js": [],
+            "client.picker.session.js": [],
+            "client.picker.hero.js": [],
             "client.preview.js": ["SEC"],
           };
           for (const [file, allowed] of Object.entries(ALLOWED)) {
@@ -3368,6 +3383,9 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     "client.editor.switch.js",
     "client.editor.library.js",
     "client.picker.js",
+    "client.picker.shared.js",
+    "client.picker.session.js",
+    "client.picker.hero.js",
     "client.preview.js",
   ];
   const bad = [];
@@ -3431,6 +3449,9 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     "client.editor.switch.js",
     "client.editor.library.js",
     "client.picker.js",
+    "client.picker.shared.js",
+    "client.picker.session.js",
+    "client.picker.hero.js",
     "client.preview.js",
   ];
   const problems = [];
