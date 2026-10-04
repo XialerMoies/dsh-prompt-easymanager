@@ -691,14 +691,20 @@ window.__ModuleLoader__.load({
         type: "button",
         variant: "outline",
         disabled: props.busy || !!props.edit,
-        onClick: newPrompt,
+         onClick: function () { newPrompt(props); },
       },
       "新建",
     ),
     react.createElement(
       ActionButton,
-      { key: "r", variant: "outline", disabled: props.busy, onClick: props.load },
-      "刷新",
+      {
+        key: "r",
+        variant: "outline",
+        disabled: props.busy || !!props.edit,
+        title: "从磁盘重新读取提示词库",
+        onClick: props.reload || props.load,
+      },
+      "重新读取",
     ),
     ],
   );

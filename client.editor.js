@@ -75,6 +75,7 @@ window.__ModuleLoader__.load({
       var ROUTE_STATE = api.route.ROUTE_STATE;
       var ROUTE_SECTIONS = api.route.ROUTE_SECTIONS;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
+      var ROUTE_RELOAD = api.route.ROUTE_RELOAD;
       // ⚠️ **`ROUTE_GLOBAL` 以前漏了拿，于是「全局注入」那个开关一点就炸：**
       //
       //        Uncaught ReferenceError: ROUTE_GLOBAL is not defined
@@ -358,6 +359,34 @@ window.__ModuleLoader__.load({
         react.useEffect(function () {
           loadPresets();
         }, [loadPresets]);
+
+        /** 重新读取磁盘上的提示词库，并刷新依赖它的三份页面数据。 */
+        var reloadLibrary = react.useCallback(function () {
+          setBusy(true);
+          return fetch(ROUTE_RELOAD, { method: "POST" })
+            .then(function (res) {
+              return res.json().then(function (j) {
+                if (!res.ok) throw new Error((j && j.error) || "HTTP " + res.status);
+                return j;
+              });
+            })
+            .then(function (d) {
+              if (!mountedRef.current) return null;
+              flash("已重新读取提示词库");
+              load();
+              loadPresets();
+              loadSections();
+              return d;
+            })
+            .catch(function (e) {
+              if (mountedRef.current) flash("重新读取失败：" + ((e && e.message) || String(e)));
+              return null;
+            })
+            .then(function (d) {
+              if (mountedRef.current) setBusy(false);
+              return d;
+            });
+        }, [flash, load, loadPresets, loadSections]);
 
         // ⚠️ **草稿跟着「当前是哪条预设」走** —— 换一条预设就重建草稿。
         //    不重建的话勾选框还显示上一条的内容，跟盘上对不上。
@@ -803,6 +832,7 @@ function presetById(d, id) {
                   setOpenId: setOpenId,
                   setClosedCats: setClosedCats,
                   load: load,
+                    reload: reloadLibrary,
                 })
               : null,
           );

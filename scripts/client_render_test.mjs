@@ -2724,7 +2724,32 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     ok(text.includes("format-contract"), "显示 id");
     ok(text.includes("正向格式载荷"), "显示说明");
     ok(text.includes("新建"), "有新建按钮");
-    ok(text.includes("刷新"), "有刷新按钮");
+    ok(text.includes("重新读取"), "有重新读取按钮");
+    const newPromptButton = findEl(el, (n) => n.type === "button" && flattenText(n).join("") === "新建");
+    ok(!!newPromptButton, "找得到个人提示词的新建按钮");
+    if (newPromptButton) {
+      let newPromptError = null;
+      try {
+        newPromptButton.props.onClick();
+      } catch (e) {
+        newPromptError = e;
+      }
+      eq(newPromptError, null, "点击新建会进入新提示词表单（不会把事件对象当成 props）");
+    }
+    const realFetch = globalThis.fetch;
+    const reloadRequests = [];
+    globalThis.fetch = (url, init) => {
+      reloadRequests.push({ url: String(url), method: init && init.method });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ prompts: [] }) });
+    };
+    const reloadButton = findEl(el, (n) => n.type === "button" && flattenText(n).join("") === "重新读取");
+    ok(!!reloadButton, "找得到个人提示词的重新读取按钮");
+    if (reloadButton) reloadButton.props.onClick();
+    globalThis.fetch = realFetch;
+    ok(
+      reloadRequests.some((r) => r.url.endsWith("/api/prompt-easymanager/reload") && r.method === "POST"),
+      "重新读取会请求后端 reload 路由，而不是只重读内存数据",
+    );
     ok(text.includes("X:\\test\\prompts"), "显示正文目录");
     // ⚠️ 页脚现在**只有**这一行。原来堆了四条并列说明（order 怎么算、哪层生效、
     //    保存后会发生什么、正文写在哪），叠在一起就是一片灰字没人看。
