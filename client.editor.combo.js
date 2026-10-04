@@ -574,22 +574,6 @@ window.__ModuleLoader__.load({
                 style: { display: "flex", alignItems: "center", gap: "6px", flex: "none", marginLeft: "auto" },
               },
               [
-                props.renaming
-                  ? react.createElement(
-                      ActionButton,
-                      {
-                        key: "cancel-rename",
-                        type: "button",
-                        variant: "ghost",
-                        disabled: bus,
-                        onClick: function () {
-                          if (newPresetMode) props.setPresetName("");
-                          props.setRenaming(false);
-                        },
-                      },
-                      "取消",
-                    )
-                  : null,
                 react.createElement(
                   ActionButton,
                   {
@@ -618,6 +602,22 @@ window.__ModuleLoader__.load({
                         ? "保存中…"
                         : "保存",
                 ),
+                props.renaming
+                  ? react.createElement(
+                      ActionButton,
+                      {
+                        key: "cancel-rename",
+                        type: "button",
+                        variant: "outline",
+                        disabled: bus,
+                        onClick: function () {
+                          if (newPresetMode) props.setPresetName("");
+                          props.setRenaming(false);
+                        },
+                      },
+                      "取消",
+                    )
+                  : null,
                 !props.renaming
                   ? react.createElement(
                       Menu,

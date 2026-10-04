@@ -4009,6 +4009,53 @@ function makeSectionsData(over = {}) {
     ok(text.includes("保存"), "**预设卡片**里有保存按钮");
   ok(!text.includes("未保存的配置"), "匹配到预设时不显示「未保存的配置」占位");
 
+  // 改名/新建预设时，操作按钮统一为「保存、取消」，并使用原生主/次按钮。
+  {
+    const renameShims = makeShims();
+    const renameSandbox = createClientSandbox(renameShims);
+    renameSandbox.preload("client.editor.combo.js");
+    const renameChunk = renameSandbox.cache.get("dsh-prompt-easymanager/client.editor.combo.js");
+    const renameCombo = renameChunk.create(strict.api).ComboBlock;
+    const renameProps = {
+      ...EDITOR_PROPS,
+      prompts: lib,
+      presetsData: presetData,
+      presetsBusy: false,
+      presetName: "写代码",
+      renameDraft: "写代码",
+      renaming: true,
+      globalEnabled: true,
+      presetDraft: [],
+      presetSelection: { listed: [], excluded: [], sections: {}, known: [] },
+      sectionsData: { availableNative: [] },
+      setRenaming: () => {},
+      setRenameDraft: () => {},
+      setPresetName: () => {},
+      setPresetDraft: () => {},
+      setPresetSelection: () => {},
+      doPreset: () => {},
+      loadPresets: () => {},
+      flash: () => {},
+      setActivePrompts: () => {},
+    };
+    const renameView = renameShims.render(renameCombo, renameProps);
+    const renameButtons = [];
+    const collectButtons = (node) => {
+      if (!node || typeof node !== "object") return;
+      if (node.type === "button" && node.props && node.props.variant) renameButtons.push(node);
+      for (const child of node.children || []) collectButtons(child);
+    };
+    collectButtons(renameView);
+    const actions = renameButtons.filter((button) => {
+      const label = flattenText(button).join("");
+      return label === "保存名称" || label === "取消";
+    });
+    eq(actions.map((button) => button.props.variant), ["primary", "outline"],
+      "预设改名操作使用主/次原生样式且保存在前");
+    eq(actions.map((button) => flattenText(button).join("")), ["保存名称", "取消"],
+      "预设改名操作顺序为保存、取消");
+  }
+
   // 下拉框：选项是各条预设，选中项 = 当前匹配的那条
   {
     const sel = findEl(comboEl, (n) => n.props && n.props["data-dsh-menu"] === "1");
