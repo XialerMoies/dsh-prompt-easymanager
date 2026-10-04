@@ -23,27 +23,18 @@ window.__ModuleLoader__.load({
      */
     function create(api) {
       var ActionButton = api.ui.ActionButton;
-      var PromptManagerIcon = api.ui.PromptManagerIcon;
+      var PresetSelector = api.ui.PresetSelector;
+      var IconEditOutlineRegular = api.ui.IconEditOutlineRegular;
       var IconChevronDownOutlineRegular = api.ui.IconChevronDownOutlineRegular;
       var Menu = api.ui.Menu;
-      var SELECT_SM = api.style.SELECT_SM;
-      var HERO_CHIP = api.style.HERO_CHIP;
+      var StateDot = api.ui.StateDot;
+      var Tag = api.ui.Tag;
       var SLOT_HEAD = api.style.SLOT_HEAD;
       var CARD_MAIN_ROW = api.style.CARD_MAIN_ROW;
       var SLOT_WHY = api.style.SLOT_WHY;
       var RAW_NAME = api.style.RAW_NAME;
-      var DOT = api.style.DOT;
-      var DOT_OK = api.style.DOT_OK;
-      var DOT_DEFAULT = api.style.DOT_DEFAULT;
-      var DOT_WAIT = api.style.DOT_WAIT;
-      var DOT_ERR = api.style.DOT_ERR;
-      var ERRBOX = api.style.ERRBOX;
-      var PICK = api.style.PICK;
-      var PICK_ON = api.style.PICK_ON;
       var MONO = api.style.MONO;
       var MONO_TAIL = api.style.MONO_TAIL;
-      var WARN = api.style.WARN;
-      var ADVISE = api.style.ADVISE;
       var MUTED = api.style.MUTED;
       var HEADING = api.style.HEADING;
       var SUMSUM = api.style.SUMSUM;
@@ -52,8 +43,6 @@ window.__ModuleLoader__.load({
       var CARD_TITLE = api.style.CARD_TITLE;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
-      var MSG_ERR = api.style.MSG_ERR;
-      var MSG_OK = api.style.MSG_OK;
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
@@ -64,11 +53,6 @@ window.__ModuleLoader__.load({
       var ROUTE_PREVIEW = api.route.ROUTE_PREVIEW;
       var ROUTE_RELOAD = api.route.ROUTE_RELOAD;
 
-      // ⚠️ 这里原来有一份**本地兜底**的 SELECT_SM（同一作用域重复 var，后声明者赢）——
-      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
-
-      // ⚠️ 这里原来有一份**本地兜底**的 ADVISE（同一作用域重复 var，后声明者赢）——
-      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       // ⚠️ 这里原来有一份**本地兜底**的 ROW（同一作用域重复 var，后声明者赢）——
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       // ── 多选面板 ──────────────────────────────────────────────────────────
@@ -156,17 +140,12 @@ window.__ModuleLoader__.load({
               //    （勾要跟着挪到新选项上），最后**关掉面板**。
               props.onApplied && props.onApplied();
               setTick(tick + 1);
-              // ⚠️ **选完自动关** —— 用户要的是「点一下就生效」。
-              //    留着浮窗反而让人以为没生效（他就是这么报告的）。
-              if (props.onClose) props.onClose();
               return null;
             })
             .catch(function (e) {
               setErr((e && e.message) || String(e));
             });
         }
-
-        var rows = [];
 
         // ── ────────────────────────────────────────────────────────
         // 「当前实际用哪条」（宿主算好的，面板不自己猜）
@@ -203,16 +182,19 @@ window.__ModuleLoader__.load({
           });
         }
 
-        return react.createElement(Menu, {
+        return react.createElement(PresetSelector, {
           open: props.open,
-          anchor: props.anchor,
+          onOpenChange: props.onOpenChange,
+          label: props.label || "系统提示词",
+          variant: props.anchorProps && props.anchorProps.variant,
+          anchorProps: props.anchorProps,
+          disabled: busy,
+          title: "这个会话用哪套提示词组合",
+          "aria-label": "选择这个会话的提示词预设",
           items: menuItems,
           selectedId: activeId,
           onSelect: selectOption,
           onClose: onClose,
-          align: "start",
-          side: "bottom",
-          portal: true,
         });
       }
 
@@ -566,38 +548,16 @@ window.__ModuleLoader__.load({
           }
         }
 
-        var anchor = react.createElement(
-          ActionButton,
-          {
-            size: "sm",
-            icon: react.createElement(PromptManagerIcon, { size: 14 }),
-            "aria-haspopup": "menu",
-            "aria-expanded": open ? "true" : "false",
-            title: "这个新会话用哪套提示词组合",
-            onClick: function () {
-              setOpen(function (value) { return !value; });
-            },
+        return react.createElement(HeroPresetPanel, {
+          data: data,
+          open: open,
+          onOpenChange: setOpen,
+          label: label,
+          onClose: function () {
+            setOpen(false);
           },
-          [
-            react.createElement("span", { key: "label" }, label),
-            react.createElement(
-              "span",
-              { key: "chevron", style: { color: "rgb(129, 133, 140)", display: "inline-flex" } },
-              react.createElement(IconChevronDownOutlineRegular, { size: 12 }),
-            ),
-          ],
-        );
-        return open
-          ? react.createElement(HeroPresetPanel, {
-              data: data,
-              open: true,
-              anchor: anchor,
-              onClose: function () {
-                setOpen(false);
-              },
-              onApplied: load,
-            })
-          : anchor;
+          onApplied: load,
+        });
       }
 
       /**
@@ -716,16 +676,16 @@ window.__ModuleLoader__.load({
             text: "还没有任何提示词组合。去「设置 → 提示词管理 → 提示词组合」存一条。",
           });
         }
-        return react.createElement(Menu, {
+        return react.createElement(PresetSelector, {
           open: props.open,
-          anchor: props.anchor,
+          onOpenChange: props.onOpenChange,
+          label: props.label || "系统提示词（原生）",
+          title: "这个新会话用哪套提示词组合",
+          "aria-label": "选择新会话的提示词预设",
           items: menuItems,
           selectedId: activeMenuId && activeMenuId.id,
           onSelect: selectOption,
           onClose: props.onClose,
-          align: "start",
-          side: "bottom",
-          portal: true,
         });
       }
 
@@ -1005,10 +965,17 @@ window.__ModuleLoader__.load({
         for (var j = 0; j < diagSessions.length; j++) {
           if (diagSessions[j] && diagSessions[j].sessionId === sessionId) mine = diagSessions[j];
         }
-        var dotStyle = DOT;
+        var dotState = !data
+          ? "ongoing"
+          : hasErr
+            ? "error"
+            : customized && mine && !mine.agentLive
+              ? "warning"
+              : customized
+                ? "done"
+                : "idle";
         var statusText = "正在读取…";
         if (hasErr) {
-          dotStyle = DOT_ERR;
           statusText = "通信失败：" + err;
         } else if (!customized) {
           statusText = "全部用 dsh 原样 —— 没加自设提示词，也没改原生段落";
@@ -1043,52 +1010,28 @@ window.__ModuleLoader__.load({
         }
         var title = "个人提示词 · " + statusText;
 
-        var presetAnchor = react.createElement(
-          ActionButton,
-          {
-            type: "button",
-            variant: hasErr ? "outline" : "ghost",
-            size: "sm",
-            icon: react.createElement(PromptManagerIcon, { size: 14 }),
-            disabled: busy,
-            onClick: function () {
-              setPicking(function (value) { return !value; });
-            },
-            title: title + "（点击选择）",
-            "aria-haspopup": "menu",
-            "aria-expanded": picking ? "true" : "false",
-            "data-prompt-manager": hasErr ? "error" : currentIds.join(",") || "none",
-            "data-prompt-source": hasExplicit ? "explicit" : "default",
-          },
-          [
-            react.createElement("span", { key: "label" }, label),
-            react.createElement(
-              "span",
-              { key: "chevron", style: { color: "rgb(129, 133, 140)", display: "inline-flex" } },
-              react.createElement(IconChevronDownOutlineRegular, { size: 12 }),
-            ),
-          ],
-        );
-
         return react.createElement(
           "span",
           { style: ROW },
-          react.createElement("span", { style: dotStyle, title: statusText }),
-          hasErr ? react.createElement("span", { style: ERRBOX, title: err }, "✕ " + err) : null,
-          picking
-            ? react.createElement(PresetDropdown, {
-                data: data,
-                sessionId: sessionId,
-                busy: busy,
-                open: true,
-                anchor: presetAnchor,
-                onClose: function () {
-                  setPicking(false);
-                },
-                // ⚠️ 点选成功后由面板刷新自己的 /presets，再关闭菜单。
-                onApplied: load,
-              })
-            : presetAnchor,
+          react.createElement("span", { title: statusText }, react.createElement(StateDot, { state: dotState })),
+          hasErr
+            ? react.createElement("span", { title: err }, react.createElement(Tag, { tone: "danger" }, "✕ " + err))
+            : null,
+          react.createElement(PresetDropdown, {
+            data: data,
+            sessionId: sessionId,
+            busy: busy,
+            open: picking,
+            onOpenChange: setPicking,
+            label: label,
+            anchorProps: {
+              variant: hasErr ? "outline" : "ghost",
+              "data-prompt-manager": hasErr ? "error" : currentIds.join(",") || "none",
+              "data-prompt-source": hasExplicit ? "explicit" : "default",
+            },
+            // 点选成功后由面板刷新自己的 /presets；菜单保持打开，用户自行关闭。
+            onApplied: load,
+          }),
           react.createElement(
             ActionButton,
             {
@@ -1116,8 +1059,8 @@ window.__ModuleLoader__.load({
           message
             ? react.createElement(
                 "span",
-                { style: hasErr ? MSG_ERR : MSG_OK, title: message, "data-prompt-message": "1" },
-                message,
+                { title: message, "data-prompt-message": "1" },
+                react.createElement(Tag, { tone: hasErr ? "danger" : "success" }, message),
               )
             : null,
           preview

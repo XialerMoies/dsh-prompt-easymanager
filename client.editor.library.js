@@ -24,7 +24,11 @@ window.__ModuleLoader__.load({
 
     function create(api) {
       var ActionButton = api.ui.ActionButton;
-      var NativeInput = api.ui.NativeInput;
+      var Button = api.ui.Button;
+      var Input = api.ui.Input;
+      var Menu = api.ui.Menu;
+      var Tag = api.ui.Tag;
+      var IconChevronDownOutlineRegular = api.ui.IconChevronDownOutlineRegular;
       var fmtTokens = api.tokens;
       var CARD = api.style.CARD;
       var CARDS_GRID = api.style.CARDS_GRID;
@@ -41,20 +45,17 @@ window.__ModuleLoader__.load({
       var DETAILS_GRID = api.style.DETAILS_GRID;
       var DT = api.style.DT;
       var FORM = api.style.FORM;
+      var FORM_FIELD = api.style.FORM_FIELD;
       var FORM_LABEL = api.style.FORM_LABEL;
-      var FORM_LINE = api.style.FORM_LINE;
+      var FORM_ROW = api.style.FORM_ROW;
+      var FORM_TEXTAREA = api.style.FORM_TEXTAREA;
       var HEADING_COUNT = api.style.HEADING_COUNT;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       // ⚠️ MODE_LABEL **不在 api.style 里** —— 宿主是当 api.mode 导出的
       //    （跟 api.label / api.tokens 一样，是函数不是样式对象）。
       var MODE_LABEL = api.mode;
       var MONO = api.style.MONO;
-      var MSG_ERR = api.style.MSG_ERR;
-      var MSG_OK = api.style.MSG_OK;
       var MUTED = api.style.MUTED;
-      var PILL = api.style.PILL;
-      var PILL_APPEND = api.style.PILL_APPEND;
-      var PILL_WARN = api.style.PILL_WARN;
       var RAW_NAME = api.style.RAW_NAME;
       var STATUS_LINE = api.style.STATUS_LINE;
 
@@ -155,13 +156,54 @@ window.__ModuleLoader__.load({
     };
   }
 
+  function MenuSelect(props) {
+    var openState = react.useState(false);
+    var open = openState[0];
+    var setOpen = openState[1];
+    var current = props.options.find(function (option) { return option.id === props.value; });
+    var anchor = react.createElement(
+      ActionButton,
+      {
+        type: "button",
+        disabled: props.disabled,
+        title: props.title,
+        "data-pm-category": props["data-pm-category"],
+        "aria-haspopup": "menu",
+        "aria-expanded": open ? "true" : "false",
+        onClick: function () { setOpen(function (value) { return !value; }); },
+      },
+      [
+        react.createElement("span", { key: "label" }, current ? current.label : props.placeholder || "选择"),
+        react.createElement(
+          "span",
+          { key: "icon", style: { color: "var(--dsw-alias-label-tertiary)", display: "inline-flex" } },
+          react.createElement(IconChevronDownOutlineRegular, { size: 12 }),
+        ),
+      ],
+    );
+    return react.createElement(Menu, {
+      open: open,
+      anchor: anchor,
+      items: props.options.map(function (option) {
+        return { id: option.id, label: option.label, disabled: option.disabled === true };
+      }),
+      selectedId: props.value,
+      onSelect: function (id) {
+        setOpen(false);
+        props.onChange(id);
+      },
+      onClose: function () { setOpen(false); },
+      portal: true,
+    });
+  }
+
   function renderForm(props) {
     if (!props.edit) return null;
     var idOk = /^[a-z0-9][a-z0-9._-]*$/i.test(props.edit.id || "");
     return react.createElement("div", { style: FORM }, [
-      react.createElement("div", { key: "r1", style: FORM_LINE }, [
+      react.createElement("div", { key: "r1", style: FORM_FIELD }, [
         react.createElement("span", { key: "l", style: FORM_LABEL }, "id"),
-        react.createElement(NativeInput, {
+        react.createElement(Input, {
           key: "i",
           value: props.edit.id,
           disabled: !props.edit.isNew,
@@ -169,110 +211,108 @@ window.__ModuleLoader__.load({
           placeholder: "只允许字母数字 . _ -",
           title: props.edit.isNew ? "唯一标识，创建后不可改" : "已存在的条目不能改 id（改 id 等于换一条）",
         }),
-        !idOk ? react.createElement("span", { key: "w", style: PILL_WARN }, "id 非法") : null,
+        !idOk ? react.createElement(Tag, { key: "w", tone: "warning" }, "id 非法") : null,
       ]),
-      react.createElement("div", { key: "r2", style: FORM_LINE }, [
-        react.createElement("span", { key: "l", style: FORM_LABEL }, "名称"),
-        react.createElement(NativeInput, {
-          key: "i",
-          value: props.edit.name,
-          onChange: field("name", props),
-          placeholder: "显示名",
-        }),
-        react.createElement("span", { key: "l2", style: FORM_LABEL }, "模式"),
-        react.createElement(
-          "select",
-          { key: "s", value: props.edit.mode, onChange: field("mode") },
-          [
-            react.createElement("option", { key: "a", value: "append" }, "追加"),
-            react.createElement("option", { key: "n", value: "none" }, "不注入"),
-          ],
-        ),
+      react.createElement("div", { key: "r2", style: FORM_ROW }, [
+        react.createElement("div", { key: "name", style: FORM_FIELD }, [
+          react.createElement("span", { key: "l", style: FORM_LABEL }, "名称"),
+          react.createElement(Input, {
+            key: "i",
+            value: props.edit.name,
+            onChange: field("name", props),
+            placeholder: "显示名",
+          }),
+        ]),
+        react.createElement("div", { key: "mode", style: FORM_FIELD }, [
+          react.createElement("span", { key: "l", style: FORM_LABEL }, "模式"),
+          react.createElement(MenuSelect, {
+            key: "s",
+            value: props.edit.mode,
+            options: [
+              { id: "append", label: "追加" },
+              { id: "none", label: "不注入" },
+            ],
+            onChange: function (value) {
+              props.setEdit(function (prev) { return Object.assign({}, prev, { mode: value }); });
+            },
+          }),
+        ]),
       ]),
-      // 分类：**用 <select>，不用 <datalist>**。
-      //
-      // 曾经用 `<input list="…">` + `<datalist>` 想"既能挑又能写"，
-      // 但用户反馈**下拉弹不出来、选不了**。datalist 是原生控件，
-      // 弹出行为受浏览器/样式环境影响，我在这边看不到也调不动 ——
-      // 换成 select，行为完全由我控制。
-      //
-      // 五个内置类是固定表，本来就适合 select；自定义部分用
-      // 「已存在的自定义分类」进选项、再加一个「＋ 自定义…」。
-      // 改分类会带出该类别的建议 order（order 输入框仍可手改）。
-      react.createElement("div", { key: "r2b", style: FORM_LINE }, [
-        react.createElement("span", { key: "l", style: FORM_LABEL }, "分类"),
-        (function () {
-          var CAT_CUSTOM = "\u0000custom";
-          var current = props.edit.category || "";
-          var isBuiltin = props.builtinCategories.some(function (c) {
-            return c.id === current;
-          });
-          // 当前值既不是内置、也不在已知自定义里 → 也是"自定义"
-          var isKnownCustom = props.customCategories.indexOf(current) >= 0;
-          var selectValue = isBuiltin ? current : isKnownCustom ? current : CAT_CUSTOM;
-          var opts = [];
-          for (var i = 0; i < props.builtinCategories.length; i++) {
-            (function (c) {
-              opts.push(react.createElement("option", { key: c.id, value: c.id }, c.name + "（" + c.id + "）"));
-            })(props.builtinCategories[i]);
-          }
-          for (var j = 0; j < props.customCategories.length; j++) {
-            (function (c) {
-              opts.push(react.createElement("option", { key: "c-" + c, value: c }, c + "（自定义）"));
-            })(props.customCategories[j]);
-          }
-          opts.push(react.createElement("option", { key: "custom", value: CAT_CUSTOM }, "＋ 自定义…"));
-          return react.createElement(
-            "span",
-            { key: "cw", style: { display: "inline-flex", gap: "6px", alignItems: "center", flex: "0 1 auto", minWidth: "0" } },
-            [
-              react.createElement(
-                "select",
-                {
+      // 分类菜单复用 DSH Menu；自定义分类仍通过文本输入处理。
+      react.createElement("div", { key: "r2b", style: FORM_ROW }, [
+        react.createElement("div", { key: "category", style: FORM_FIELD }, [
+          react.createElement("span", { key: "l", style: FORM_LABEL }, "分类"),
+          (function () {
+            var CAT_CUSTOM = "\u0000custom";
+            var current = props.edit.category || "";
+            var isBuiltin = props.builtinCategories.some(function (c) {
+              return c.id === current;
+            });
+            // 当前值既不是内置、也不在已知自定义里 → 也是"自定义"
+            var isKnownCustom = props.customCategories.indexOf(current) >= 0;
+            var selectValue = isBuiltin ? current : isKnownCustom ? current : CAT_CUSTOM;
+            var opts = [];
+            for (var i = 0; i < props.builtinCategories.length; i++) {
+              (function (c) {
+                opts.push({ id: c.id, label: c.name + "（" + c.id + "）" });
+              })(props.builtinCategories[i]);
+            }
+            for (var j = 0; j < props.customCategories.length; j++) {
+              (function (c) {
+                opts.push({ id: c, label: c + "（自定义）" });
+              })(props.customCategories[j]);
+            }
+            opts.push({ id: CAT_CUSTOM, label: "＋ 自定义…" });
+            return react.createElement(
+              "span",
+              { key: "cw", style: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", minWidth: "0" } },
+              [
+                react.createElement(MenuSelect, {
                   key: "sel",
                   value: selectValue,
+                  options: opts,
                   "data-pm-category": "select",
-                  onChange: function (e) {
-                    var v = e.target.value;
+                  onChange: function (v) {
                     if (v === CAT_CUSTOM) {
-                      // 切到"自定义"：给个空框让用户写，不动 order（自定义没有建议值）
-                      props.setEdit(function (prev) {
-                        return Object.assign({}, prev, { category: "" });
-                      });
+                      props.setEdit(function (prev) { return Object.assign({}, prev, { category: "" }); });
                       return;
                     }
                     setCategory(v, props);
                   },
-                },
-                opts,
-              ),
-              // 只有"自定义"时才出现输入框
-              isBuiltin || isKnownCustom
-                ? null
-                : react.createElement(NativeInput, {
-                    key: "txt",
-                    value: current,
-                    "data-pm-category": "text",
-                    onChange: function (e) {
-                      var v = e.target.value;
-                      props.setEdit(function (prev) {
-                        return Object.assign({}, prev, { category: v });
-                      });
-                    },
-                    placeholder: "自己起个分类名",
-                    title: "自定义分类没有建议 order，不会动你已填的 order。",
-                  }),
-            ],
-          );
-        })(),
-        react.createElement("span", { key: "l3", style: FORM_LABEL }, "order"),
-        react.createElement(NativeInput, {
-          key: "o",
-          type: "number",
-          value: props.edit.order,
-          onChange: field("order", props),
-          title: "插入位置。100 = persona 之后、工具说明之前；2900 = 工具说明之后",
-        }),
+                }),
+                // 只有"自定义"时才出现输入框
+                isBuiltin || isKnownCustom
+                  ? null
+                  : react.createElement(
+                      "div",
+                      { key: "custom-wrap", style: { display: "grid", flex: "1 1 180px", minWidth: "0" } },
+                      react.createElement(Input, {
+                        value: current,
+                        "data-pm-category": "text",
+                        onChange: function (e) {
+                          var v = e.target.value;
+                          props.setEdit(function (prev) {
+                            return Object.assign({}, prev, { category: v });
+                          });
+                        },
+                        placeholder: "自己起个分类名",
+                        title: "自定义分类没有建议 order，不会动你已填的 order。",
+                      }),
+                    ),
+              ],
+            );
+          })(),
+        ]),
+        react.createElement("div", { key: "order", style: FORM_FIELD }, [
+          react.createElement("span", { key: "l", style: FORM_LABEL }, "order"),
+          react.createElement(Input, {
+            key: "o",
+            type: "number",
+            value: props.edit.order,
+            onChange: field("order", props),
+            title: "插入位置。100 = persona 之后、工具说明之前；2900 = 工具说明之后",
+          }),
+        ]),
       ]),
       react.createElement(
         "div",
@@ -290,9 +330,9 @@ window.__ModuleLoader__.load({
           return (hint ? hint + "　" : "") + pos;
         })(),
       ),
-      react.createElement("div", { key: "r3", style: FORM_LINE }, [
+      react.createElement("div", { key: "r3", style: FORM_FIELD }, [
         react.createElement("span", { key: "l", style: FORM_LABEL }, "说明"),
-      react.createElement(NativeInput, {
+        react.createElement(Input, {
           key: "i",
           value: props.edit.description,
           onChange: field("description", props),
@@ -305,12 +345,16 @@ window.__ModuleLoader__.load({
             { key: "none-note", style: MUTED },
             "不注入模式不需要正文 —— 已有的正文文件在保存时会被删除。",
           )
-        : react.createElement("textarea", {
-            key: "t",
-            value: props.edit.text,
-            onChange: field("text", props),
-            placeholder: "提示词正文（保存后写到 prompts/" + props.edit.id + ".md）",
-          }),
+        : react.createElement("div", { key: "body", style: FORM_FIELD }, [
+            react.createElement("span", { key: "l", style: FORM_LABEL }, "正文"),
+            react.createElement("textarea", {
+              key: "t",
+              style: FORM_TEXTAREA,
+              value: props.edit.text,
+              onChange: field("text", props),
+              placeholder: "提示词正文（保存后写到 prompts/" + props.edit.id + ".md）",
+            }),
+          ]),
       react.createElement("div", { key: "foot", style: CARD_ACTIONS }, [
         react.createElement(
           "span",
@@ -368,8 +412,8 @@ window.__ModuleLoader__.load({
   }
 
   function pillFor(mode) {
-    if (mode === "append") return react.createElement("span", { style: PILL_APPEND }, "追加");
-    return react.createElement("span", { style: PILL }, "不注入");
+    if (mode === "append") return react.createElement(Tag, { tone: "info" }, "追加");
+    return react.createElement(Tag, { tone: "outline" }, "不注入");
   }
 
   /**
@@ -426,16 +470,18 @@ window.__ModuleLoader__.load({
       },
       [
         react.createElement(
-          "button",
+          Button,
           {
             key: "head",
             type: "button",
-            className: "pm-head",
+            variant: "ghost",
+            size: "md",
+            "data-pm-disclosure": "1",
             style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
               flexDirection: "row",
               minHeight: "0",
+              height: "auto",
               padding: "10px 14px",
-              cursor: "pointer",
             }),
             "aria-expanded": isOpen,
             onClick: function () {
@@ -449,11 +495,16 @@ window.__ModuleLoader__.load({
           [
             react.createElement("span", { key: "n", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto" }) }, categoryName(g.id, props)),
             isCustom
-              ? react.createElement("span", { key: "t", style: PILL }, "自定义分类")
+              ? react.createElement(Tag, { key: "t", tone: "quiet" }, "自定义分类")
               : null,
             react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
             react.createElement("span", { key: "c", style: HEADING_COUNT }, g.items.length + " 条"),
-            react.createElement("span", { key: "ch", style: isOpen ? CHEVRON_OPEN : CHEVRON }, "›"),
+            react.createElement(
+              "span",
+              { key: "ch", style: isOpen ? CHEVRON_OPEN : CHEVRON },
+              react.createElement("span", { style: { color: "var(--dsw-alias-label-tertiary)" } },
+                react.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+            ),
           ],
         ),
         isOpen
@@ -474,17 +525,19 @@ window.__ModuleLoader__.load({
     return react.createElement(
       // 与原生 .card 对齐：.5px 描边 + settings-card-fill + radius-xl + overflow hidden
       "div",
-      { key: p.id, style: isOpen ? Object.assign({}, CARD, { borderColor: "var(--dsw-alias-border-l3, rgba(128,128,128,.4))" }) : CARD },
+      { key: p.id, style: isOpen ? Object.assign({}, CARD, { borderColor: "var(--dsw-alias-border-l3)" }) : CARD },
       react.createElement(
-        "button",
+        Button,
         {
           type: "button",
-          className: "pm-head",
+          variant: "ghost",
+          size: "md",
+          "data-pm-disclosure": "1",
           style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
             flexDirection: "row",
             minHeight: "0",
+            height: "auto",
             padding: "10px 14px",
-            cursor: "pointer",
           }),
           "aria-expanded": isOpen,
           onClick: function () {
@@ -502,7 +555,12 @@ window.__ModuleLoader__.load({
           react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
           pillFor(p.mode),
           react.createElement("span", { key: "c", style: HEADING_COUNT }, fmtTokens(p.tokens)),
-          react.createElement("span", { key: "ch", style: isOpen ? CHEVRON_OPEN : CHEVRON }, "›"),
+          react.createElement(
+            "span",
+            { key: "ch", style: isOpen ? CHEVRON_OPEN : CHEVRON },
+            react.createElement("span", { style: { color: "var(--dsw-alias-label-tertiary)" } },
+              react.createElement(IconChevronDownOutlineRegular, { size: 14 })),
+          ),
         ],
       ),
       // 第二行留给描述：没有就不占位（原来无论有没有都留一行空）
@@ -623,14 +681,15 @@ window.__ModuleLoader__.load({
     react.createElement("h3", { key: "t", style: Object.assign({}, HEADING_TITLE, { margin: 0 }) }, "个人提示词"),
     react.createElement("span", { key: "c", style: HEADING_COUNT }, props.prompts.length + " 条"),
     react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-    props.message
-      ? react.createElement("span", { key: "m", style: props.err ? MSG_ERR : MSG_OK, title: props.message }, props.message)
+      props.message
+      ? react.createElement(Tag, { key: "m", tone: props.err ? "danger" : "success" }, props.message)
       : null,
     react.createElement(
       ActionButton,
       {
         key: "n",
         type: "button",
+        variant: "outline",
         disabled: props.busy || !!props.edit,
         onClick: newPrompt,
       },
@@ -638,7 +697,7 @@ window.__ModuleLoader__.load({
     ),
     react.createElement(
       ActionButton,
-      { key: "r", disabled: props.busy, onClick: props.load },
+      { key: "r", variant: "outline", disabled: props.busy, onClick: props.load },
       "刷新",
     ),
     ],

@@ -26,19 +26,17 @@ window.__ModuleLoader__.load({
       var SEC_OURS = api.style.SEC_OURS;
       var MONO = api.style.MONO;
       var MONO_TAIL = api.style.MONO_TAIL;
-      var WARN = api.style.WARN;
-      var ADVISE = api.style.ADVISE;
+      var NOTICE_ROW = api.style.NOTICE_ROW;
       var MUTED = api.style.MUTED;
       var HEADING = api.style.HEADING;
       var SUMSUM = api.style.SUMSUM;
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
       var DisclosureRow = api.ui.DisclosureRow;
+      var Tag = api.ui.Tag;
       var IconCodeOutlineRegular = api.ui.IconCodeOutlineRegular;
 
       // ⚠️ 这里原来有一份**本地兜底**的 SEC（同一作用域重复 var，后声明者赢）——
-      //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
-      // ⚠️ 这里原来有一份**本地兜底**的 ADVISE（同一作用域重复 var，后声明者赢）——
       //    它会**悄悄覆盖**上面从 api 取的那份，让 strictApi 守卫失效。已删。
       function Overlay(props) {
         return react.createElement(
@@ -117,17 +115,22 @@ window.__ModuleLoader__.load({
 
         var rows = [];
         if (data.error) {
-          rows.push(react.createElement("div", { key: "err", style: WARN }, "预览失败：" + data.error));
+          rows.push(react.createElement("div", { key: "err", style: NOTICE_ROW }, [
+            react.createElement(Tag, { key: "t", tone: "danger" }, "预览失败"),
+            react.createElement("span", { key: "m" }, data.error),
+          ]));
           if (data.hint) {
             rows.push(react.createElement("div", { key: "hint", style: MUTED }, "可能原因：" + data.hint));
           }
         } else {
           if (data.conflict) {
             rows.push(
-              react.createElement("div", { key: "conflict", style: WARN }, [
-                react.createElement("strong", { key: "t" }, "⚠ 冲突："),
-                data.conflict.message,
-                react.createElement("div", { key: "h", style: MUTED }, data.conflict.hint || ""),
+              react.createElement("div", { key: "conflict", style: NOTICE_ROW }, [
+                react.createElement(Tag, { key: "t", tone: "danger" }, "冲突"),
+                react.createElement("span", { key: "m" }, data.conflict.message),
+                data.conflict.hint
+                  ? react.createElement("span", { key: "h", style: MUTED }, data.conflict.hint)
+                  : null,
               ]),
             );
           }
@@ -276,7 +279,10 @@ window.__ModuleLoader__.load({
                 ),
               );
             }
-            rows.push(react.createElement("div", { key: "logged-none", style: ADVISE }, reasons));
+            rows.push(react.createElement("div", { key: "logged-none", style: NOTICE_ROW }, [
+              react.createElement(Tag, { key: "t", tone: "warning" }, "提示"),
+              react.createElement("div", { key: "m" }, reasons),
+            ]));
           }
 
           // 逐段

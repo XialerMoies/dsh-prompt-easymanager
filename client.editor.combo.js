@@ -27,8 +27,13 @@ window.__ModuleLoader__.load({
 
     function create(api) {
       var ActionButton = api.ui.ActionButton;
-      var HostCheckbox = api.ui.NativeCheckbox;
-      var NativeInput = api.ui.NativeInput;
+      var PresetSelector = api.ui.PresetSelector;
+      var Menu = api.ui.Menu;
+      var IconChevronDownOutlineRegular = api.ui.IconChevronDownOutlineRegular;
+      var IconEditOutlineRegular = api.ui.IconEditOutlineRegular;
+      var IconEllipsisOutlineRegular = api.ui.IconEllipsisOutlineRegular;
+      var Checkbox = api.ui.Checkbox;
+      var Input = api.ui.Input;
       var CARD = api.style.CARD;
       var CARD_DETAILS = api.style.CARD_DETAILS;
       var CARD_HEAD = api.style.CARD_HEAD;
@@ -269,7 +274,7 @@ window.__ModuleLoader__.load({
                 : activeIds.concat([p.id]);
               props.setPresetDraft(next);
             };
-            rows.push(react.createElement(HostCheckbox, {
+            rows.push(react.createElement(Checkbox, {
               key: p.id,
               checked: on,
               disabled: props.presetsBusy,
@@ -322,7 +327,7 @@ window.__ModuleLoader__.load({
           for (var xi = 0; xi < exList.length; xi++) excluded[exList[xi]] = true;
 
           var mkTag = function (name, on, keyPrefix, title, onToggle) {
-            return react.createElement(HostCheckbox, {
+            return react.createElement(Checkbox, {
               key: keyPrefix + "-" + name,
               checked: on,
               disabled: props.presetsBusy,
@@ -447,20 +452,11 @@ window.__ModuleLoader__.load({
         return react.createElement("div", null, [sectionsArea()]);
       }
 
-      /**
-       * 提示词组合 —— **一整张卡片**：标题就是「你现在在哪套配置上」。
-       *
-       *     写代码 ✎  全局默认 · 所有会话   已选 2 条  [写代码 ▾] [保存] [↻]
-       *     ─────────────────────────────────────────────────────────────
-       *     ☐ 格式契约  order 9500  1200 tokens
-       *     ☐ 编码规范  order 950    300 tokens
-       *
-       * ⚠️ 头和体在**同一张卡片**里。这里踩了两次，都记下：
-       *    1) 外面单独一行标题、下面再套一张卡片 → 三层结构；
-       *    2) 下拉和保存留在卡片**外面** → 用户要的「卡片顶部」没做到
-       *       （他的原话：「下拉框和保存不都说是卡片顶部了吗」）。
-       */
+      /** Prompt selection and preset actions, grouped by their scope. */
       function renderCombo(props) {
+        var menuState = react.useState(false);
+        var menuTarget = menuState[0];
+        var setMenuTarget = menuState[1];
         var matched = globalPresetOf(props);
         var allPresets = (props.presetsData && props.presetsData.presets) || [];
         // 原生入口是选择器的固定项，不属于用户预设列表。
@@ -471,11 +467,16 @@ window.__ModuleLoader__.load({
         );
         var newPresetMode = props.presetName === NEW_PRESET_SENTINEL;
         var currentId = newPresetMode ? "" : (matched && !nativeMatched ? matched.id : "__native");
+        var globalPresetId = props.presetsData && props.presetsData.global
+          ? props.presetsData.global.presetId
+          : null;
         var currentName = newPresetMode
           ? "新建预设"
+          : !props.presetsData
+            ? "未保存的配置"
           : matched && !nativeMatched
             ? presetLabelOf(matched)
-            : matched && nativeMatched
+            : (matched && nativeMatched) || globalPresetId == null
               ? "系统提示词（原生）"
               : "未保存的配置";
         var bus = props.presetsBusy || !props.presetsData;
@@ -483,35 +484,6 @@ window.__ModuleLoader__.load({
         // ⚠️ 这里原来先算了一遍「已选 N 条 · 共 X tokens」给卡片头用。
         //    用户说那些数字不需要，头里就不显示了 —— 计算也跟着删掉，
         //    免得留一段没人读的死代码。
-
-        // 标题：预设名 + 改名铅笔；改名时就地变输入框
-        var titleNode;
-        if (props.renaming) {
-          titleNode = react.createElement(NativeInput, {
-            key: "rn",
-            type: "text",
-            value: props.renameDraft,
-            autoFocus: true,
-            disabled: props.presetsBusy,
-            onChange: function (ev) {
-              props.setRenameDraft(ev.target.value);
-            },
-            onKeyDown: function (ev) {
-              if (ev.key === "Enter") commitRename(props);
-              if (ev.key === "Escape") props.setRenaming(false);
-            },
-            onBlur: function () {
-              // 新建时保留输入框，避免点击「保存」前被 blur 抢先收起。
-              if (!newPresetMode) props.setRenaming(false);
-            },
-          });
-        } else {
-          titleNode = react.createElement(
-            "span",
-            { key: "t", style: Object.assign({}, CARD_TITLE, { flex: "0 1 auto" }) },
-            currentName,
-          );
-        }
 
         // ── 第 1 段：全局注入开关 ──────────────────────────────────────────
         //
@@ -524,7 +496,16 @@ window.__ModuleLoader__.load({
         var swRow = props.MasterSwitch
           ? react.createElement(
               "div",
-              { key: "sw", style: { display: "flex", alignItems: "center", minWidth: "0" } },
+              {
+                key: "sw",
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  minWidth: "0",
+                  paddingBottom: "8px",
+                  borderBottom: ".5px solid var(--dsw-alias-border-l2)",
+                },
+              },
               react.createElement(props.MasterSwitch, {
                 enabled: props.globalEnabled,
                 busy: props.presetsBusy,
@@ -534,15 +515,70 @@ window.__ModuleLoader__.load({
             )
           : null;
 
-        // ── 第 2 段：标题 + 全部动作 ────────────────────────────────────────
-        //
-        // ⚠️ **这一段不许换行**（`nowrap`）—— 控件要保持形状。
-        //    挤不下时该收窄的是**标题**（它带 ellipsis），不是把按钮压成方块
-        //    或者甩到单独一行去。
-        //
-        //    结构：标题 ✎   [弹簧]   [下拉] [保存] [删除] [↻]
-        //    那个弹簧负责把按钮组推到右边；按钮**成组**放在一个容器里，
-        //    不然弹簧只会在它们之间撑开空洞。
+        // ── 第 2 段：当前预设 + 常用动作 ────────────────────────────────────
+        var presetControl = props.renaming
+          ? react.createElement(
+              "div",
+              { key: "rename-wrap", style: { flex: "1 1 180px", minWidth: "0" } },
+              react.createElement(Input, {
+                type: "text",
+                value: props.renameDraft,
+                autoFocus: true,
+                disabled: props.presetsBusy,
+                "aria-label": newPresetMode ? "新预设名称" : "预设名称",
+                onChange: function (ev) {
+                  props.setRenameDraft(ev.target.value);
+                },
+                onKeyDown: function (ev) {
+                  if (ev.key === "Enter" && !newPresetMode) commitRename(props);
+                  if (ev.key === "Escape") props.setRenaming(false);
+                },
+              }),
+            )
+          : react.createElement(
+              "div",
+              { key: "preset-wrap", style: { flex: "1 1 180px", minWidth: "0" } },
+              react.createElement(PresetSelector, {
+                open: menuTarget === "preset",
+                onOpenChange: function (next) { setMenuTarget(next ? "preset" : null); },
+                closeOnSelect: true,
+                label: currentName,
+                variant: "ghost",
+                disabled: bus,
+                title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "切换当前预设",
+                "aria-label": "选择提示词预设",
+                items: [
+                  { id: "__native", label: "系统提示词（原生）" },
+                ].concat(
+                  currentId ? [] : [{ id: "__unsaved", label: "未保存的配置", disabled: true }],
+                  list.map(function (p, pIndex) {
+                    return { id: p.id, label: presetDisplayLabel(list, pIndex) };
+                  }),
+                  list.length === 0 ? [{ type: "label", id: "__empty", text: "还没有预设" }] : [],
+                ),
+                selectedId: currentId || (newPresetMode ? "__unsaved" : "__native"),
+                onSelect: function (id) {
+                  if (id === "__native") {
+                    if (props.onToggleGlobal) props.onToggleGlobal(false, null);
+                  } else if (id) applyPreset(id, props);
+                },
+                align: "start",
+                side: "bottom",
+                portal: true,
+              }),
+            );
+
+        var moreItems = [
+          { id: "__reload", label: "重新读取", disabled: bus },
+        ].concat(
+          currentId && currentId !== "__native"
+            ? [
+                { type: "separator", id: "__preset-actions-separator" },
+                { id: "__delete", label: "删除预设", danger: true, disabled: bus },
+              ]
+            : [],
+        );
+
         var actRow = react.createElement(
           "div",
           {
@@ -552,131 +588,137 @@ window.__ModuleLoader__.load({
               alignItems: "center",
               gap: "8px",
               minWidth: "0",
-              flexWrap: "nowrap",
+              flexWrap: "wrap",
             },
           },
           [
-            titleNode,
-            // 改名铅笔：只有「当前这套是一条真预设」时才有意义
+            presetControl,
+            // 改名：只有当前选择了用户预设时才显示。
             currentId && currentId !== "__native" && !props.renaming
               ? react.createElement(
                   ActionButton,
                   {
                     key: "pen",
                     type: "button",
+                    variant: "ghost",
                     disabled: bus,
                     title: "改这套预设的名字",
+                    "aria-label": "编辑预设名称",
                     onClick: function () {
                       props.setRenaming(true);
                       props.setRenameDraft(currentName);
                     },
                   },
-                  "✎",
+                  react.createElement(IconEditOutlineRegular, { size: 14 }),
+                )
+              : null,
+            // 新建时预设名已进入编辑状态，不再重复展示新建按钮。
+            !props.renaming
+              ? react.createElement(
+                  ActionButton,
+                  {
+                    key: "new",
+                    type: "button",
+                    variant: "outline",
+                    disabled: bus,
+                    title: "以当前勾选内容新建一套预设",
+                    onClick: function () {
+                      props.setPresetName(NEW_PRESET_SENTINEL);
+                      props.setRenameDraft("");
+                      props.setRenaming(true);
+                    },
+                  },
+                  "新建预设",
                 )
               : null,
             react.createElement(
-              ActionButton,
-              {
-                key: "new",
-                type: "button",
-                disabled: bus,
-                title: "以当前勾选内容新建一套预设",
-                onClick: function () {
-                  props.setPresetName(NEW_PRESET_SENTINEL);
-                  props.setRenameDraft("");
-                  props.setRenaming(true);
-                },
-              },
-              "新建",
-            ),
-            // 弹簧：把下面那一组动作推到最右
-            react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-            // ── 动作**成组** ──────────────────────────────────────────────
-            //
-            // ⚠️ 包一层容器，不然弹簧只会在各个按钮之间撑出空洞（踩过：
-            //    「删除」被甩到单独一行、「↻」跑到最右边）。
-            react.createElement(
               "div",
-              { key: "grp", style: { display: "flex", alignItems: "center", gap: "6px", flex: "none" } },
+              {
+                key: "grp",
+                style: { display: "flex", alignItems: "center", gap: "6px", flex: "none", marginLeft: "auto" },
+              },
               [
-                // 预设下拉：换一套
-                react.createElement(
-                  "select",
-                  {
-                    key: "sel",
-                    disabled: bus,
-                    value: currentId,
-                    title: list.length === 0 ? "还没有预设 —— 勾好之后点「保存」存一套" : "换一套配置",
-                    onChange: function (ev) {
-                      var id = ev.target.value;
-                      if (id === "__native") {
-                        if (props.onToggleGlobal) props.onToggleGlobal(false);
-                      } else if (id) applyPreset(id, props);
-                    },
-                  },
-                  [
-                    react.createElement("option", { key: "__native", value: "__native" }, "系统提示词（原生）"),
-                    // 手改过（没匹配上任何预设）时给个占位项，否则 select 会跳到第一条
-                    currentId
-                      ? null
-                      : react.createElement("option", { key: "__none", value: "" }, "未保存的配置"),
-                    list.length === 0
-                      ? react.createElement("option", { key: "__empty", value: "" }, "（还没有预设）")
-                      : null,
-                    list.map(function (p, pIndex) {
-                      return react.createElement("option", { key: p.id, value: p.id }, presetDisplayLabel(list, pIndex));
-                    }),
-                  ],
-                ),
-                // 保存：当前这套有名字就覆盖它自己，没名字就存新的
-                react.createElement(
-                  ActionButton,
-                  {
-                    key: "sav",
-                    type: "button",
-                    disabled: bus,
-                    title: currentId
-                      ? "把当前勾选覆盖到预设「" + currentName + "」"
-                      : "把当前勾选存成一套新预设",
-                    onClick: function () {
-                      savePreset(props);
-                    },
-                  },
-                  props.presetsBusy ? "保存中…" : "保存",
-                ),
-                // ── 删除这条预设（位置：**保存和刷新之间**，用户指定）──────────
-                //
-                // ⚠️ 只在「当前这套是一条真预设」时才有意义（手改过的状态没东西可删）。
-                // ⚠️ 不新增 state —— hook 下标一动，测试里所有按序号塞状态的用例
-                //    都要跟着挪。做完就走，反馈交给 flash。
-                currentId
+                props.renaming
                   ? react.createElement(
                       ActionButton,
                       {
-                        key: "del",
+                        key: "cancel-rename",
                         type: "button",
+                        variant: "ghost",
                         disabled: bus,
-                        title: "删掉预设「" + currentName + "」（用它挂着的全局/会话会自动退回）",
                         onClick: function () {
-                          props.doPreset({ action: "delete", id: currentId });
+                          if (newPresetMode) props.setPresetName("");
+                          props.setRenaming(false);
                         },
                       },
-                      "删除",
+                      "取消",
                     )
                   : null,
                 react.createElement(
                   ActionButton,
                   {
-                    key: "r",
+                    key: "sav",
                     type: "button",
+                    variant: "primary",
                     disabled: bus,
-                    title: "重新从盘上读一遍",
+                    title: newPresetMode
+                      ? "创建这套预设"
+                      : props.renaming
+                        ? "保存预设名称"
+                        : currentId && currentId !== "__native"
+                          ? "把当前勾选覆盖到预设「" + currentName + "」"
+                          : "把当前勾选存成一套新预设",
+                    "data-pm-save-preset": "1",
                     onClick: function () {
-                      props.loadPresets();
+                      if (props.renaming && !newPresetMode) commitRename(props);
+                      else savePreset(props);
                     },
                   },
-                  "↻",
+                  newPresetMode
+                    ? "创建预设"
+                    : props.renaming
+                      ? "保存名称"
+                      : props.presetsBusy
+                        ? "保存中…"
+                        : "保存",
                 ),
+                !props.renaming
+                  ? react.createElement(
+                      Menu,
+                      {
+                        key: "more",
+                        open: menuTarget === "more",
+                        anchor: react.createElement(
+                          ActionButton,
+                          {
+                            type: "button",
+                            variant: "ghost",
+                            disabled: bus,
+                            title: "更多预设操作",
+                            "aria-label": "更多预设操作",
+                            "aria-haspopup": "menu",
+                            "aria-expanded": menuTarget === "more" ? "true" : "false",
+                            onClick: function () {
+                              setMenuTarget(menuTarget === "more" ? null : "more");
+                            },
+                          },
+                          react.createElement(IconEllipsisOutlineRegular, { size: 16 }),
+                        ),
+                        items: moreItems,
+                        onSelect: function (id) {
+                          setMenuTarget(null);
+                          if (id === "__reload") props.loadPresets();
+                          if (id === "__delete" && currentId && currentId !== "__native") {
+                            props.doPreset({ action: "delete", id: currentId });
+                          }
+                        },
+                        onClose: function () { setMenuTarget(null); },
+                        align: "end",
+                        side: "bottom",
+                        portal: true,
+                      },
+                    )
+                  : null,
               ],
             ),
           ],
@@ -700,7 +742,7 @@ window.__ModuleLoader__.load({
               padding: "10px 14px",
             }),
           },
-          [swRow, actRow],
+            [swRow, actRow],
         );
 
         var bodyNode = react.createElement(

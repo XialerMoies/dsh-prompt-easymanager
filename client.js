@@ -119,14 +119,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
     var req = null; // factory 的材料化参数，见下面 factory 开头
     var react = null; // 同上 —— useChunk 在模块级，读不到 factory 里的局部变量
 
-    /**
-     * 设置面板侧边栏那一项的文案。
-     *
-     * ⚠️ **必须只有这一份** —— 侧边栏图标补丁是**按这段文案找按钮**的
-     *    （见 patchNavIcon，因为 dsh 的 `SettingsSectionRow` 只有
-     *    `{id, order, label}`，没有 icon，认不出就换不了图标）。
-     *    把文案写两遍的话，改一处就会让另一处静默失效。
-     */
+    /** 设置面板侧边栏那一项的文案。图标补丁按这份文案定位入口。 */
     var NAV_TITLE = "提示词管理";
 
     // 已加载好的 chunk：loader → 模块本体（失败了就删掉，下次重试）
@@ -242,38 +235,145 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
           next.size = next.size || "sm";
           return react.createElement(hostUi.Button, next, props.children);
         }
-        function NativeInput(props) {
-          var next = Object.assign({}, props);
-          delete next.children;
-          delete next.className;
-          delete next.style;
-          return react.createElement(hostUi.Input, next);
-        }
-        function NativeCheckbox(props) {
-          return react.createElement(hostUi.Checkbox, props);
-        }
-        function PromptManagerIcon(props) {
-          return react.createElement(
-            "svg",
+
+        /**
+         * 三个入口共用的预设选择器。
+         *
+         * 数据来源和保存路由由调用方决定；这里统一 DSH 原生按钮、编辑图标、
+         * chevron、菜单定位和打开/关闭行为，避免设置页、新会话页、已有会话页
+         * 各自维护一套外观和菜单状态。
+         */
+        function PresetSelector(props) {
+          var open = props.open === true;
+
+          function setOpen(next) {
+            if (typeof props.onOpenChange === "function") props.onOpenChange(next);
+          }
+
+          var label = props.label || "系统提示词（原生）";
+          var icon = props.icon === false
+            ? undefined
+            : react.createElement(hostUi.IconEditOutlineRegular, { size: 14 });
+          var anchorProps = Object.assign(
             {
-              width: props && props.size ? props.size : 16,
-              height: props && props.size ? props.size : 16,
-              viewBox: "0 0 16 16",
-              fill: "none",
-              "data-pm-icon": "prompt-manager",
-              "aria-hidden": "true",
-              focusable: "false",
+              type: "button",
+              variant: props.variant || "ghost",
+              size: props.size || "sm",
+              icon: icon,
+              disabled: props.disabled,
+              title: props.title || "选择提示词预设",
+              "aria-label": props["aria-label"] || "选择提示词预设",
+              "aria-haspopup": "menu",
+              "aria-expanded": open ? "true" : "false",
+              onClick: function () {
+                setOpen(!open);
+              },
             },
-            react.createElement("path", {
-              d: "M11.2 2.3l2.5 2.5-8 8L3 13.4l.6-2.7 7.6-8.4z",
-              stroke: "currentColor",
-              "strokeWidth": "1.3",
-              "strokeLinejoin": "round",
-              "strokeLinecap": "round",
-            }),
+            props.anchorProps || {},
           );
+          var anchor = react.createElement(
+            ActionButton,
+            anchorProps,
+            [
+              react.createElement(
+                "span",
+                {
+                  key: "label",
+                  style: {
+                    minWidth: "0",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  },
+                },
+                label,
+              ),
+              react.createElement(
+                "span",
+                {
+                  key: "chevron",
+                  style: {
+                    color: "var(--dsw-alias-menu-icon)",
+                    display: "inline-flex",
+                    flex: "none",
+                  },
+                },
+                react.createElement(hostUi.IconChevronDownOutlineRegular, { size: 12 }),
+              ),
+            ],
+          );
+
+          return react.createElement(hostUi.Menu, {
+            open: open,
+            anchor: anchor,
+            items: props.items || [],
+            selectedId: props.selectedId,
+            onSelect: function (id) {
+              if (props.closeOnSelect === true) setOpen(false);
+              if (typeof props.onSelect === "function") props.onSelect(id);
+            },
+            onClose: function () {
+              setOpen(false);
+              if (typeof props.onClose === "function") props.onClose();
+            },
+            align: props.align || "start",
+            side: props.side || "bottom",
+            portal: props.portal !== false,
+          });
         }
 
+        /** DSH 0.17-rc2 没有 settings.section 图标字段，保留插件原有铅笔图标。 */
+        function patchNavIcon() {
+          if (typeof document === "undefined" || !document.body) return;
+          var KEY = "pmNavIconDone";
+          var SVG_NS = "http://www.w3.org/2000/svg";
+
+          function makeIcon() {
+            var svg = document.createElementNS(SVG_NS, "svg");
+            svg.setAttribute("viewBox", "0 0 16 16");
+            svg.setAttribute("width", "16");
+            svg.setAttribute("height", "16");
+            svg.setAttribute("fill", "none");
+            svg.setAttribute("aria-hidden", "true");
+            svg.style.flex = "none";
+            var path = document.createElementNS(SVG_NS, "path");
+            path.setAttribute("d", "M11.2 2.3l2.5 2.5-8 8L3 13.4l.6-2.7 7.6-8.4z");
+            path.setAttribute("stroke", "currentColor");
+            path.setAttribute("stroke-width", "1.3");
+            path.setAttribute("stroke-linejoin", "round");
+            path.setAttribute("stroke-linecap", "round");
+            svg.appendChild(path);
+            return svg;
+          }
+
+          function apply() {
+            try {
+              var buttons = document.querySelectorAll("button");
+              for (var i = 0; i < buttons.length; i++) {
+                var button = buttons[i];
+                if (button.textContent !== NAV_TITLE || button.getAttribute(KEY) === "1") continue;
+                var nativeIcon = button.querySelector("svg");
+                if (!nativeIcon) continue;
+                nativeIcon.replaceWith(makeIcon());
+                button.setAttribute(KEY, "1");
+                return true;
+              }
+            } catch {
+              /* 图标补丁失败不影响插件主体功能。 */
+            }
+            return false;
+          }
+
+          apply();
+          try {
+            var observer = new MutationObserver(function () {
+              apply();
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+          } catch {
+            /* 没有 MutationObserver 时只尝试当前 DOM。 */
+          }
+        }
         var inject = ["slots"];
 
         // ── 会话头部那一个按钮 + 它要用的样式 ────────────────────────────────
@@ -285,35 +385,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
           flexWrap: "wrap",
           marginTop: "8px",
         };
-        /** 段落卡片标题右侧的小徽章。 */
-        var BADGE = {
-          flex: "none",
-          fontSize: "10.5px",
-          lineHeight: "16px",
-          padding: "0 6px",
-          borderRadius: "999px",
-          border: ".5px solid transparent",
-          whiteSpace: "nowrap",
-        };
-        var BADGE_WARN = Object.assign({}, BADGE, {
-          borderColor: "rgba(245,158,11,.7)",
-          background: "rgba(245,158,11,.12)",
-          color: "#b45309",
-        });
-        var BADGE_OK = Object.assign({}, BADGE, {
-          borderColor: "rgba(16,185,129,.6)",
-          background: "rgba(16,185,129,.12)",
-          color: "#047857",
-        });
-        var BADGE_OFF = Object.assign({}, BADGE, {
-          borderColor: "var(--dsw-alias-border-l3, rgba(128,128,128,.45))",
-          background: "var(--dsw-specific-menu, rgba(128,128,128,.14))",
-          color: "var(--dsw-alias-label-secondary, inherit)",
-        });
-        var BADGE_MUTED = Object.assign({}, BADGE, {
-          borderColor: "var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
-          color: "var(--dsw-alias-label-tertiary, inherit)",
-        });
         /** 段落正文的只读显示。 */
         var PRE = {
           fontFamily: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
@@ -325,9 +396,9 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
           overflow: "auto",
           margin: "0",
           padding: "8px 10px",
-          borderRadius: "var(--dsw-radius-sm, 4px)",
-          background: "var(--dsw-alias-bg-layer-1, rgba(0,0,0,.16))",
-          border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+          borderRadius: "var(--dsw-radius-sm)",
+          background: "var(--dsw-alias-bg-layer-1)",
+          border: ".5px solid var(--dsw-alias-border-l2)",
           color: "var(--dsw-alias-label-secondary, inherit)",
         };
         var TEXTAREA = Object.assign({}, PRE, {
@@ -346,11 +417,17 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         /**
          * 卡片正文区**之外**的提示框（漂移提醒 / 失效说明）的外层。
          *
-         * ⚠️ 这些框是直接塞进卡片的（不在 CARD_DETAILS 里），而 WARN 自身没有水平外边距
-         *    —— 套一层这个，否则提示框会紧贴卡片左右边框。
+         * 这些提示行直接放在卡片正文区之外，因此需要与卡片头对齐的内边距。
          *    内边距跟卡片头（CARD_HEAD 的 12px 14px）保持一致。
          */
         var CARD_NOTICE = { padding: "10px 14px" };
+        var NOTICE_ROW = {
+          display: "flex",
+          alignItems: "baseline",
+          flexWrap: "wrap",
+          gap: "4px 8px",
+          minWidth: "0",
+        };
         /**
          * 浮层外壳 + 面板骨架。
          *
@@ -387,23 +464,16 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         //    取值行，宿主却没给 X，于是编辑器那一栏整片空白（渲染期全是 undefined）。
         //    补的时候是从切分前的单文件（62eeb75:client.js）逐字搬回来的。
         //    定义只留这一份，chunk 那边靠 api.style 取。
-      var ADVISE = {
-        border: "1px solid rgba(245,158,11,.7)",
-        background: "rgba(245,158,11,.08)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "10px",
-      };
       var CARD = {
-        border: ".5px solid var(--dsw-alias-settings-card-stroke, rgba(128,128,128,.3))",
-        borderRadius: "var(--dsw-radius-xl, 10px)",
-        background: "var(--dsw-alias-settings-card-fill, rgba(128,128,128,.06))",
+        border: ".5px solid var(--dsw-alias-settings-card-stroke)",
+        borderRadius: "var(--dsw-radius-xl)",
+        background: "var(--dsw-alias-settings-card-fill)",
         minWidth: "0",
         overflow: "hidden",
       };
       var CARDS_GRID = {
         display: "grid",
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gridTemplateColumns: "minmax(0, 1fr)",
         gap: "10px",
         alignItems: "start",
         listStyle: "none",
@@ -419,7 +489,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         flexWrap: "wrap",
       };
       var CARD_BAD = Object.assign({}, CARD, {
-        borderColor: "var(--dsw-alias-state-error-primary, rgba(239,68,68,.7))",
+        borderColor: "var(--dsw-alias-state-error-primary)",
       });
       var CARD_DESC = {
         fontSize: "12.5px",
@@ -442,8 +512,8 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         padding: "0 14px 10px",
       });
       var CARD_DETAILS = {
-        borderTop: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
-        background: "var(--dsw-alias-bg-module-platform, rgba(128,128,128,.08))",
+        borderTop: ".5px solid var(--dsw-alias-border-l2)",
+        background: "var(--dsw-alias-bg-module-platform)",
         padding: "10px 14px 12px",
       };
       var CARD_HEAD = {
@@ -455,12 +525,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         flexDirection: "column",
         alignItems: "stretch",
         gap: "2px",
-        background: "transparent",
-        border: "0",
-        color: "inherit",
-        font: "inherit",
         textAlign: "left",
-        cursor: "pointer",
       };
       var CARD_HEADING = { display: "flex", alignItems: "baseline", gap: "7px", padding: "0 2px" };
       var CARD_ID = {
@@ -494,10 +559,8 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
       };
       var CHEVRON = {
         flex: "none",
-        color: "var(--dsw-alias-label-tertiary, inherit)",
+        display: "inline-flex",
         transition: "transform .14s ease-in-out",
-        fontSize: "12px",
-        lineHeight: "16px",
       };
       var CHEVRON_OPEN = Object.assign({}, CHEVRON, { transform: "rotate(90deg)" });
       var COMBO_BOARD = {
@@ -512,19 +575,19 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         alignItems: "center",
         gap: "6px",
         padding: "4px 6px",
-        borderRadius: "4px",
+        borderRadius: "var(--dsw-radius-sm)",
         cursor: "grab",
         fontSize: "12px",
       };
-      var COMBO_ROW_HL = { background: "var(--dsw-alias-bg-layer-2, rgba(128,128,128,.12))" };
+      var COMBO_ROW_HL = { background: "var(--dsw-alias-bg-layer-2)" };
       var COMBO_SIDE = {
-        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
-        borderRadius: "6px",
+        border: ".5px solid var(--dsw-alias-border-l2)",
+        borderRadius: "var(--dsw-radius-sm)",
         padding: "8px 10px",
         minHeight: "90px",
-        background: "var(--dsw-alias-bg-layer-1, transparent)",
+        background: "var(--dsw-alias-bg-layer-1)",
       };
-      var COMBO_SIDE_HL = { borderColor: "var(--dsw-alias-state-business-primary, #3b82f6)" };
+      var COMBO_SIDE_HL = { borderColor: "var(--dsw-alias-state-business-primary)" };
       var DD = {
         margin: "0",
         minWidth: "0",
@@ -539,63 +602,38 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         gap: "6px 10px",
         margin: "0 0 10px",
       };
-      var DOT = {
-        width: "6px",
-        height: "6px",
-        borderRadius: "50%",
-        flex: "none",
-        background: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.6))",
-      };
-      var DOT_DEFAULT = Object.assign({}, DOT, { background: "#3b82f6" });
-      var DOT_ERR = Object.assign({}, DOT, { background: "#ef4444" });
-      var DOT_OK = Object.assign({}, DOT, { background: "#10b981" });
-      var DOT_WAIT = Object.assign({}, DOT, { background: "#f59e0b" });
       var DT = {
         color: "var(--dsw-alias-label-tertiary, inherit)",
         fontSize: "11px",
         lineHeight: "17px",
       };
-      var ERRBOX = {
-        border: "1px solid rgba(239,68,68,.7)",
-        background: "rgba(239,68,68,.1)",
-        borderRadius: "5px",
-        padding: "2px 6px",
-        fontSize: "11px",
-        lineHeight: "16px",
-        maxWidth: "260px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        flex: "none",
-      };
-      var FORM = { display: "flex", flexDirection: "column", gap: "8px" };
+      var FORM = { display: "flex", flexDirection: "column", gap: "12px", width: "100%", minWidth: "0" };
+      var FORM_FIELD = { display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: "4px", minWidth: "0" };
+      var FORM_ROW = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: "12px", minWidth: "0" };
       var FORM_LABEL = {
-        fontSize: "11px",
-        lineHeight: "17px",
+        fontSize: "12px",
+        lineHeight: "18px",
         color: "var(--dsw-alias-label-tertiary, inherit)",
-        minWidth: "38px",
-        flex: "none",
       };
-      var FORM_LINE = { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" };
       var FORM_TEXTAREA = {
         fontFamily: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
         fontSize: "12px",
         lineHeight: "1.6",
         padding: "8px 10px",
         borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l4, rgba(128,128,128,.45))",
-        background: "var(--dsw-alias-bg-layer-1, transparent)",
+        border: ".5px solid var(--dsw-alias-border-l4)",
+        background: "var(--dsw-alias-bg-layer-1)",
         color: "var(--dsw-alias-label-primary, inherit)",
         width: "100%",
         boxSizing: "border-box",
-        minHeight: "220px",
+        minHeight: "240px",
         resize: "vertical",
         outline: "none",
       };
       var HEADING = {
         margin: "14px 0 6px",
         paddingBottom: "4px",
-        borderBottom: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
+        borderBottom: ".5px solid var(--dsw-alias-border-l2)",
         fontWeight: "bold",
         opacity: 0.9,
       };
@@ -627,49 +665,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         opacity: 0.9,
       };
       var MONO_TAIL = Object.assign({}, MONO, { maxHeight: "420px" });
-      var MSG_OK = {
-        fontSize: "11px",
-        lineHeight: "16px",
-        padding: "2px 6px",
-        borderRadius: "5px",
-        background: "rgba(16,185,129,.15)",
-        color: "inherit",
-        whiteSpace: "nowrap",
-        flex: "none",
-      };
       var MUTED = { opacity: 0.65 };
-      var PICK = {
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "8px",
-        padding: "7px 9px",
-        borderRadius: "6px",
-        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
-        marginBottom: "6px",
-        cursor: "pointer",
-      };
-      var PICK_ON = Object.assign({}, PICK, {
-        borderColor: "rgba(16,185,129,.7)",
-        background: "rgba(16,185,129,.08)",
-      });
-      var PILL = {
-        flex: "none",
-        fontSize: "11px",
-        lineHeight: "16px",
-        padding: "1px 7px",
-        borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.4))",
-        color: "var(--dsw-alias-label-secondary, inherit)",
-        whiteSpace: "nowrap",
-      };
-      var PILL_APPEND = Object.assign({}, PILL, {
-        borderColor: "var(--dsw-alias-state-business-primary, rgba(59,130,246,.7))",
-        color: "var(--dsw-alias-state-business-primary, #3b82f6)",
-      });
-      var PILL_WARN = Object.assign({}, PILL, {
-        borderColor: "var(--dsw-alias-state-warn-primary, rgba(245,158,11,.8))",
-        color: "var(--dsw-alias-state-warn-label, #f59e0b)",
-      });
       var RAW_NAME = {
         flex: "0 1 auto",
         minWidth: "0",
@@ -683,8 +679,8 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         whiteSpace: "nowrap",
       };
       var SEC = {
-        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25))",
-        borderRadius: "6px",
+        border: ".5px solid var(--dsw-alias-border-l2)",
+        borderRadius: "var(--dsw-radius-sm)",
         padding: "8px 10px",
         marginBottom: "8px",
       };
@@ -699,52 +695,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         //    原来是 14px：数值自己拍的，比参考页松，一眼看得出不是一家。
         gap: "12px",
       };
-      var SEC_OURS = Object.assign({}, SEC, { borderColor: "rgba(16,185,129,.7)" });
-      var SELECT_SM = {
-        flex: "0 0 auto",
-        width: "220px",
-        font: "inherit",
-        fontSize: "12px",
-        padding: "2px 6px",
-        borderRadius: "var(--dsw-radius-sm, 4px)",
-        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35))",
-        background: "var(--dsw-alias-bg-layer-1, rgba(128,128,128,.1))",
-        color: "inherit",
-      };
-      /**
-     * 新会话页那一行里的小下拉框 —— **照原生 `.select` 抄的**。
-     *
-     * ⚠️ 别拿 SELECT_SM 顶替：那是「带边框的输入框」，插到工作区/模式
-     *    那一行里长得完全不一样（真机上出过）。
-     *
-     *    那个箭头用**背景图**画（跟原生同一段 data URI），所以右边留 20px。
-     */
-    var HERO_CHIP = {
-      flex: "none",
-      maxWidth: "220px",
-      height: "28px",
-      color: "var(--dsw-alias-label-secondary, rgba(128,128,128,.95))",
-      whiteSpace: "nowrap",
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      cursor: "pointer",
-      appearance: "none",
-      backgroundColor: "transparent",
-      backgroundImage:
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
-      backgroundPosition: "right 4px center",
-      backgroundRepeat: "no-repeat",
-      backgroundSize: "12px 12px",
-      border: "none",
-      outline: "none",
-      padding: "0 20px 0 8px",
-      fontSize: "13px",
-      fontWeight: 500,
-      lineHeight: "20px",
-      fontFamily: "inherit",
-      borderRadius: "var(--dsw-radius-sm, 4px)",
-    };
-
+      var SEC_OURS = Object.assign({}, SEC, { borderColor: "var(--dsw-alias-state-success-primary)" });
     var SLOT_HEAD = Object.assign({}, CARD_MAIN_ROW, {
         flexDirection: "row",
         minHeight: "0",
@@ -762,30 +713,16 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         lineHeight: "20px",
       };
       var SUMSUM = {
-        border: ".5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.3))",
-        borderRadius: "6px",
+        border: ".5px solid var(--dsw-alias-border-l2)",
+        borderRadius: "var(--dsw-radius-sm)",
         padding: "8px 10px",
         marginBottom: "4px",
         lineHeight: "1.7",
       };
-      var WARN = {
-        border: "1px solid rgba(239,68,68,.7)",
-        background: "rgba(239,68,68,.08)",
-        borderRadius: "6px",
-        padding: "8px 10px",
-        marginBottom: "10px",
-      };
-      var MSG_ERR = Object.assign({}, MSG_OK, {
-        background: "rgba(239,68,68,.15)",
-        maxWidth: "320px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-      });
-
     /** 下拉里「当前生效」那一项的高亮（跟普通行区分开）。 */
     var ROW_ACTIVE = {
-      background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12))",
-      borderRadius: "var(--dsw-radius-md, 8px)",
+      background: "var(--dsw-alias-interactive-bg-hover)",
+      borderRadius: "var(--dsw-radius-md)",
     };
 
     /** 勾那一列 —— 固定宽度，免得没勾的行跟有勾的行对不齐。 */
@@ -807,6 +744,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
         var CHUNK_API = {
           ui: {
             ActionButton: ActionButton,
+            PresetSelector: PresetSelector,
             Button: hostUi.Button,
             Checkbox: hostUi.Checkbox,
             Input: hostUi.Input,
@@ -814,29 +752,25 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             Modal: hostUi.Modal,
             Switch: hostUi.Switch,
             Tag: hostUi.Tag,
-            NativeInput: NativeInput,
-            NativeCheckbox: NativeCheckbox,
-            PromptManagerIcon: PromptManagerIcon,
+            StateDot: hostUi.StateDot,
+            IconEditOutlineRegular: hostUi.IconEditOutlineRegular,
             IconChevronDownOutlineRegular: hostUi.IconChevronDownOutlineRegular,
+            IconEllipsisOutlineRegular: hostUi.IconEllipsisOutlineRegular,
+            IconQuestionOutlineRegular: hostUi.IconQuestionOutlineRegular,
             IconCodeOutlineRegular: hostUi.IconCodeOutlineRegular,
             DisclosureRow: hostUi.DisclosureRow,
+            Tooltip: hostUi.Tooltip,
           },
           style: {
             ROW: ROW,
             ROW_ACTIVE: ROW_ACTIVE,
             ROW_MARK: ROW_MARK,
-            HERO_CHIP: HERO_CHIP,
             ACTIONS: ACTIONS,
-            BADGE: BADGE,
-            BADGE_WARN: BADGE_WARN,
-            BADGE_OK: BADGE_OK,
-            BADGE_OFF: BADGE_OFF,
-            BADGE_MUTED: BADGE_MUTED,
             PRE: PRE,
             TEXTAREA: TEXTAREA,
             HINT_TEXT: HINT_TEXT,
             CARD_NOTICE: CARD_NOTICE,
-            ADVISE: ADVISE,
+            NOTICE_ROW: NOTICE_ROW,
             CARD: CARD,
             CARDS_GRID: CARDS_GRID,
             CARD_ACTIONS: CARD_ACTIONS,
@@ -859,16 +793,11 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             COMBO_SIDE_HL: COMBO_SIDE_HL,
             DD: DD,
             DETAILS_GRID: DETAILS_GRID,
-            DOT: DOT,
-            DOT_DEFAULT: DOT_DEFAULT,
-            DOT_ERR: DOT_ERR,
-            DOT_OK: DOT_OK,
-            DOT_WAIT: DOT_WAIT,
             DT: DT,
-            ERRBOX: ERRBOX,
             FORM: FORM,
+            FORM_FIELD: FORM_FIELD,
             FORM_LABEL: FORM_LABEL,
-            FORM_LINE: FORM_LINE,
+            FORM_ROW: FORM_ROW,
             FORM_TEXTAREA: FORM_TEXTAREA,
             HEADING: HEADING,
             HEADING_COUNT: HEADING_COUNT,
@@ -876,24 +805,15 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             HINT: HINT,
             MONO: MONO,
             MONO_TAIL: MONO_TAIL,
-            MSG_OK: MSG_OK,
             MUTED: MUTED,
-            PICK: PICK,
-            PICK_ON: PICK_ON,
-            PILL: PILL,
-            PILL_APPEND: PILL_APPEND,
-            PILL_WARN: PILL_WARN,
             RAW_NAME: RAW_NAME,
             SEC: SEC,
             SECTION: SECTION,
             SEC_OURS: SEC_OURS,
-            SELECT_SM: SELECT_SM,
             SLOT_HEAD: SLOT_HEAD,
             SLOT_WHY: SLOT_WHY,
             STATUS_LINE: STATUS_LINE,
             SUMSUM: SUMSUM,
-            WARN: WARN,
-            MSG_ERR: MSG_ERR,
           },
           label: sectionLabel,
           mode: MODE_LABEL,
@@ -965,90 +885,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             ComboBlock: combob.ComboBlock,
             LibraryBlock: lb.LibraryBlock,
           });
-        }
-
-        /**
-         * 把侧边栏里那一项的图标从**兜底齿轮**换成我们自己的。
-         *
-         * ── 为什么只能这么干 ────────────────────────────────────────────────
-         *
-         * dsh 的侧边导航图标是**硬编码白名单**：
-         *
-         *     function navIcon(id) {
-         *       if (id === "account") return <IconUser…/>;
-         *       if (id === "models")  return <IconData…/>;
-         *       …
-         *       return <IconSettings…/>;   // ← 未知 id 一律齿轮
-         *     }
-         *
-         * 而注册表能带的信息只有三个字段（设置壳的 contract 里写着）：
-         *
-         *     interface SettingsSectionRow { id: string; order: number; label: string }
-         *
-         * **没有 icon 字段，也没有图标注册表** —— 第三方插件无法通过 API 指定图标。
-         * 所以只能渲染后替换。
-         *
-         * ⚠️ 这是 DOM 补丁，dsh 改版就可能失效，所以：
-         *    · 全程 try/catch，失败就保持原样（齿轮也不难看）；
-         *    · 用 MutationObserver 兜住 React 的重新渲染（否则切一次面板就被还原）；
-         *    · 只在**确实找到那一项**时才动它，认不出就什么都不做。
-         */
-        function patchNavIcon() {
-          if (typeof document === "undefined" || !document.body) return;
-
-          var KEY = "pmNavIconDone";
-          var SVG_NS = "http://www.w3.org/2000/svg";
-
-          /** 改名/编辑那支笔 —— 跟这块的语义（管理提示词）对得上。 */
-          function makeIcon() {
-            var svg = document.createElementNS(SVG_NS, "svg");
-            svg.setAttribute("viewBox", "0 0 16 16");
-            svg.setAttribute("width", "16");
-            svg.setAttribute("height", "16");
-            svg.setAttribute("fill", "none");
-            svg.setAttribute("aria-hidden", "true");
-            svg.style.flex = "none";
-            var path = document.createElementNS(SVG_NS, "path");
-            path.setAttribute("d", "M11.2 2.3l2.5 2.5-8 8L3 13.4l.6-2.7 7.6-8.4z");
-            path.setAttribute("stroke", "currentColor");
-            path.setAttribute("stroke-width", "1.3");
-            path.setAttribute("stroke-linejoin", "round");
-            path.setAttribute("stroke-linecap", "round");
-            svg.appendChild(path);
-            return svg;
-          }
-
-          function apply() {
-            try {
-              // 找导航里**文案就是这一项**的那个按钮（用同一份常量，见 NAV_TITLE）。
-              // 不靠 class（那是 CSS module 的哈希，会变），靠文案。
-              var buttons = document.querySelectorAll("button");
-              for (var i = 0; i < buttons.length; i++) {
-                var b = buttons[i];
-                if (b.textContent !== NAV_TITLE) continue;
-                if (b.getAttribute(KEY) === "1") continue; // 已经是我们的图标
-                var old = b.querySelector("svg");
-                if (!old) continue;
-                old.replaceWith(makeIcon());
-                b.setAttribute(KEY, "1");
-                return true;
-              }
-            } catch {
-              /* 补丁失败不影响功能 */
-            }
-            return false;
-          }
-
-          // 立刻试一次；没找到（面板还没开）就靠 observer 等
-          apply();
-          try {
-            var obs = new MutationObserver(function () {
-              apply();
-            });
-            obs.observe(document.body, { childList: true, subtree: true });
-          } catch {
-            /* 没有 MutationObserver 就只生效一次 */
-          }
         }
 
         /**
@@ -1274,8 +1110,6 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
               EditorSlot,
             ),
           );
-          // 侧边栏那一项的图标：dsh 只给白名单 id 配图标，我们落到了兜底齿轮
-          // （原因见 patchNavIcon 上面那段）。渲染后替换掉。
           patchNavIcon();
           // 新会话页那一行：在工作区 / agent 预设之后插我们的下拉框
           patchHeroPreset();

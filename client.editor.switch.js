@@ -31,6 +31,8 @@ window.__ModuleLoader__.load({
      */
     function create(api) {
       var HostSwitch = api.ui.Switch;
+      var Tooltip = api.ui.Tooltip;
+      var IconQuestionOutlineRegular = api.ui.IconQuestionOutlineRegular;
       var CARD = api.style.CARD;
       var HEADING_COUNT = api.style.HEADING_COUNT;
 
@@ -110,11 +112,8 @@ window.__ModuleLoader__.load({
             var on = props.enabled !== false;
             var busy = props.busy === true;
             var help =
-              "提示词注入的总开关，管的是「默认」那一层。\n\n" +
-              "开启：每个新会话都自动挂「新会话默认」里那几条。\n" +
-              "关闭：不再往每个会话都塞默认 —— 但你在会话页自己选过的提示词照旧注入，" +
-              "段落改写也照旧生效。\n\n" +
-              "你的配置都留着，开回来就恢复。";
+              "提示词注入的总开关：控制新会话是否自动注入默认预设。\n" +
+              "关闭后，会话页手动选择和段落改写仍然生效；配置会保留。";
             return react.createElement(
               "div",
               {
@@ -156,9 +155,7 @@ window.__ModuleLoader__.load({
                   react.createElement(
                     "span",
                     { key: "st", style: HEADING_COUNT },
-                    // 「开 · 所有会话都注入」—— 说的是**默认这一层的作用范围**，
-                    // 不是「禁止/允许注入」。措辞别写成全停。
-                    on ? "开 · 新会话自动挂默认" : "关 · 只在会话页自己选的还注入",
+                    on ? "已开启" : "已关闭",
                   ),
                 ]),
               ],
@@ -166,58 +163,35 @@ window.__ModuleLoader__.load({
           }
 
           /**
-           * 一个「?」图标，说明挂在 title 上（悬停出原生提示，也能点、能聚焦）。
+           * 一个「?」图标，说明通过 DSH Tooltip 悬停或聚焦时显示。
            *
            * 为什么不用一小段灰字：
            *   这两段说明（段落是干什么的 + 改的是哪一层）以前是两行常驻灰字，
            *   压在标题下面，每一眼都要读一遍。挪进 title 之后，需要的时候才有。
            *
-           * ⚠️ 用 `title` 而不是自己写弹层：原生提示不用管点击外部关闭、
-           *    不用管层级（z-index）、不用管 Esc，也不会被设置页的滚动容器裁掉。
-           *    dsh 自己的图标提示也是这么给的。
+           * 使用宿主 Tooltip 统一处理可访问性、层级和主题外观。
            */
           function renderHelpIcon(text) {
             return react.createElement(
-              "span",
-              {
-                key: "help",
-                title: text,
-                "aria-label": text,
-                tabIndex: 0,
-                style: {
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flex: "none",
-                  width: "14px",
-                  height: "14px",
-                  color: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.9))",
-                  cursor: "help",
-                },
-              },
+              Tooltip,
+              { key: "help", label: text, side: "top", delayMs: 400, maxWidth: 360 },
               react.createElement(
-                "svg",
-                { width: "14", height: "14", viewBox: "0 0 16 16", "aria-hidden": "true" },
-                react.createElement("circle", {
-                  cx: "8",
-                  cy: "8",
-                  r: "6.6",
-                  fill: "none",
-                  stroke: "currentColor",
-                  strokeWidth: "1.3",
-                }),
-                react.createElement(
-                  "text",
-                  {
-                    x: "8",
-                    y: "11.4",
-                    textAnchor: "middle",
-                    fontSize: "9",
-                    fontWeight: "700",
-                    fill: "currentColor",
+                "span",
+                {
+                  "aria-label": text,
+                  tabIndex: 0,
+                  style: {
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flex: "none",
+                    width: "14px",
+                    height: "14px",
+                    color: "var(--dsw-alias-label-tertiary)",
+                    cursor: "help",
                   },
-                  "?",
-                ),
+                },
+                react.createElement(IconQuestionOutlineRegular, { size: 14, "aria-hidden": "true" }),
               ),
             );
           }

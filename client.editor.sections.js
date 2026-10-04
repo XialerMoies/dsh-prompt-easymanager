@@ -24,19 +24,18 @@ window.__ModuleLoader__.load({
 
     function create(api) {
       var ActionButton = api.ui.ActionButton;
+      var Button = api.ui.Button;
+      var Tag = api.ui.Tag;
       // 段落名 → 中文标签（宿主给的那一份，别在这儿再写一个）
       var sectionLabel = api.label;
       var ACTIONS = api.style.ACTIONS;
-      var BADGE_MUTED = api.style.BADGE_MUTED;
-      var BADGE_OFF = api.style.BADGE_OFF;
-      var BADGE_OK = api.style.BADGE_OK;
-      var BADGE_WARN = api.style.BADGE_WARN;
       var CARD = api.style.CARD;
       var CARD_DETAILS = api.style.CARD_DETAILS;
       var CARD_HEAD = api.style.CARD_HEAD;
       var CARD_HEADING = api.style.CARD_HEADING;
       var CARD_MAIN_ROW = api.style.CARD_MAIN_ROW;
       var CARD_NOTICE = api.style.CARD_NOTICE;
+      var NOTICE_ROW = api.style.NOTICE_ROW;
       var CARD_TITLE = api.style.CARD_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
       var HEADING_TITLE = api.style.HEADING_TITLE;
@@ -47,15 +46,14 @@ window.__ModuleLoader__.load({
       var SLOT_WHY = api.style.SLOT_WHY;
       var STATUS_LINE = api.style.STATUS_LINE;
       var TEXTAREA = api.style.TEXTAREA;
-      var WARN = api.style.WARN;
 
       function sectionBadge(row) {
-        if (row.status === "stale") return { text: "已失效", style: BADGE_WARN };
-        if (row.status === "pending") return { text: "已改写，未勾选", style: BADGE_OFF };
-        if (row.status === "untouched") return { text: "官方原文", style: BADGE_MUTED };
-        if (row.action === "disable") return { text: "未勾选", style: BADGE_OFF };
-        if (row.drifted && !row.driftAcknowledged) return { text: "官方已更新", style: BADGE_WARN };
-        return { text: "已改写", style: BADGE_OK };
+        if (row.status === "stale") return { text: "已失效", tone: "danger" };
+        if (row.status === "pending") return { text: "已改写，未勾选", tone: "outline" };
+        if (row.status === "untouched") return { text: "官方原文", tone: "quiet" };
+        if (row.action === "disable") return { text: "未勾选", tone: "outline" };
+        if (row.drifted && !row.driftAcknowledged) return { text: "官方已更新", tone: "warning" };
+        return { text: "已改写", tone: "success" };
       }
 
       function renderSectionCard(row, props) {
@@ -71,10 +69,13 @@ window.__ModuleLoader__.load({
 
         var cardChildren = [
           react.createElement(
-            "div",
+            Button,
             {
               key: "head",
-              className: "pm-head",
+              type: "button",
+              variant: "ghost",
+              size: "md",
+              "data-pm-disclosure": "1",
               // ⚠️ 两个坑叠在一起，改之前先看这段：
               //
               //   1. **内边距**要用 `CARD_HEAD`（12px 14px）。`CARD_MAIN_ROW` 只是
@@ -88,8 +89,8 @@ window.__ModuleLoader__.load({
               style: Object.assign({}, CARD_HEAD, CARD_MAIN_ROW, {
                 flexDirection: "row",
                 minHeight: "0",
+                height: "auto",
                 padding: "10px 14px",
-                cursor: "pointer",
               }),
               onClick: function () {
                 props.setOpenSection(isOpen ? null : row.name);
@@ -109,7 +110,7 @@ window.__ModuleLoader__.load({
                 row.name,
               ),
               react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
-              react.createElement("span", { key: "b", style: badge.style }, badge.text),
+              react.createElement(Tag, { key: "b", tone: badge.tone }, badge.text),
               react.createElement(
                 "span",
                 { key: "c", style: HEADING_COUNT },
@@ -124,9 +125,9 @@ window.__ModuleLoader__.load({
         if (row.status === "apply" && row.drifted && !row.driftAcknowledged) {
           cardChildren.push(
             react.createElement("div", { key: "drift", style: CARD_NOTICE }, [
-              react.createElement("div", { style: WARN }, [
-                react.createElement("strong", { key: "t" }, "官方更新过这一段。"),
-                "你改的版本照旧生效。点「知道了」消掉这条提醒，或点「还原默认」改用官方新版。",
+              react.createElement("div", { style: NOTICE_ROW }, [
+                react.createElement(Tag, { key: "t", tone: "warning" }, "官方已更新"),
+                react.createElement("span", { key: "m" }, "你改的版本照旧生效。点「知道了」消掉这条提醒，或点「还原默认」改用官方新版。"),
                 react.createElement(
                   ActionButton,
                   {
@@ -150,8 +151,11 @@ window.__ModuleLoader__.load({
             react.createElement("div", { key: "stale", style: CARD_NOTICE }, [
               react.createElement(
                 "div",
-                { style: WARN },
-                "官方已经没有这一段了（删掉或改名了）。你的改写不会再生效，数据还留着；要清理就点「还原默认」。",
+                { style: NOTICE_ROW },
+                [
+                  react.createElement(Tag, { key: "t", tone: "danger" }, "段落已失效"),
+                  react.createElement("span", { key: "m" }, "官方已经没有这一段了（删掉或改名了）。你的改写不会再生效，数据还留着；要清理就点「还原默认」。"),
+                ],
               ),
             ]),
           );
@@ -163,6 +167,7 @@ window.__ModuleLoader__.load({
             bodyChildren = [
               react.createElement("textarea", {
                 key: "ta",
+                style: TEXTAREA,
                 value: draft,
                 disabled: props.sectionsBusy,
                 spellCheck: false,
@@ -198,6 +203,7 @@ window.__ModuleLoader__.load({
                   {
                     key: "c",
                     type: "button",
+                    variant: "outline",
                     disabled: props.sectionsBusy,
                     onClick: function () {
                       props.setSectionDrafts(function (prev) {
@@ -220,6 +226,7 @@ window.__ModuleLoader__.load({
                   {
                     key: "e",
                     type: "button",
+                    variant: "outline",
                     disabled: props.sectionsBusy,
                     onClick: function () {
                       props.setSectionDrafts(function (prev) {
@@ -253,6 +260,7 @@ window.__ModuleLoader__.load({
                       {
                         key: "r",
                         type: "button",
+                        variant: "outline",
                         disabled: props.sectionsBusy,
                         title: "删掉你的改动，回到官方当前的文本（官方更新过的话就是新版）",
                         onClick: function (e) {
@@ -303,8 +311,8 @@ window.__ModuleLoader__.load({
                 react.createElement("span", { key: "sp", style: { flex: "1 1 auto" } }),
                 // 没名字的跟「功能没加载」是两回事，徽章要分开
                 react.createElement(
-                  "span",
-                  { key: "b", style: BADGE_MUTED },
+                  Tag,
+                  { key: "b", tone: "quiet" },
                   slot.name ? "未加载" : "无对应包",
                 ),
                 react.createElement("span", { key: "o", style: HEADING_COUNT }, "order " + slot.order),
@@ -333,11 +341,8 @@ window.__ModuleLoader__.load({
             react.createElement("span", { key: "n", style: HEADING_TITLE }, "系统提示词"),
             // 两段说明并成一个「?」—— 详见 client.editor.switch.js
             props.helpIcon(
-                "这些是 dsh 自己往系统提示词里放的段落。可以逐段改写，也能还原。" +
-                "官方以后新增段落会自动出现在这里，改过的会标出来 —— 你的改动不会被官方更新顶掉。" +
-                "\n\n" +
-                "这里改的是全局默认，所有会话都生效。" +
-                "只想改某一个会话的话，用会话头那一行的「提示词」按钮。",
+              "管理 dsh 原生系统提示词段落，可改写或还原。\n" +
+              "这里是全局默认；单会话请用会话头部的「提示词」按钮。",
             ),
             react.createElement(
               "span",
@@ -350,6 +355,7 @@ window.__ModuleLoader__.load({
               {
                 key: "r",
                 type: "button",
+                variant: "outline",
                 disabled: props.sectionsBusy,
                 onClick: function () {
                   props.loadSections();
@@ -372,8 +378,11 @@ window.__ModuleLoader__.load({
           items.push(
             react.createElement(
               "div",
-              { key: "err", style: WARN },
-              (props.sections.error || "读取失败") + "（还没有存活的会话时读不到，先开个会话再回来）",
+              { key: "err", style: NOTICE_ROW },
+              [
+                react.createElement(Tag, { key: "t", tone: "danger" }, "读取失败"),
+                react.createElement("span", { key: "m" }, (props.sections.error || "读取失败") + "（还没有存活的会话时读不到，先开个会话再回来）"),
+              ],
             ),
           );
         }

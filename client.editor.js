@@ -42,26 +42,18 @@ window.__ModuleLoader__.load({
       var DETAILS_GRID = api.style.DETAILS_GRID;
       var DT = api.style.DT;
       var DD = api.style.DD;
-      var PILL = api.style.PILL;
-      var PILL_APPEND = api.style.PILL_APPEND;
-      var PILL_WARN = api.style.PILL_WARN;
       var CARD_HEADING = api.style.CARD_HEADING;
       var HEADING_TITLE = api.style.HEADING_TITLE;
       var HEADING_COUNT = api.style.HEADING_COUNT;
       var CARD_ACTIONS = api.style.CARD_ACTIONS;
       var FORM = api.style.FORM;
-      var FORM_LINE = api.style.FORM_LINE;
       var FORM_LABEL = api.style.FORM_LABEL;
       var FORM_TEXTAREA = api.style.FORM_TEXTAREA;
       var HINT = api.style.HINT;
       var STATUS_LINE = api.style.STATUS_LINE;
-      var BADGE_WARN = api.style.BADGE_WARN;
-      var BADGE_MUTED = api.style.BADGE_MUTED;
-      var BADGE_OFF = api.style.BADGE_OFF;
-      var BADGE_OK = api.style.BADGE_OK;
       var RAW_NAME = api.style.RAW_NAME;
-      var CARD_NOTICE = api.style.CARD_NOTICE;
-      var WARN = api.style.WARN;
+      var NOTICE_ROW = api.style.NOTICE_ROW;
+      var Tag = api.ui.Tag;
       var TEXTAREA = api.style.TEXTAREA;
       var ACTIONS = api.style.ACTIONS;
       var PRE = api.style.PRE;
@@ -74,11 +66,8 @@ window.__ModuleLoader__.load({
       var COMBO_SIDE_HL = api.style.COMBO_SIDE_HL;
       var COMBO_BOARD = api.style.COMBO_BOARD;
       var COMBO_CHIPS = api.style.COMBO_CHIPS;
-      var SELECT_SM = api.style.SELECT_SM;
       var MUTED = api.style.MUTED;
       var MONO = api.style.MONO;
-      var MSG_ERR = api.style.MSG_ERR;
-      var MSG_OK = api.style.MSG_OK;
       var MODE_LABEL = api.mode;
       var fmtTokens = api.tokens;
       var sectionLabel = api.label;
@@ -266,25 +255,28 @@ window.__ModuleLoader__.load({
         }, [load]);
 
         /**
-         * 拨总开关。
+         * 更新全局启用状态；提供第二个参数时，也同步指定当前预设。
          *
          * ⚠️ **乐观更新** —— 拨一下立刻变色（不然点了没反应会让人以为卡住），
          *    失败再回滚并把错误说出来。
          *
-         * 关掉的效果：本插件对提示词的一切干预全部停用（不注入、不改写），
-         * 等价于原生 dsh。**不用去清空各项配置** —— 配置都留着，开回来就恢复。
+         * 关掉只停用全局注入，保留当前预设指针以便之后恢复。
+         * 选择「系统提示词（原生）」则额外传 presetId=null，清空全局预设指针。
          */
         var toggleEnabled = react.useCallback(
-          function (next) {
+          function (next, presetId) {
+            var hasPresetOverride = arguments.length > 1;
             var prev = enabledDraft;
             setEnabledDraft(next);
             // ⚠️ 走 **`/global`** —— 它才认「开关 + 指向哪条预设」这一对，
             //    而且「要开就得先选预设」那条规则在那边（没选 → 400）。
             //    `/state` 现在也能改 enabled，但带不上 presetId。
+            var body = { enabled: next };
+            if (arguments.length > 1) body.presetId = presetId;
             return fetch(ROUTE_GLOBAL, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ enabled: next }),
+              body: JSON.stringify(body),
             })
               .then(function (res) {
                 return res.json().then(function (j) {
@@ -296,6 +288,7 @@ window.__ModuleLoader__.load({
                 if (!mountedRef.current) return null;
                 flash(d && d.note ? d.note : "已更新");
                 load();
+                if (hasPresetOverride) loadPresets();
                 return null;
               })
               .catch(function (e) {
@@ -305,7 +298,7 @@ window.__ModuleLoader__.load({
                 return null;
               });
           },
-          [enabledDraft, flash, load],
+          [enabledDraft, flash, load, loadPresets],
         );
 
         // ── 系统提示词段落：读取 / 改写 / 关掉 / 还原 ────────────────────────
@@ -710,9 +703,9 @@ function presetById(d, id) {
         var body = [];
         if (err) {
           body.push(
-            react.createElement("div", { key: "err", style: WARN }, [
-              react.createElement("strong", { key: "t" }, "出错："),
-              err,
+            react.createElement("div", { key: "err", style: NOTICE_ROW }, [
+              react.createElement(Tag, { key: "t", tone: "danger" }, "出错"),
+              react.createElement("span", { key: "m" }, err),
             ]),
           );
         }

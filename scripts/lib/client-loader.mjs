@@ -134,12 +134,26 @@ export function createClientSandbox(shims, opts = {}) {
         ]),
         Input: (props) => h("input", props),
         IconChevronDownOutlineRegular: icon("chevron-down"),
+        IconEditOutlineRegular: icon("edit"),
+        IconQuestionOutlineRegular: icon("question"),
+        Tooltip: (props) => h("span", { "data-dsh-tooltip": props && props.label }, props && props.children),
         IconCodeOutlineRegular: icon("code"),
+        StateDot: (props) => h("span", { "data-state-dot": props && props.state, title: props && props.title }),
         DisclosureRow: (props) => h("div", { "data-disclosure-open": !!props.open }, [
           h("button", { type: "button", onClick: props.onToggle }, [props.icon, props.title]),
           props.open ? h("div", null, props.children) : props.collapsedContent,
         ]),
         Menu: (props) => {
+          const menuItems = (props && props.items || []).map((item) => item && item.type === "label"
+            ? { type: "label", text: item.text }
+            : item && item.type === "separator"
+              ? { type: "separator" }
+              : {
+                  id: item && item.id,
+                  label: item && typeof item.label === "string" ? item.label : "",
+                  danger: item && item.danger === true,
+                  disabled: item && item.disabled === true,
+                });
           const entries = (props && props.items || []).map((item) => {
             if (item && item.type === "label") return h("div", { role: "presentation" }, item.text);
             if (item && item.type === "separator") return h("hr", { role: "separator" });
@@ -152,7 +166,12 @@ export function createClientSandbox(shims, opts = {}) {
           });
           const menu = h("div", { role: "menu" }, entries);
           if (props && props.open && props.portal) shims.reactDom.createPortal(menu, documentShim.body);
-          return h("span", null, [props && props.anchor, props && props.open ? menu : null]);
+          return h("span", {
+            "data-dsh-menu": "1",
+            "data-menu-selected-id": props && props.selectedId,
+            "data-menu-items": JSON.stringify(menuItems),
+            onMenuSelect: props && props.onSelect,
+          }, [props && props.anchor, props && props.open ? menu : null]);
         },
         Modal: (props) => props && props.open
           ? shims.reactDom.createPortal(

@@ -330,11 +330,10 @@ function findEl(node, pred) {
 }
 
 /** 收集所有带某个 class 的元素（`className` 是空格分隔的，按词匹配）。 */
-function collectByClass(node, cls, out = []) {
+function collectDisclosureHeads(node, out = []) {
   if (node === null || node === undefined || typeof node !== "object") return out;
-  const cn = node.props && node.props.className;
-  if (typeof cn === "string" && cn.split(/\s+/).includes(cls)) out.push(node);
-  for (const c of node.children || []) collectByClass(c, cls, out);
+  if (node.props && node.props["data-pm-disclosure"] === "1") out.push(node);
+  for (const c of node.children || []) collectDisclosureHeads(c, out);
   return out;
 }
 
@@ -346,15 +345,14 @@ function collectByClass(node, cls, out = []) {
  *    第一版判据就是这么写错的，明明结构对了却报 0。
  *
  * 判据：某个元素的**直接子元素**里同时有
- *   · 一个 `.pm-head`（它是这张卡片的头）
- *   · 一个不含 `.pm-head` 的容器，而那个容器里还有 `.pm-head`（体里套着卡片）
+ *   · 一个带 `data-pm-disclosure` 的按钮（它是这张卡片的头）
+ *   · 一个不含标题按钮的容器，而那个容器里还有标题按钮（体里套着卡片）
  * 平铺的分组（分类标题 + 网格）得到 0；类别卡片套提示词卡片时 ≥1。
  */
 function countNestedCards(node) {
   if (node === null || node === undefined || typeof node !== "object") return 0;
   const kids = node.children || [];
-  const isHead = (k) =>
-    k && k.props && typeof k.props.className === "string" && k.props.className.split(/\s+/).includes("pm-head");
+  const isHead = (k) => k && k.props && k.props["data-pm-disclosure"] === "1";
   let n = 0;
   if (kids.some(isHead)) {
     for (const k of kids) {
@@ -366,11 +364,10 @@ function countNestedCards(node) {
   return n;
 }
 
-/** 子树里所有 `.pm-head` 的数量。 */
+/** 子树里所有带 data-pm-disclosure 标记的标题按钮数量。 */
 function countHeadsIn(node) {
   if (node === null || node === undefined || typeof node !== "object") return 0;
-  const cn = node.props && node.props.className;
-  let n = typeof cn === "string" && cn.split(/\s+/).includes("pm-head") ? 1 : 0;
+  let n = node.props && node.props["data-pm-disclosure"] === "1" ? 1 : 0;
   for (const c of node.children || []) n += countHeadsIn(c);
   return n;
 }
@@ -449,17 +446,8 @@ const regs = [];
   }
 }
 
-// ── 2c. 侧边栏图标补丁 ─────────────────────────────────────────────────────
-//
-// dsh 的侧边导航图标是**硬编码白名单**（`navIcon(id)`），能带的信息只有
-// `{id, order, label}` 三个字段 —— 没有 icon，也没有图标注册表。
-// 所以插件只能渲染后替换。这段就是验那个替换。
-//
-// ⚠️ 必须**注入一个能用的假 DOM**：沙箱默认那个 document 是残缺的
-//    （只有 body/head/getElementById），`patchNavIcon` 会在 try/catch 里静默失败 ——
-//    测试照样绿，但什么都没验到。第一版就是这个坑。
+// ── 2c. 设置导航图标恢复插件原有自绘铅笔 ─────────────────────────────────────
 {
-  // 极简假 DOM：够 patchNavIcon 用（querySelectorAll → 按钮；replaceWith；setAttribute）
   const makeEl = (tag) => {
     const attrs = {};
     const el = {
@@ -509,9 +497,6 @@ const regs = [];
     body,
     head: null,
     getElementById: () => null,
-    // ⚠️ 假 DOM 必须把补丁用到的 API 都给全。第一版漏了 createElementNS，
-    //    补丁在造图标那一步抛错、被它自己的 try/catch 吞掉 ——
-    //    表现为「什么都没发生」，而断言红了却看不出原因。
     createElementNS: (_ns, tag) => mk(tag),
     querySelectorAll: (sel) => (sel === "button" ? [otherBtn, ourBtn] : []),
   };
@@ -527,24 +512,13 @@ const regs = [];
   });
 
   const now = ourBtn.children.find((c) => c.tagName === "SVG");
-  ok(!!now, "我们的按钮里还有 svg");
-  eq(
-    ourBtn.getAttribute("pmNavIconDone"),
-    "1",
-    "**「提示词管理」那一项被打了标记**（说明补丁认出了它）",
-  );
-  const replaced = now !== gear;
-  ok(replaced, "**齿轮被换掉了**（原来那个 svg 元素已不在原位）");
-  // 新图标是我们造的：只有一条 path，且 viewBox 是 16
-  const path = now && now.children.find((c) => c.tagName === "PATH");
-  ok(!!path, "新图标里有 path");
-  eq(now.getAttribute("viewBox") || now.attrs?.viewBox, "0 0 16 16", "新图标 viewBox 16");
-  // 别的项不许动
+  ok(!!now, "提示词管理导航项仍有 svg");
+  eq(ourBtn.getAttribute("pmNavIconDone"), "1", "提示词管理导航项被标记为已替换");
+  ok(now !== gear, "提示词管理导航项替换为自绘图标");
+  ok(!!now.children.find((c) => c.tagName === "PATH"), "自绘图标包含笔画 path");
   eq(otherBtn.getAttribute("pmNavIconDone"), null, "**别的导航项不被动**（只认「提示词管理」那一项）");
 
-  // ⚠️ 补丁是**按文案认按钮**的（dsh 的 section 注册只有 {id, order, label}，
-  //    没有 icon），所以「标签文案」和「补丁找的文案」必须是同一份常量。
-  //    这里把两者绑起来：改文案而忘了改另一边 → 立刻红。
+  // 注册标题继续使用插件自己的单一文案常量。
   {
     const regs2 = [];
     const sb2 = createClientSandbox({ react: {}, reactDom: {} }, { document: fakeDoc });
@@ -560,7 +534,7 @@ const regs = [];
       eq(
         declared.label(),
         "提示词管理",
-        "**标签文案 = 补丁找的文案**（写两份就会有一处静默失效）",
+        "设置导航注册了提示词管理标题",
       );
     }
   }
@@ -772,8 +746,8 @@ const editorBox = modEditor.create(strict.api);
     const chip = shims.render(pickerBox.HeroPresetChip, {});
     ok(flattenText(chip).join(" ").includes("写代码"), "**按钮上显示全局那条预设的名字**");
     ok(
-      !!findEl(chip, (n) => n.type === "svg" && n.props && n.props["data-pm-icon"] === "prompt-manager"),
-      "会话入口复用提示词管理图标",
+      !!findEl(chip, (n) => n.type === "svg" && n.props && n.props["data-icon"] === "edit"),
+      "会话入口使用 DSH 原生编辑图标",
     );
     ok(
       !!findEl(chip, (n) => n.type === "svg" && n.props && n.props["data-icon"] === "chevron-down"),
@@ -1326,8 +1300,13 @@ const renderEditor = (props = {}) =>
   // ══ 菜单项使用 dsh primitives ═══════════════════════════════════════
   {
     const picker = readFileSync(join(HERE, "..", "client.picker.js"), "utf8");
-    ok((picker.match(/react\.createElement\(Menu/g) || []).length >= 2, "两个选择器使用 dsh Menu");
-    ok(picker.includes("var Menu = api.ui.Menu"), "选择器菜单使用 dsh Menu primitive");
+    const combo = readFileSync(join(HERE, "..", "client.editor.combo.js"), "utf8");
+    const host = readFileSync(join(HERE, "..", "client.js"), "utf8");
+    ok(host.includes("function PresetSelector(props)"), "宿主提供共享预设选择器");
+    ok(host.includes("PresetSelector: PresetSelector"), "共享预设选择器注入所有客户端 chunk");
+    ok(picker.includes("var PresetSelector = api.ui.PresetSelector"), "会话选择器使用共享预设选择器");
+    ok(combo.includes("var PresetSelector = api.ui.PresetSelector"), "设置页选择器使用共享预设选择器");
+    ok(host.includes("hostUi.Menu"), "共享选择器使用 dsh Menu primitive");
     ok(!picker.includes("MENU_ITEM_HOVER") && !picker.includes("onMouseEnter"), "菜单不再维护自绘 hover 状态");
   }
   // ══ 菜单/弹层不再复制宿主组件样式 ═══════════════════════════════════
@@ -1337,8 +1316,9 @@ const renderEditor = (props = {}) =>
     ok(!/var\s+PANEL\s*=/.test(host), "宿主不再定义弹层面板样式");
     ok(host.includes("Menu: hostUi.Menu"), "宿主向 chunk 注入原生菜单组件");
     ok(host.includes("Modal: hostUi.Modal"), "宿主向 chunk 注入原生 Modal 组件");
+    ok(host.includes("Tooltip: hostUi.Tooltip"), "帮助说明使用 dsh 原生 Tooltip");
   }
-  // ══ 卡片头的**结构**：两段竖排 + 动作成组 ═══════════════════════════════
+  // ══ 卡片头结构：全局开关分区 + 预设工具栏分组 ═════════════════════════════
   //
   // ⚠️ 真机上出的两次问题**都是布局结构**问题 —— 文字被挤成竖排、
   //    按钮被甩到单独一行。渲染测试测的是「渲染出东西了没」，
@@ -1387,35 +1367,45 @@ const renderEditor = (props = {}) =>
       const swHasSelect = !!(swSeg && findEl(swSeg, (n) => n.type === "select"));
       ok(!swHasSelect, "开关段里没有下拉框");
 
-      // ② 动作段：四个控件都在，顺序对
+      // ② 选择器只出现一次；常用动作固定显示，次要动作进入更多菜单。
       const actText = actSeg ? flattenText(actSeg).join(" ") : "";
       ok(actText.includes("保存"), "动作段里有「保存」");
-      ok(actText.includes("删除"), "动作段里有「删除」");
-      ok(actText.includes("↻"), "动作段里有「↻」");
-      ok(!!(actSeg && findEl(actSeg, (n) => n.type === "select")), "动作段里有下拉框");
+      ok(actText.includes("新建预设"), "动作段里有「新建预设」");
+      ok(!actText.includes("删除预设") && !actText.includes("重新读取"), "次要操作不挤在常驻工具栏里");
+      const menus = [];
+      (function walkMenus(n) {
+        if (!n || typeof n !== "object") return;
+        if (n.props && n.props["data-dsh-menu"] === "1") menus.push(n);
+        for (const c of n.children || []) walkMenus(c);
+      })(actSeg);
+      const actionMenu = menus.find((n) => JSON.parse(n.props["data-menu-items"] || "[]").some((item) => item.id === "__reload"));
+      ok(!!actionMenu, "动作段里有 DSH 更多操作菜单");
+      if (actionMenu) {
+        const items = JSON.parse(actionMenu.props["data-menu-items"] || "[]");
+        ok(items.some((item) => item.id === "__reload"), "更多菜单中可重新读取");
+        ok(items.some((item) => item.id === "__delete" && item.danger === true), "删除项使用 DSH 危险菜单样式");
+      }
 
       const seq = [];
       (function walkSeg(n) {
         if (!n || typeof n !== "object") return;
-        if (n.type === "select") seq.push("sel");
+        if (n.props && n.props["data-dsh-menu"] === "1") {
+          const items = JSON.parse(n.props["data-menu-items"] || "[]");
+          seq.push(items.some((item) => item.id === "__reload") ? "more" : "sel");
+        }
         if (n.type === "button") {
           const t = flattenText(n).join("");
           if (t.includes("保存")) seq.push("sav");
-          else if (t.includes("删除")) seq.push("del");
-          else if (t.includes("↻")) seq.push("r");
+          else if (t.includes("新建预设")) seq.push("new");
         }
         for (const c of n.children || []) walkSeg(c);
       })(actSeg || {});
-      eq(seq.join(","), "sel,sav,del,r", "**顺序：下拉 → 保存 → 删除 → 刷新**（用户指定的位置）");
+      eq(seq.join(","), "sel,new,sav,more", "**顺序：选择器 → 新建 → 保存 → 更多操作**");
 
-      // ③ 动作段不许换行（控件要保持形状）
+      // ③ 工具栏允许整组换行，按钮本身尺寸由 DSH 控件保持。
       ok(!!actSeg, "**动作段（第二段）找得到**");
       const actStyle = actSeg && actSeg.props && actSeg.props.style;
-      eq(
-        actStyle && actStyle.flexWrap,
-        "nowrap",
-        "**动作段 nowrap**（挤不下时该收窄的是标题，不是压按钮）",
-      );
+      eq(actStyle && actStyle.flexWrap, "wrap", "工具栏窄时按组换行，不挤压按钮尺寸");
       ok(
         !(headEl.props.style && headEl.props.style.flexDirection === "row"),
         "**卡片头不是一行**（两段竖排）",
@@ -1892,22 +1882,22 @@ const renderEditor = (props = {}) =>
 
   // 预设下拉：选另一条 → doPreset({action:"apply", id})
   spy.length = 0;
-  const sel = findEl(el, (n) => n.type === "select");
+  const sel = findEl(el, (n) => n.props && n.props["data-dsh-menu"] === "1");
   ok(!!sel, "找得到预设下拉");
   if (sel) {
-    sel.props.onChange({ target: { value: "写作" } });
+    sel.props.onMenuSelect("写作");
     eq(spy.length, 1, "**换预设真的调到了 doPreset**");
     eq(spy[0] && spy[0].action, "apply", "提交的是 apply");
     eq(spy[0] && spy[0].id, "写作", "应用的是下拉选中的那条");
   }
 
-  // 「重新读取」→ loadPresets
+  // 更多菜单中的「重新读取」→ loadPresets
   const calls = [];
   const el2 = shims.render(comboBox.ComboBlock, comboProps({ loadPresets: () => calls.push("reload") }));
-  const reloadBtn = findEl(el2, (n) => n.type === "button" && flattenText(n).join("") === "↻");
-  ok(!!reloadBtn, "找得到「↻」重新读取");
-  if (reloadBtn) {
-    reloadBtn.props.onClick();
+  const actionMenu = findEl(el2, (n) => n.props && n.props["data-dsh-menu"] === "1" && JSON.parse(n.props["data-menu-items"] || "[]").some((item) => item.id === "__reload"));
+  ok(!!actionMenu, "找得到更多预设操作菜单");
+  if (actionMenu) {
+    actionMenu.props.onMenuSelect("__reload");
     eq(calls.length, 1, "**点 ↻ 真的调到了 loadPresets**");
   }
 
@@ -1925,7 +1915,7 @@ const renderEditor = (props = {}) =>
     ok(Array.isArray(picked[0]), "交出的是 id 数组：" + JSON.stringify(picked[0]));
   }
 
-  // 改名：点 ✎ → 标题变输入框 → 回车提交 → doPreset({action:"rename"})
+  // 改名：编辑图标进入选择器位置的输入框 → 回车提交 → doPreset({action:"rename"})
   //
   // ⚠️ 这一段是补的：上面那几条（保存/下拉/↻/勾选）**覆盖不到 commitRename** ——
   //    注入验证时发现「commitRename 忘了转发 props」照样全绿。
@@ -2673,8 +2663,8 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
           // 各自留下的必须项（宿主没有或值故意不同）单独列在下面。
           const ALLOWED = {
             "client.editor.js": [],                       // 一个都不留
-            "client.picker.js": ["SELECT_SM", "ADVISE", "ROW", "PILL_SWITCH"],
-            "client.preview.js": ["SEC", "ADVISE"],
+            "client.picker.js": ["ROW", "PILL_SWITCH"],
+            "client.preview.js": ["SEC"],
           };
           for (const [file, allowed] of Object.entries(ALLOWED)) {
             const src = readFileSync(join(HERE, "..", file), "utf8");
@@ -2719,7 +2709,12 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     // 折叠态：模式徽章 + 展开箭头，但**不应**出现详情与操作按钮
     ok(text.includes("追加"), "折叠态显示模式徽章");
     ok(text.includes("不注入"), "另一条的模式徽章也在");
-    ok(text.includes("›"), "折叠态有展开箭头");
+    ok(!!findEl(el, (n) => n.props && n.props["data-icon"] === "chevron-down"), "折叠态使用 DSH 展开图标");
+    const collapsedCardGrid = findEl(el, (n) =>
+      n.props && n.props.style && n.props.style.gridTemplateColumns === "minmax(0, 1fr)" &&
+      findEl(n, (child) => child.props && child.props["data-pm-disclosure"] === "1"),
+    );
+    ok(!!collapsedCardGrid, "收起态提示词卡片使用单列整行布局");
 
     // ── 卡片结构：大类别卡片里套个人提示词卡片 ──────────────────────────
     //
@@ -2738,7 +2733,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     //    踩过：第二次渲染出来只剩一个「普通」分类，`其他` 那个不见了。
     {
       const nesting = countNestedCards(el);
-      const heads = collectByClass(el, "pm-head");
+      const heads = collectDisclosureHeads(el);
       ok(nesting > 0, `**有卡片套在卡片里**（类别卡片 → 个人提示词卡片），实际 ${nesting}`);
       ok(heads.length >= 3, `个人提示词那块的卡片头数（实际 ${heads.length}）`);
       // 类别卡片头上要有分类名（平铺版是裸标题，没有卡片头）。
@@ -2747,13 +2742,13 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
       //    所以显示的就是 `other`。
       const catHead = heads.find((h) => {
         const t = flattenText(h).join(" ");
-        return t.includes("条") && t.includes("›") && !t.includes("tokens");
+        return t.includes("条") && !!findEl(h, (n) => n.props && n.props["data-icon"] === "chevron-down") && !t.includes("tokens");
       });
       ok(!!catHead, "**有类别卡片头**（带条数和箭头，且不是某条提示词的卡片）");
       if (catHead) {
         const t = flattenText(catHead).join(" ");
         ok(/\d+ 条/.test(t), "类别头上带条数");
-        ok(t.includes("›"), "类别头有折叠箭头（能整类收起来）");
+        ok(!!findEl(catHead, (n) => n.props && n.props["data-icon"] === "chevron-down"), "类别头有 DSH 折叠图标（能整类收起来）");
         // ⚠️ 类别头**不该**显示 token 数 —— 那是提示词卡片才有的
         ok(!t.includes("tokens"), "**类别头不显示 token 数**（跟提示词卡片区分开）");
       }
@@ -2807,6 +2802,11 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     ok(text.includes("编辑"), "展开后有编辑按钮");
     ok(text.includes("删除"), "展开后有删除按钮");
     ok(text.includes("正文内容"), "展开后显示正文");
+    const fullWidthOpenCard = findEl(el, (n) =>
+      n.props && n.props.style && n.props.style.gridTemplateColumns === "minmax(0, 1fr)" &&
+      findEl(n, (child) => child.props && child.props["data-pm-disclosure"] === "1"),
+    );
+    ok(!!fullWidthOpenCard, "展开详情卡片使用单列整行布局，与编辑态保持同宽");
   }
 
   // 展开「不注入」那条：正文一栏要说清是"无"
@@ -2848,6 +2848,15 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     ok(text.includes("取消"), "有取消按钮");
     ok(text.includes("保存到 prompts/a.md"), "提示保存位置");
     ok(text.includes("约 4 字符"), "显示正文长度");
+    const textarea = findEl(el, (n) => n.type === "textarea");
+    ok(!!textarea, "追加模式的正文使用多行输入框");
+    eq(textarea && textarea.props.style.width, "100%", "正文输入框占满表单宽度");
+    eq(textarea && textarea.props.style.minHeight, "240px", "正文输入框有可用的最小高度");
+    const fullWidthEditor = findEl(el, (n) =>
+      n.props && n.props.style && n.props.style.gridTemplateColumns === "minmax(0, 1fr)" &&
+      findEl(n, (child) => child.type === "textarea"),
+    );
+    ok(!!fullWidthEditor, "编辑中的提示词卡片与收起、展开态同为单列整行");
   } catch (e) {
     ok(false, "编辑表单渲染不抛异常 —— 抛了 " + e.message);
   }
@@ -2855,7 +2864,8 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   // 替换模式：要显示警告
   // 模式下拉框里只应有「追加 / 不注入」两个选项（替换已删除）
   {
-    const opts = collectOptionTexts(el).join(" ");
+    const menu = findEl(el, (n) => n.props && n.props["data-dsh-menu"] === "1" && n.props["data-menu-selected-id"] === "append");
+    const opts = menu ? JSON.parse(menu.props["data-menu-items"]).map((item) => item.label || item.text || "").join(" ") : "";
     ok(!opts.includes("替换"), "模式下拉框里没有「替换」");
     ok(opts.includes("追加"), "有「追加」");
     ok(opts.includes("不注入"), "有「不注入」");
@@ -3025,9 +3035,10 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     //
     //    判据：按类别卡片逐个看 —— 「自定义分类」只允许出现在真自定义的
     //    那张卡片头上。
-    const heads = collectByClass(el, "pm-head");
+    const heads = collectDisclosureHeads(el);
     for (const h of heads) {
       const t = flattenText(h).join(" ");
+      eq(h.props.variant, "ghost", "展开行使用 DSH Button primitive 的 ghost 样式");
       if (!t.includes("自定义分类")) continue;
       ok(
         t.includes("安全审查"),
@@ -3089,7 +3100,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     }
   }
 
-  // ── 进入编辑态 → 表单里应有分类**下拉框**（不是 datalist）──
+  // ── 进入编辑态 → 分类由 DSH Menu 展示──
   // 注意：卡片展开看到的是**详情**（编辑/删除按钮）；表单要 edit 状态才渲染。
   //
   // v0.4.0：datalist 换成 select。用户反馈 `<input list>` 的下拉弹不出来、
@@ -3107,17 +3118,18 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   try {
     const el2 = renderEditor({});
     const text2 = flattenText(el2).join(" ");
-    const selects = [];
+    const categoryButtons = [];
     const texts = [];
     (function walk(n) {
       if (!n || typeof n !== "object") return;
-      if (n.props && n.props["data-pm-category"] === "select") selects.push(n);
+      if (n.props && n.props["data-pm-category"] === "select") categoryButtons.push(n);
       if (n.props && n.props["data-pm-category"] === "text") texts.push(n);
       for (const c of n.children || []) walk(c);
     })(el2);
-    eq(selects.length, 1, "展开后有一个分类下拉框");
-    eq(selects[0].props.value, "tool", "下拉框预选当前分类");
-    const opts = collectOptionTexts(selects[0]);
+    eq(categoryButtons.length, 1, "展开后有一个 DSH 分类菜单触发器");
+    ok(flattenText(categoryButtons[0]).join(" ").includes("工具（tool）"), "触发器显示当前分类");
+    const categoryMenu = findEl(el2, (n) => n.props && n.props["data-dsh-menu"] === "1" && JSON.parse(n.props["data-menu-items"]).some((item) => item.id === "tool"));
+    const opts = categoryMenu ? JSON.parse(categoryMenu.props["data-menu-items"]).map((item) => item.label || "") : [];
     ok(opts.some((o) => o.includes("身份")), "选项含内置分类「身份」");
     ok(opts.some((o) => o.includes("工具")), "选项含内置分类「工具」");
     ok(opts.some((o) => o.includes("安全审查")), "选项含目录里的自定义分类");
@@ -3145,16 +3157,16 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   ]);
   try {
     const el3 = renderEditor({});
-    const selects = [];
+    const categoryButtons = [];
     const texts = [];
     (function walk(n) {
       if (!n || typeof n !== "object") return;
-      if (n.props && n.props["data-pm-category"] === "select") selects.push(n);
+      if (n.props && n.props["data-pm-category"] === "select") categoryButtons.push(n);
       if (n.props && n.props["data-pm-category"] === "text") texts.push(n);
       for (const c of n.children || []) walk(c);
     })(el3);
-    eq(selects.length, 1, "自定义分类时仍有下拉框");
-    ok(selects[0].props.value !== "tool", "下拉框没有假装选着某个内置类");
+    eq(categoryButtons.length, 1, "自定义分类时仍有 DSH 菜单触发器");
+    ok(flattenText(categoryButtons[0]).join(" ").includes("＋ 自定义…"), "未收录的自定义分类显示自定义入口");
     eq(texts.length, 1, "**自定义分类时出现自由输入框**");
     eq(texts[0].props.value, "临时起的名字", "输入框带出当前的自定义名");
   } catch (e) {
@@ -3174,16 +3186,16 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
   ]);
   try {
     const el4 = renderEditor({});
-    const selects = [];
+    const categoryButtons = [];
     const texts = [];
     (function walk(n) {
       if (!n || typeof n !== "object") return;
-      if (n.props && n.props["data-pm-category"] === "select") selects.push(n);
+      if (n.props && n.props["data-pm-category"] === "select") categoryButtons.push(n);
       if (n.props && n.props["data-pm-category"] === "text") texts.push(n);
       for (const c of n.children || []) walk(c);
     })(el4);
-    eq(selects.length, 1, "已知自定义分类也有下拉框");
-    eq(selects[0].props.value, "安全审查", "已知自定义分类在下拉框里被选中");
+    eq(categoryButtons.length, 1, "已知自定义分类也有 DSH 菜单触发器");
+    ok(flattenText(categoryButtons[0]).join(" ").includes("安全审查（自定义）"), "已知自定义分类在触发器上显示");
     eq(texts.length, 0, "已知自定义分类不需要额外输入框");
   } catch (e) {
     ok(false, "已知自定义分类表单不抛异常 —— 抛了 " + e.message);
@@ -3199,7 +3211,8 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     const el3 = renderEditor({});
     const text3 = flattenText(el3).join(" ");
     const vals = collectValues(el3);
-    ok(vals.includes("identity"), "新建表单里分类是 identity");
+    const categoryMenu = findEl(el3, (n) => n.props && n.props["data-dsh-menu"] === "1" && n.props["data-menu-selected-id"] === "identity");
+    ok(!!categoryMenu, "新建表单里分类菜单选中 identity");
     ok(vals.includes("20") || text3.includes("order 20"), "带出身份类的建议 order 20");
   } catch (e) {
     ok(false, "**编辑器**渲染新建表单不抛异常 —— 抛了 " + e.message);
@@ -3312,8 +3325,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
 }
 
 // ── 9. 样式常量全部有定义（防「用了没定义」）────────────────────────────────
-// 之前 ADVISE 就是被引用却漏了定义 —— 虽然 style:undefined 不致命，
-// 但说明这类漏定义没有被任何机制挡住。现在静态扫一遍。
+// 样式常量必须由宿主定义并显式交给 chunk，避免引用未定义样式。
 {
   const src = CLIENT_SRC;
   const defined = new Set();
@@ -3552,7 +3564,7 @@ function makeSectionsData(over = {}) {
     ok(text.includes("官方原文"), "未改动的段落标为「官方原文」");
     ok(text.includes("官方已更新"), "漂移的段落标为「官方已更新」");
     ok(text.includes("知道了"), "漂移段落有「知道了」按钮");
-    ok(text.includes("官方更新过这一段"), "给出了漂移说明");
+    ok(text.includes("官方已更新") && text.includes("知道了"), "漂移提醒使用原生 warning 标签并保留操作");
     ok(text.includes("照旧生效"), "**说明覆盖照旧生效**（不是「已停用」）");
     ok(text.includes("重新读取"), "有「重新读取」按钮");
 
@@ -3865,8 +3877,8 @@ function makeSectionsData(over = {}) {
   const tip = collectTitles(el).find((t) => t.includes("全局默认")) || "";
   ok(tip !== "", "**作用范围说明挂在「?」的 title 上**（不是丢了）");
   ok(tip.includes("会话头"), "**并指出会话级的东西去哪找**（否则用户找不到）");
-  ok(tip.includes("dsh 自己往系统提示词里放"), "title 里说清了这些段落是什么");
-  ok(tip.includes("不会被官方更新顶掉"), "title 里说清了官方更新不会顶掉改动");
+  ok(tip.includes("管理 dsh 原生系统提示词段落"), "title 里说清了这些段落是什么");
+  ok(tip.includes("单会话请用会话头部"), "title 里说清了单会话入口");
   ok(!text.includes("官方以后新增段落会自动出现在这里"), "**屏幕上不再常驻这段长说明**");
 }
 // ── 提示词组合（生效列表）+ 快速预设 ──────────────────────────────────────
@@ -3922,25 +3934,85 @@ function makeSectionsData(over = {}) {
   // 现在：标题就是预设名（一眼知道在哪套上），下拉换套，✎ 改名，保存落盘，
   // 勾选就是在改这套。
   ok(text.includes("写代码"), "**标题就是当前预设名**（匹配到预设时）");
-  ok(text.includes("✎"), "预设名旁边有改名图标");
+  ok(!!findEl(comboEl, (n) => n.type === "button" && n.props && n.props["aria-label"] === "编辑预设名称"), "选择器旁边有 DSH 编辑图标按钮");
     ok(text.includes("保存"), "**预设卡片**里有保存按钮");
   ok(!text.includes("未保存的配置"), "匹配到预设时不显示「未保存的配置」占位");
 
   // 下拉框：选项是各条预设，选中项 = 当前匹配的那条
   {
-    const sel = findEl(comboEl, (n) => n.type === "select");
+    const sel = findEl(comboEl, (n) => n.props && n.props["data-dsh-menu"] === "1");
     ok(!!sel, "**右侧有预设下拉框**");
     if (sel) {
-      const opts = [];
-      (function walk(n) {
-        if (!n || typeof n !== "object") return;
-        if (n.type === "option") opts.push(n);
-        for (const k of n.children || []) walk(k);
-      })(sel);
-      const labels = opts.map((o) => flattenText(o).join(""));
+      const labels = JSON.parse(sel.props["data-menu-items"]).map((item) => item.label || "");
       ok(labels.includes("写代码") && labels.includes("写作"), `下拉里有全部预设（实际 ${labels.join("/")}）`);
-      eq(sel.props.value, "写代码", "**下拉默认选中当前匹配的预设**（否则不知道自己在哪）");
+      eq(sel.props["data-menu-selected-id"], "写代码", "**下拉默认选中当前匹配的预设**（否则不知道自己在哪）");
     }
+  }
+
+  // 菜单选中项必须触发真实动作；选原生会清空指针，选用户预设会 apply 对应 id。
+  {
+    const isolatedShims = makeShims();
+    const isolatedSandbox = createClientSandbox(isolatedShims);
+    isolatedSandbox.preload("client.editor.combo.js");
+    const isolatedChunk = isolatedSandbox.cache.get("dsh-prompt-easymanager/client.editor.combo.js");
+    const isolatedCombo = isolatedChunk.create(strict.api).ComboBlock;
+    const globalCalls = [];
+    const presetCalls = [];
+    const current = { presets: presetData.presets, global: { enabled: true, presetId: "写代码" } };
+    const props = {
+      ...EDITOR_PROPS,
+      prompts: lib,
+      presetsData: current,
+      presetsBusy: false,
+      presetName: "",
+      renameDraft: "",
+      renaming: false,
+      globalEnabled: true,
+      presetDraft: [],
+      presetSelection: { listed: [], excluded: [], sections: {}, known: [] },
+      sectionsData: { availableNative: [] },
+      onToggleGlobal: (...args) => globalCalls.push(args),
+      setRenaming: () => {},
+      setRenameDraft: () => {},
+      setPresetName: () => {},
+      setPresetDraft: () => {},
+      setPresetSelection: () => {},
+      doPreset: (payload) => presetCalls.push(payload),
+      loadPresets: () => {},
+      flash: () => {},
+      setActivePrompts: () => {},
+    };
+    const customView = isolatedShims.render(isolatedCombo, props);
+    const customMenu = findEl(customView, (n) => n.props && n.props["data-dsh-menu"] === "1");
+    ok(!!customMenu, "独立渲染找到预设选择菜单");
+    if (customMenu) {
+      customMenu.props.onMenuSelect("写作");
+      customMenu.props.onMenuSelect("__native");
+    }
+    eq(presetCalls, [{ action: "apply", id: "写作" }], "选用户预设会 apply 对应 id");
+    eq(globalCalls, [[false, null]], "选原生项会关闭全局注入并清空 presetId");
+
+    const switched = isolatedShims.render(isolatedCombo, {
+      ...props,
+      presetsData: { ...current, global: { enabled: true, presetId: "写作" } },
+    });
+    const switchedButton = findEl(switched, (n) => n.type === "button" && n.props && n.props["aria-haspopup"] === "menu");
+    ok(flattenText(switchedButton).join(" ").includes("写作"), "切换后选择器显示新预设名");
+
+    const nativeView = isolatedShims.render(isolatedCombo, {
+      ...props,
+      presetsData: { ...current, global: { enabled: false, presetId: null } },
+      globalEnabled: false,
+    });
+    const nativeMenu = findEl(nativeView, (n) => n.props && n.props["data-dsh-menu"] === "1");
+    eq(nativeMenu && nativeMenu.props["data-menu-selected-id"], "__native", "原生配置被菜单标为当前选择");
+    const nativeButton = findEl(nativeView, (n) => n.type === "button" && n.props && n.props["aria-haspopup"] === "menu");
+    ok(flattenText(nativeButton).join(" ").includes("系统提示词（原生）"), "选择器按钮同步显示原生配置");
+
+    const editorSource = readFileSync(join(HERE, "..", "client.editor.js"), "utf8");
+    ok(/function \(next, presetId\)/.test(editorSource), "全局开关回调可接收显式预设选择");
+    ok(/if \(arguments\.length > 1\) body\.presetId = presetId/.test(editorSource), "显式选择会把 presetId 写入全局请求");
+    ok(/if \(hasPresetOverride\) loadPresets\(\)/.test(editorSource), "显式选择成功后重读预设以刷新选择器");
   }
 
   // 设置页和会话页的显示语义一致：纯原生合并，改写预设显示「系统提示词 · 改」。
@@ -3956,14 +4028,9 @@ function makeSectionsData(over = {}) {
     };
     shims.setStates([...base, consistent, false, "", null]);
     const consistentEl = renderEditor({});
-    const consistentSel = findEl(consistentEl, (n) => n.type === "select");
-    const labels = [];
-    (function walk(n) {
-      if (!n || typeof n !== "object") return;
-      if (n.type === "option") labels.push(flattenText(n).join(""));
-      for (const child of n.children || []) walk(child);
-    })(consistentSel);
-    eq(consistentSel.props.value, "__native", "纯原生预设在设置页也归并到原生入口");
+    const consistentSel = findEl(consistentEl, (n) => n.props && n.props["data-dsh-menu"] === "1");
+    const labels = consistentSel ? JSON.parse(consistentSel.props["data-menu-items"]).map((item) => item.label || "") : [];
+    eq(consistentSel && consistentSel.props["data-menu-selected-id"], "__native", "纯原生预设在设置页也归并到原生入口");
     ok(labels.includes("系统提示词（原生）"), "设置页保留唯一原生入口");
     ok(labels.includes("系统提示词 · 改"), "设置页改写预设显示系统提示词 · 改");
     shims.setStates([...base, presetData, false, "", null]);
@@ -3988,7 +4055,7 @@ function makeSectionsData(over = {}) {
       if (n.type === "button" && n.props && n.props.title) selectedButtons.push(n.props.title);
       for (const child of n.children || []) walk(child);
     })(selectedEl);
-    ok(selectedButtons.some((x) => x.includes("预设「系统提示词 · 改」")), "保存/删除提示使用统一标签");
+    ok(selectedButtons.some((x) => x.includes("预设「系统提示词 · 改」")), "保存提示使用统一标签");
     shims.setStates([...base, presetData, false, "", null]);
   }
 
@@ -4106,7 +4173,7 @@ function makeSectionsData(over = {}) {
           })(comboEl);
           return hit;
         };
-        const sel = findEl(comboEl, (n) => n.type === "select");
+        const sel = findEl(comboEl, (n) => n.props && n.props["data-dsh-menu"] === "1");
         const saveBtn = findEl(
           comboEl,
           (n) => n.type === "button" && flattenText(n).join("") === "保存",
@@ -4205,8 +4272,10 @@ function makeSectionsData(over = {}) {
     { presets: [], global: { enabled: false, presetId: null }, session: null, effective: null, sessionId: null },
     false, "", null,
   ]);
-  text = flattenText(renderEditor({})).join(" ");
-  ok(text.includes("还没有预设"), "零预设时给了引导");
+  const noPresetEl = renderEditor({});
+  const noPresetMenu = findEl(noPresetEl, (n) => n.props && n.props["data-dsh-menu"] === "1");
+  const noPresetItems = noPresetMenu ? JSON.parse(noPresetMenu.props["data-menu-items"]) : [];
+  ok(noPresetItems.some((item) => (item.label || item.text || "").includes("还没有预设")), "零预设时给了引导");
 
   // ⚠️ 这里原来有一块「sectionScope = "session" 时照常渲染」的用例 ——
   //    **连同 sectionScope 一起删掉了**：那两个状态（以及它们的 setter）
@@ -4266,11 +4335,11 @@ function makeSectionsData(over = {}) {
     !!findEl(el, (n) => n.props && n.props.role === "switch"),
     "**role=switch 的控件仍在编辑器里**（搬进 switch chunk 后仍被渲染出来）",
   );
-  ok(text.includes("开 · 新会话自动挂默认"), "开启时说明作用范围（说的是「默认」这一层）");
+  ok(text.includes("已开启"), "开启状态简短显示");
   const swTip = collectTitles(el).find((t) => t.includes("提示词注入的总开关")) || "";
   ok(swTip !== "", "**总开关的说明挂在 title 上**（不占常驻行）");
   // ⚠️ 措辞别写成「全部停用」—— 那过头了。关掉只掐「默认」那一层。
-  ok(swTip.includes("会话页自己选过的提示词照旧注入"), "**title 里说清关掉后什么还生效**（不是全停）");
+  ok(swTip.includes("会话页手动选择和段落改写仍然生效"), "**title 里说清关掉后什么还生效**（不是全停）");
 
   // ── 总开关要排在内容最前面 ────────────────────────────────────────────
   //
@@ -4296,11 +4365,8 @@ function makeSectionsData(over = {}) {
         const t = flattenText(k).join("");
         if (t.includes("提示词全局注入") && idx.master === undefined) idx.master = i;
         // ⚠️ 这一块**没有静态标题了** —— 标题位是当前配置名（预设名 / 未保存的
-        //    配置）。判据改用只属于它的两样：下拉框和「勾选即在改这套配置」。
-        if (
-          (t.includes("未保存的配置") || t.includes("勾选即在改这套配置")) &&
-          idx.combo === undefined
-        ) {
+        //    配置）。用卡片头标记定位，避免预设名称变化影响区块顺序测试。
+        if (findEl(k, (n) => n.props && n.props["data-pm-card-head"] === "1") && idx.combo === undefined) {
           idx.combo = i;
         }
         if (t.includes("系统提示词") && idx.sections === undefined) idx.sections = i;
@@ -4328,25 +4394,25 @@ function makeSectionsData(over = {}) {
   if (sw) {
     eq(sw.props["aria-checked"], true, "**aria-checked 跟状态一致**（原生开关靠它驱动视觉）");
   }
-  // 「配置不会被清掉」也收进了 title —— 用户在决定要不要关的时候才需要看到它
-  ok(swTip.includes("配置都留着"), "**title 里说明了配置不会被清掉**（否则用户不敢关）");
+  // 配置保留说明也收进了 title —— 用户在决定要不要关的时候才需要看到它
+  ok(swTip.includes("配置会保留"), "**title 里说明了配置不会被清掉**（否则用户不敢关）");
 
   shims.setStates(withEnabled(false));
   {
     const elOff = renderEditor({});
     text = flattenText(elOff).join(" ");
-    ok(text.includes("关 · 只在会话页自己选的还注入"), "关闭时说明还有什么在生效");
+    ok(text.includes("已关闭"), "关闭状态简短显示");
     ok(text.includes("提示词全局注入"), "关闭时开关名不变（名字说的是它管什么，不是当前状态）");
     // 关掉的效果说明也在 title 上，不占常驻行
     const tipOff = collectTitles(elOff).find((t) => t.includes("提示词注入的总开关")) || "";
-    ok(tipOff.includes("段落改写也照旧生效"), "**title 里说清改写不受影响**（两件事别混）");
+    ok(tipOff.includes("段落改写仍然生效"), "**title 里说清改写不受影响**（两件事别混）");
   }
 
   // enabledDraft 为 null（还没读完）不该炸，也不该误显示成"关"
   shims.setStates(withEnabled(null));
   try {
     text = flattenText(renderEditor({})).join(" ");
-    ok(text.includes("开 · 新会话自动挂默认"), "还没读完时按「开」显示（默认开），不误报成关");
+    ok(text.includes("已开启"), "还没读完时按「开」显示（默认开），不误报成关");
   } catch (e) {
     ok(false, "enabledDraft 为 null 时不许炸 —— 抛了 " + e.message);
   }
