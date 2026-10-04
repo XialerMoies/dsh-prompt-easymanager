@@ -19,7 +19,7 @@ DSH 的系统提示词由多个段落组成。这个插件把个人提示词、�
 使用 DSH 从 GitHub 安装：
 
 ```powershell
-dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.7
+dsh plugin --profile web add github:XialerMoies/dsh-prompt-easymanager#v0.3.8
 ```
 
 将 `web` 换成实际使用的 DSH profile 名称。安装或更新完成后重启 DSH Web。

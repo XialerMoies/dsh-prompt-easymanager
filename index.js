@@ -58,7 +58,7 @@ import { handleLibrary } from "./scripts/lib/routes/library.mjs";
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.7";
+const PLUGIN_VERSION = "0.3.8";
 
 export const STATE_PATH = "/api/prompt-easymanager/state";
 export const ASSIGN_PATH = "/api/prompt-easymanager/assign";
