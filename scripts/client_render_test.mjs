@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { createSuite } from "./lib/test-harness.mjs";
 import { createClientSandbox, clientSource, strictApi } from "./lib/client-loader.mjs";
 
-// 拆包之后客户端有 6 个文件。静态扫描必须扫**全部**，不能只扫 client.js ——
+// 拆包之后客户端有多个文件。静态扫描必须扫**全部**，不能只扫 client.js ——
 // 那些常量/函数大多搬进了 chunk，只扫宿主的话这类断言会「全绿但什么都没扫到」。
 const CLIENT_SRC = clientSource();
 
@@ -658,6 +658,10 @@ ok(
   sandbox.loadedChunks.includes("dsh-prompt-easymanager/client.preview.js"),
   "预览 chunk 跟面板**一起**拉起（点预览那一刻才炸是这条链最容易断的地方）",
 );
+ok(
+  sandbox.loadedChunks.includes("dsh-prompt-easymanager/client.host-dom.js"),
+  "新会话页 DOM 适配按需拉起了独立 chunk",
+);
 const modPicker = sandbox.cache.get("dsh-prompt-easymanager/client.picker.js");
 const modPickerShared = sandbox.cache.get("dsh-prompt-easymanager/client.picker.shared.js");
 const modPickerSession = sandbox.cache.get("dsh-prompt-easymanager/client.picker.session.js");
@@ -907,7 +911,7 @@ ok(typeof Editor === "function", "create(api) 造出了 PromptEditor");
   //    dsh 的槽位渲染器给每个槽位容器加了 `data-slot="<slotKey>"`，
   //    那是它自己定义的键 —— 不随 class 哈希变、不随内部孩子数变。
   {
-    const host = readFileSync(join(HERE, "..", "client.js"), "utf8");
+    const host = readFileSync(join(HERE, "..", "client.host-dom.js"), "utf8");
     ok(
       host.includes('conversation.hero.agentPreset'),
       "**靠槽位键 conversation.hero.agentPreset 定位**（dsh 自己定义的，最稳）",
@@ -1120,6 +1124,7 @@ const renderEditor = (props = {}) =>
       "client.editor.combo.js",
       "client.editor.library.js",
       "client.picker.js",
+      "client.host-dom.js",
       "client.preview.js",
     ]) {
       const src = readFileSync(join(HERE, "..", file), "utf8");
@@ -1182,6 +1187,7 @@ const renderEditor = (props = {}) =>
       "client.editor.combo.js",
       "client.editor.library.js",
       "client.picker.js",
+      "client.host-dom.js",
       "client.preview.js",
     ]) {
       const src = readFileSync(join(HERE, "..", file), "utf8");
@@ -2681,6 +2687,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
             "client.picker.shared.js": [],
             "client.picker.session.js": [],
             "client.picker.hero.js": [],
+            "client.host-dom.js": [],
             "client.preview.js": ["SEC"],
           };
           for (const [file, allowed] of Object.entries(ALLOWED)) {
@@ -3386,6 +3393,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     "client.picker.shared.js",
     "client.picker.session.js",
     "client.picker.hero.js",
+    "client.host-dom.js",
     "client.preview.js",
   ];
   const bad = [];
@@ -3452,6 +3460,7 @@ const posts = tap("跟随全局", { s1: "写代码" }); // 当前是「写代码
     "client.picker.shared.js",
     "client.picker.session.js",
     "client.picker.hero.js",
+    "client.host-dom.js",
     "client.preview.js",
   ];
   const problems = [];

@@ -5,6 +5,7 @@
 //   client.picker.js    多选面板 + 会话头部入口
 //   client.preview.js   最终系统提示词预览
 //   client.editor.js    设置页「个人提示词」整栏（最大的一块）
+//   client.host-dom.js  新会话页 DOM 补丁与 picker 挂载
 //
 // 浮层外壳（Overlay + OVERLAY / PANEL 那一族常量）没有独立 chunk：面板和预览
 // 各自定义同一个 Overlay 组件，常量从这里随 api.style 交下去。
@@ -179,6 +180,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
     var loadPickerShared = function () { return req.async("./client.picker.shared.js"); };
     var loadPickerSession = function () { return req.async("./client.picker.session.js"); };
     var loadPickerHero = function () { return req.async("./client.picker.hero.js"); };
+    var loadHostDom = function () { return req.async("./client.host-dom.js"); };
     var loadPreview = function () { return req.async("./client.preview.js"); };
     var loadEditor = function () { return req.async("./client.editor.js"); };
     /** 设置页里的「总开关」那一块 + 共用的「?」图标。 */
@@ -195,6 +197,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
 
     /** 设置面板侧边栏那一项的文案。图标补丁按这份文案定位入口。 */
     var NAV_TITLE = "提示词管理";
+    var PLUGIN_ID = "dsh-prompt-easymanager";
 
     // 已加载好的 chunk：loader → 模块本体（失败了就删掉，下次重试）
     var chunkCache = new Map();
@@ -985,194 +988,19 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
          *    dsh 改版之后这个补丁会静默失效，但页面照常能用。
          */
         function patchHeroPreset() {
-          if (typeof document === "undefined" || !document.body) return;
-          var HOST_ATTR = "data-pm-hero-preset";
-
-          /**
-           * 找「工作区 / agent 预设」那一行。
-           *
-           * ── 现在靠什么找：**槽位属性** ──────────────────────────────────
-           *
-           * dsh 的槽位渲染器（`dsh-client-ui-renderer` 的 `SlotOutlet`）给每个
-           * 槽位容器都加了 `data-slot="<slotKey>"`：
-           *
-           *     <div data-slot="conversation.hero.agentPreset" style="display:contents">…</div>
-           *
-           * 这是 **dsh 自己定义的键**，不随 CSS module 的哈希 class 变，
-           * 也不随它内部塞几个孩子变 —— **比数孩子稳得多**。
-           *
-           *     槽位容器（display:contents）的**父元素**就是那一行。
-           *
-           * ── 踩过的四次（每次都是判据太松或太紧）─────────────────────────
-           *
-           *   ① `btn.parentElement.parentElement` —— 走太高，插到「包住整块输入区」
-           *      的外层容器上 → 控件另起一行。
-           *   ② 只认 `[aria-haspopup='menu']` —— 真机返回 0 个（那时页面还没渲染），
-           *      而日志设成「只打一次」，只留下最早那次失败的样子。
-           *   ③ 判据放宽成「孩子数 2–4、至少 2 个 button」—— **太松**：
-           *      匹配到了输入框那行的 `standardControls`（正好 2 个孩子），
-           *      于是控件被插到了**发送按钮后面**（用户贴的 DOM 里能看到）。
-           *   ④ 所以现在**不再数孩子**，直接认槽位键。
-           */
-          /** 试过几次（诊断用）。⚠️ 必须声明在 apply **之前** ——
-           *  `var` 会提升，但值是 undefined，`tries++` 就成了 NaN。 */
-          var tries = 0;
-
-          /** 那一行的槽位键（dsh 定的，见上面说明）。 */
-          var HERO_SLOT = "conversation.hero.agentPreset";
-
-          function rowOf() {
-            try {
-              var anchor = document.querySelector('[data-slot="' + HERO_SLOT + '"]');
-              if (!anchor) return null;
-              // ⚠️ 槽位容器自己是 `display:contents`（**没有盒子**），
-              //    往里 append 子元素布局上会散架 —— 要插到它**父元素**里。
-              var row = anchor.parentElement;
-              if (!row) return null;
-              if (row.querySelector("[" + HOST_ATTR + "]")) return null; // 已插过
-              return row;
-            } catch {
-              /* 结构变了就算了 */
-            }
-            return null;
-          }
-
-          /**
-           * 把「找到/没找到」说清楚 —— 打一行紧凑的诊断。
-           *
-           * ⚠️ 为什么要这个：DOM 补丁靠结构匹配，而**结构只有真机上才有**。
-           *    没有它的时候每次失效都只能靠猜（已经猜过两轮）。
-           *    现在失败时从控制台能一眼看出「匹配到了什么、为什么没插」。
-           */
-          function describe(el) {
-            try {
-              if (!el) return "(null)";
-              var tag = el.tagName ? el.tagName.toLowerCase() : "?";
-              var cls = (el.className || "").toString().split(/\s+/).slice(0, 2).join(".");
-              var kids = el.children ? el.children.length : 0;
-              var parts = [];
-              for (var k = 0; k < kids && k < 5; k++) {
-                var c = el.children[k];
-                parts.push(
-                  (c.tagName || "?").toLowerCase() +
-                    (c.getAttribute && c.getAttribute("aria-haspopup") ? "[menu]" : ""),
-                );
-              }
-              return tag + (cls ? "." + cls : "") + " kids=" + kids + " [" + parts.join(", ") + "]";
-            } catch {
-              return "(描述失败)";
-            }
-          }
-
-          function apply() {
-            tries++;
-            try {
-              if (document.querySelector("[" + HOST_ATTR + "]")) return true; // 已经插过
-              var row = rowOf();
-              if (!row) {
-                // ⚠️ 失败时**说清楚看到了什么** —— 这个补丁靠结构匹配，
-                //    而结构只有真机上有。没有这行日志，失效时只能靠猜。
-                //    （上一版「只打一次」害了自己：第一次是「还没渲染」，
-                //      之后成功了也不打，于是我只看到失败那次的样子。）
-                note(
-                  "没找到目标行（第 " + tries + " 次尝试）；" +
-                    "页面上有 " +
-                    document.querySelectorAll("[data-slot]").length +
-                    " 个槽位容器，其中 hero 那个（" +
-                    HERO_SLOT +
-                    "）有 " +
-                    document.querySelectorAll('[data-slot="' + HERO_SLOT + '"]').length +
-                    " 个；第一个槽位的父链：" +
-                    describeChain(document.querySelector("[data-slot]")),
-                );
-                return false;
-              }
-              var box = document.createElement("span");
-              box.setAttribute(HOST_ATTR, "1");
-              box.style.display = "inline-flex";
-              box.style.alignItems = "center";
-              row.appendChild(box);
-              note("已插入（第 " + tries + " 次尝试），目标行：" + describe(row) + "；它的父：" + describe(row.parentElement));
-              mountHeroPicker(box);
-              return true;
-            } catch {
-              /* 补丁失败不影响功能 */
-            }
-            return false;
-          }
-
-          /** 把一个元素往上四层描述一遍（帮助判断「插到哪儿了」）。 */
-          function describeChain(el) {
-            var out = [];
-            for (var k = 0; el && k < 4; k++) {
-              out.push(describe(el));
-              el = el.parentElement;
-            }
-            return out.join("  ↑  ") || "(null)";
-          }
-
-          /**
-           * 诊断输出。
-           *
-           * ⚠️ **只在「状态变了」的时候打**：
-           *      第一次失败打一条
-           *      成功打一条（**一定会打**，哪怕前面失败过很多次）
-           *      之后不再重复（MutationObserver 会刷屏）
-           *
-           *    上一版是「总共只打一次」，结果只留下最早那次失败 ——
-           *    而那次是「页面还没渲染完」，完全误导。
-           */
-          var lastState = "";
-          function note(msg) {
-            var state = msg.indexOf("已插入") === 0 ? "ok" : "fail";
-            if (state === lastState) return;
-            lastState = state;
-            try {
-              console.info("[dsh-prompt-easymanager] hero 下拉框：" + msg);
-            } catch {
-              /* 没有 console 就算了 */
-            }
-          }
-
-          apply();
-          try {
-            var obs = new MutationObserver(function () {
-              apply();
+          loadHostDom().then(function (mod) {
+            var box = mod.create({
+              document: typeof document === "undefined" ? null : document,
+              chunkApi: CHUNK_API,
+              pluginId: PLUGIN_ID,
+              loadPicker: loadPicker,
+              loadPickerShared: loadPickerShared,
+              loadPickerSession: loadPickerSession,
+              loadPickerHero: loadPickerHero,
             });
-            obs.observe(document.body, { childList: true, subtree: true });
-          } catch {
-            /* 没有 MutationObserver 就只生效一次 */
-          }
-        }
-
-        /**
-         * 把 picker chunk 的面板挂进那个容器。
-         *
-         * ⚠️ 用 **portal** 把它挂进我们自己的容器：面板内部走的是
-         *    `reactDom.createPortal(..., document.body)`，所以它本来就
-         *    不依赖 React 树的位置 —— 从这儿挂进去跟从槽位挂进去一样。
-         *
-         * ⚠️ `sessionId` 传 **undefined** —— 新会话页还没有会话，
-         *    面板会去改**全局那条预设**（见上面那段说明）。
-         */
-        function mountHeroPicker(box) {
-          Promise.all([loadPicker(), loadPickerShared(), loadPickerSession(), loadPickerHero()]).then(function (mods) {
-            var mod = mods[0];
-            try {
-              var box2 = mod.create(CHUNK_API, {
-                shared: mods[1],
-                session: mods[2],
-                hero: mods[3],
-              });
-              if (typeof box2.installStyles === "function") box2.installStyles();
-              reactDom.render(
-                react.createElement(box2.HeroPresetChip, { container: box }),
-                box,
-              );
-            } catch (err) {
-              console.error("[" + PLUGIN_ID + "] hero 下拉框挂载失败：" + (err && err.message));
-            }
-            return null;
+            box.patchHeroPreset();
+          }).catch(function (err) {
+            console.error("[" + PLUGIN_ID + "] DOM 适配 chunk 加载失败：" + (err && err.message));
           });
         }
 

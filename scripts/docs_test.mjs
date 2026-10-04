@@ -334,7 +334,7 @@ const readme = readFileSync(at("README.md"), "utf8");
 // ── 7. 引用的 docs 路径都带对了前缀 ────────────────────────────────────────
 {
   // 源码注释里写 `docs/xxx.md` 的，路径必须真的存在 —— 挪文件时最容易漏。
-  const srcFiles = ["index.js", "client.js", "client.picker.js", "client.preview.js", "client.editor.js"];
+  const srcFiles = ["index.js", "client.js", "client.host-dom.js", "client.picker.js", "client.preview.js", "client.editor.js"];
   for (const e of readdirSync(at("scripts/lib"), { withFileTypes: true })) {
     if (e.isFile() && e.name.endsWith(".mjs")) srcFiles.push(join("scripts", "lib", e.name));
   }
