@@ -50,6 +50,11 @@ import {
   makeHeartbeat,
   cleanupStaleTmp,
 } from "./scripts/lib/heartbeat.mjs";
+import { handlePresets } from "./scripts/lib/routes/presets.mjs";
+import { handleSections } from "./scripts/lib/routes/sections.mjs";
+import { handleState } from "./scripts/lib/routes/state.mjs";
+import { handleSessions } from "./scripts/lib/routes/sessions.mjs";
+import { handleLibrary } from "./scripts/lib/routes/library.mjs";
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
@@ -640,710 +645,80 @@ function applyInner(ctx) {
       const url = new URL(request.url, "http://localhost");
       const path = url.pathname;
 
-      // Global switch and the read-only state projection used by the settings UI.
-      if (path === STATE_PATH && request.method === "POST") {
-        let body;
-        try {
-          body = await request.json();
-        } catch {
-          return jsonOf({ error: "请求体不是合法 JSON" }, 400);
-        }
-        if (!("enabled" in (body ?? {}))) {
-          return jsonOf({ error: "缺少 enabled 字段" }, 400);
-        }
-        const next = body.enabled !== false;
-        writeState({ enabled: next });
-        diag.lastToggle = next ? "enabled" : "disabled";
-        return jsonOf({ ok: true, enabled: next, note: next ? "已启用你的提示词配置" : "已切回 dsh 原始提示词" });
-      }
+        const stateResponse = await handleState(request, url, {
+          STATE_PATH,
+          GLOBAL_PATH,
+          ctx,
+          injectorOf,
+          readState,
+          writeState,
+          libraryList,
+          CATEGORIES,
+          presetSignature,
+          presetLabel,
+          publicDiag,
+          diag,
+          jsonOf,
+          syncInjector,
+          CATALOG_PATH,
+        });
+        if (stateResponse) return stateResponse;
 
-      if (path === STATE_PATH && request.method === "GET") {
-        const snap = injectorOf(ctx)?.snapshot() ?? { version: 2 };
-        const st = readState();
-        const items = libraryList(ctx);
-        const custom = [...new Set(
-          items
-            .map((p) => p && p.category)
-            .filter((c) => c && !CATEGORIES.some((k) => k.id === c)),
-        )].sort();
-        return jsonOf({
-            assignments: st.assignments,
-            global: st.global,
-            enabled: st.global.enabled === true,
-            presets: Object.fromEntries(
-              Object.entries(st.presets).map(([id, p]) => [id, {
-                ...p,
-                sections: p.selection?.sections ?? {},
-                signature: presetSignature(p),
-                label: presetLabel(p),
-                isNative: p.prompts.length === 0 &&
-                  Object.keys(p.selection?.sections ?? {}).length === 0 &&
-                  (p.selection?.listed ?? []).length === 0 &&
-                  (p.selection?.excluded ?? []).length === 0,
-              }]),
-            ),
-            sectionOverrides: {},
-            schemaVersion: 3,
-            version: snap.version,
-            prompts: items,
-            categories: CATEGORIES,
-            customCategories: custom,
-            catalogPath: CATALOG_PATH,
-            diag: publicDiag(),
-          });
-      }
+        const sectionResponse = await handleSections(request, url, {
+          SECTIONS_PATH,
+          injector,
+          readState,
+          presetForSession,
+          projectSelection,
+          findEmptySlots,
+          SECTION_SLOTS,
+          OVERRIDE_ACTIONS,
+          diag,
+          jsonOf,
+          editActivePresetSelection,
+          normalizeSelection,
+          applySelectionEdit,
+        });
+        if (sectionResponse) return sectionResponse;
 
-      if (path === SECTIONS_PATH) {
-        // Native sections are projected into the current preset selection.
-        const sessionId = url.searchParams.get("session") ?? undefined;
+        const presetResponse = await handlePresets(request, url, {
+          ctx,
+          PRESETS_PATH,
+          readState,
+          writeState,
+          syncInjector,
+          libraryOf,
+          diag,
+          jsonOf,
+          presetId,
+          presetSignature,
+          presetLabel,
+          summarizePreset,
+          presetForSession,
+          capturePreset,
+          selectionFromSectionsInput,
+          normalizeSelection,
+          isEmptySelection,
+        });
+        if (presetResponse) return presetResponse;
 
-        if (request.method === "GET") {
-          const found = await injector.listSections(sessionId);
-          const state = readState();
-
-          const foundPreset = presetForSession({
-            sessionId,
-            assignments: state.assignments,
-            global: state.global,
-            presets: state.presets,
-          });
-          const selNow = foundPreset?.preset?.selection ?? null;
-          const projected = projectSelection({
-            native: found.sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
-            selection: selNow,
-          });
-
-          const liveOf = (nm) => found.sections.find((s) => s.name === nm)?.text ?? "";
-          const asRow = (row, status) => {
-            const ov = selNow?.sections?.[row.name];
-            return {
-              name: row.name,
-              index: found.sections.findIndex((s) => s.name === row.name),
-              status,
-              drifted: row.drifted === true,
-              driftAcknowledged: false,
-              original: liveOf(row.name),
-              originalHash: "",
-              basedOn: ov?.original ?? "",
-              basedOnHash: "",
-              action: status === "apply" || status === "pending" ? "replace" : null,
-              text: row.text ?? "",
-              savedAt: ov?.savedAt ?? "",
-            };
-          };
-          const appliedRows = projected.plan
-            .filter((r) => r.mode === "edited" || r.mode === "dropped")
-            .map((r) => asRow(r, "apply"));
-          const pendingRows = projected.plan
-            .filter((r) => r.mode === "pending")
-            .map((r) => asRow(r, "pending"));
-          const untouchedRows = projected.plan
-            .filter((r) => r.mode === "native")
-            .map((r) => asRow(r, "untouched"));
-          const staleRows = (projected.stale ?? []).map((r) => asRow(r, "stale"));
-
-          diag.lastSections = found.outcome;
-          return jsonOf({
-              outcome: found.outcome,
-              error: found.error ?? null,
-              agentId: found.agentId ?? null,
-              summary:
-                appliedRows.length > 0 ? `改 ${appliedRows.length} 段` : "全部原生",
-              applied: appliedRows,
-              pending: pendingRows,
-              drifted: appliedRows.filter((r) => r.drifted),
-              stale: staleRows,
-              untouched: untouchedRows,
-              availableNative: found.sections.map((s) => s.name),
-              excludedSections: Array.isArray(selNow?.excluded) ? selNow.excluded : [],
-              emptySlots: findEmptySlots(found.sections),
-              slotTotal: SECTION_SLOTS.length,
-              globalOverrides: {},
-              sessionOverrides: {},
-              effectiveOverrides: {},
-              effectivePresetId: foundPreset?.id ?? null,
-              effectivePresetSignature: foundPreset?.preset ? presetSignature(foundPreset.preset) : null,
-              counts: {
-                applied: appliedRows.length,
-                drifted: appliedRows.filter((r) => r.drifted).length,
-                stale: staleRows.length,
-                untouched: untouchedRows.length,
-                total: found.sections.length,
-              },
-              actions: OVERRIDE_ACTIONS,
-            });
-        }
-
-        if (request.method === "POST") {
-          let body;
-          try {
-            body = await request.json();
-          } catch {
-            diag.lastSections = "bad-json";
-            return jsonOf({ error: "请求体不是合法 JSON" }, 400);
-          }
-
-          const name = typeof body?.name === "string" ? body.name : "";
-          const action = typeof body?.action === "string" ? body.action : "";
-          if (!name) {
-            diag.lastSections = "missing-name";
-            return jsonOf({ error: "缺少 name" }, 400);
-          }
-
-          let wroteTo = null;
-
-          {
-            if (!["restore", "replace", "disable", "acknowledge"].includes(action)) {
-              diag.lastSections = "bad-action";
-              return jsonOf(
-                {
-                  error: `action 必须是 replace / disable / restore / acknowledge，收到 ${JSON.stringify(action)}`,
-                },
-                400,
-              );
-            }
-            if ((action === "replace" || action === "disable") && action === "replace" && typeof body?.text !== "string") {
-              diag.lastSections = "missing-text";
-              return jsonOf({ error: "replace 需要 text" }, 400);
-            }
-
-            const foundLive = await injector.listSections(sessionId);
-            const live = foundLive.sections.find((s) => s.name === name);
-            const liveText = typeof live?.text === "string" ? live.text : "";
-            if ((action === "replace" || action === "disable") && live === undefined) {
-              diag.lastSections = "unknown-section";
-              return jsonOf(
-                {
-                  error: `找不到段落 ${name} —— 它可能刚被官方删掉或改名了`,
-                  knownNames: foundLive.sections.map((s) => s.name),
-                },
-                404,
-              );
-            }
-
-            if (action === "acknowledge") {
-              const sAck = readState();
-              const foundAck = presetForSession({
-                sessionId,
-                assignments: sAck.assignments,
-                global: sAck.global,
-                presets: sAck.presets,
-              });
-              if (!foundAck?.preset?.selection?.sections?.[name]) {
-                diag.lastSections = "acknowledge-missing";
-                return jsonOf({ error: `段落 ${name} 没有改动记录，无从确认` }, 404);
-              }
-            }
-
-
-            const commit = (editFn) => {
-              const r = editActivePresetSelection({ sessionId, fallbackToGlobal: true, edit: editFn });
-              if (!r.ok) {
-                diag.lastSections = r.outcome;
-                return jsonOf({ ok: false, outcome: r.outcome, error: r.error }, 409);
-              }
-              wroteTo = r;
-              return null;
-            };
-
-            if (action === "restore") {
-              const bad = commit((sel) => {
-                const next = normalizeSelection(sel);
-                next.listed = next.listed.filter((n) => n !== name);
-                next.excluded = next.excluded.filter((n) => n !== name);
-                delete next.sections[name];
-                return next;
-              });
-              if (bad) return bad;
-            } else if (action === "replace" || action === "disable") {
-              const bad = commit((sel) =>
-                applySelectionEdit({
-                  native: [{ name, text: liveText }],
-                  selection: sel,
-                  name,
-                  action: action === "disable" ? "exclude" : undefined,
-                  edit:
-                    action === "disable" ? undefined : { text: body.text, original: liveText },
-                }),
-              );
-              if (bad) return bad;
-            } else if (action === "acknowledge") {
-              const sAck = readState();
-              const foundAck = presetForSession({
-                sessionId,
-                assignments: sAck.assignments,
-                global: sAck.global,
-                presets: sAck.presets,
-              });
-              if (!foundAck?.preset?.selection?.sections?.[name]) {
-                diag.lastSections = "acknowledge-missing";
-                return jsonOf({ error: `段落 ${name} 没有改动记录，无从确认` }, 404);
-              }
-              const bad = commit((sel) => {
-                const next = normalizeSelection(sel);
-                const ov = next.sections[name];
-                if (ov) next.sections[name] = { ...ov, original: liveText };
-                return next;
-              });
-              if (bad) return bad;
-            }
-          }
-
-          const found2 = await injector.listSections(sessionId);
-          const stateAfter2 = readState();
-          const foundAfter = presetForSession({
-            sessionId,
-            assignments: stateAfter2.assignments,
-            global: stateAfter2.global,
-            presets: stateAfter2.presets,
-          });
-          const selAfter = foundAfter?.preset?.selection ?? null;
-          const projected = projectSelection({
-            native: found2.sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
-            selection: selAfter,
-          });
-          const asRow = (row, status) => {
-            const ov = selAfter?.sections?.[row.name];
-            return {
-              name: row.name,
-              index: found2.sections.findIndex((s) => s.name === row.name),
-              status,
-              drifted: row.drifted === true,
-              driftAcknowledged: false,
-              original: found2.sections.find((s) => s.name === row.name)?.text ?? "",
-              originalHash: "",
-              basedOn: ov?.original ?? "",
-              basedOnHash: "",
-              action: status === "apply" || status === "pending" ? "replace" : null,
-              text: row.text ?? "",
-              savedAt: ov?.savedAt ?? "",
-            };
-          };
-          const appliedRows = projected.plan
-            .filter((r) => r.mode === "edited")
-            .map((r) => asRow(r, "apply"));
-          const pendingRows = projected.plan
-            .filter((r) => r.mode === "pending")
-            .map((r) => asRow(r, "pending"));
-          const droppedRows = projected.plan
-            .filter((r) => r.mode === "dropped")
-            .map((r) => asRow(r, "apply"));
-          const untouchedRows = projected.plan
-            .filter((r) => r.mode === "native")
-            .map((r) => asRow(r, "untouched"));
-          const staleRows = (projected.stale ?? []).map((r) => asRow(r, "stale"));
-          const allApplied = appliedRows.concat(droppedRows);
-          diag.lastSections = `${action}:ok`;
-          return jsonOf({
-              ok: true,
-              action,
-              name,
-              wroteTo: wroteTo
-                ? { presetId: wroteTo.presetId, via: wroteTo.via, fellBack: wroteTo.fellBack === true }
-                : null,
-              summary:
-                allApplied.length > 0
-                  ? `改 ${allApplied.length} 段`
-                  : untouchedRows.length > 0
-                    ? "全部原生"
-                    : "",
-              applied: allApplied,
-              pending: pendingRows,
-              drifted: allApplied.filter((r) => r.drifted),
-              stale: staleRows,
-              untouched: untouchedRows,
-              availableNative: found2.sections.map((s) => s.name),
-              excludedSections: Array.isArray(selAfter?.excluded) ? selAfter.excluded : [],
-              emptySlots: findEmptySlots(found2.sections),
-              counts: {
-                applied: allApplied.length,
-                drifted: allApplied.filter((r) => r.drifted).length,
-                stale: staleRows.length,
-                untouched: untouchedRows.length,
-                total: found2.sections.length,
-              },
-            });
-        }
-      }
-
-      if (path === PRESETS_PATH) {
-        // Preset CRUD and application to the global or session scope.
-        const sessionId = url.searchParams.get("session") ?? undefined;
-        const hasSession = typeof sessionId === "string" && sessionId.length > 0;
-
-        const presetList = (s) =>
-          Object.entries(s.presets)
-            .map(([id, p]) => ({
-              id,
-              name: p.name,
-              prompts: p.prompts,
-              sections: p.selection?.sections ?? {},
-              selection: p.selection,
-      signature: presetSignature(p),
-              createdAt: p.createdAt,
-              note: p.note,
-              summary: summarizePreset(p),
-              label: presetLabel(p),
-              isNative: p.prompts.length === 0 &&
-                Object.keys(p.selection?.sections ?? {}).length === 0 &&
-                (p.selection?.listed ?? []).length === 0 &&
-                (p.selection?.excluded ?? []).length === 0,
-            }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-
-        if (request.method === "GET") {
-          const s = readState();
-          return jsonOf({
-            presets: presetList(s),
-            global: s.global,
-            session: hasSession
-              ? {
-                  sessionId,
-                  presetId: Object.prototype.hasOwnProperty.call(s.assignments, sessionId)
-                    ? s.assignments[sessionId]
-                    : undefined,
-                }
-              : null,
-            effective: hasSession
-              ? (() => {
-                  const found = presetForSession({
-                    sessionId,
-                    assignments: s.assignments,
-                    global: s.global,
-                    presets: s.presets,
-                  });
-                  return found?.preset
-                    ? {
-                        ...found,
-                        signature: presetSignature(found.preset),
-                        preset: {
-                          ...found.preset,
-                          signature: presetSignature(found.preset),
-                          label: presetLabel(found.preset),
-                        },
-                      }
-                    : found;
-                })()
-              : null,
-          });
-        }
-
-        if (request.method === "POST") {
-          let body;
-          try {
-            body = await request.json();
-          } catch {
-            diag.lastPresets = "bad-json";
-            return jsonOf({ error: "请求体不是合法 JSON" }, 400);
-          }
-          const action = typeof body?.action === "string" ? body.action : "";
-
-          const readContent = () => {
-            const out = {};
-            if ("prompts" in (body ?? {})) {
-              const prompts = Array.isArray(body.prompts) ? body.prompts : [];
-              const unknown = prompts.filter((x) => typeof x !== "string" || !libraryOf(ctx).has(x));
-              if (unknown.length > 0) return { error: `提示词库里没有：${unknown.join("、")}` };
-              out.prompts = prompts;
-            }
-            if ("sections" in (body ?? {})) {
-              out.selection =
-                body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)
-                  ? selectionFromSectionsInput(body.sections)
-                  : normalizeSelection(null);
-            }
-            if ("selection" in (body ?? {})) {
-              out.selection = normalizeSelection(body.selection);
-            }
-            return out;
-          };
-
-          const emptySelectionProblem = (content) => {
-            const available = Array.isArray(body?.availableNative) ? body.availableNative : [];
-            if (available.length === 0) return null; // 不知道 → 不拦
-            const raw = body?.selection && typeof body.selection === "object" ? body.selection : {};
-            const sel = {
-              listed: Array.isArray(raw.listed) ? raw.listed : [],
-              excluded: Array.isArray(raw.excluded) ? raw.excluded : [],
-              sections: { ...(raw.sections && typeof raw.sections === "object" ? raw.sections : {}) },
-            };
-            if (content.selection) {
-              sel.listed = content.selection.listed;
-              sel.excluded = content.selection.excluded;
-              sel.sections = content.selection.sections;
-            }
-            return isEmptySelection({ selection: sel, availableNative: available })
-              ? "这张清单里一段都不会进系统提示词 —— 至少勾一段原生段落，或者挂一条自己的提示词。"
-              : null;
-          };
-
-          if (action === "save") {
-            const name = typeof body?.name === "string" ? body.name.trim() : "";
-            if (!name) {
-              diag.lastPresets = "missing-name";
-              return jsonOf({ error: "缺少预设名字" }, 400);
-            }
-            const content = readContent();
-            if (content.error) {
-              diag.lastPresets = "unknown-prompt";
-              return jsonOf({ error: content.error }, 400);
-            }
-            {
-              const empty = emptySelectionProblem(content);
-              if (empty) {
-                diag.lastPresets = "empty-selection";
-                return jsonOf({ ok: false, outcome: "empty-selection", error: empty }, 400);
-              }
-            }
-            const s = readState();
-            const id = presetId(name, Object.keys(s.presets));
-            const preset = capturePreset({
-              name,
-              prompts: content.prompts ?? [],
-              selection: content.selection,
-              note: typeof body?.note === "string" ? body.note : "",
-            });
-            writeState({ presets: { ...s.presets, [id]: preset } });
-            diag.lastPresets = `save:${id}`;
-            return jsonOf({ ok: true, id, preset: { ...preset, sections: preset.selection?.sections ?? {} } });
-          }
-
-          if (action === "update") {
-            const id = typeof body?.id === "string" ? body.id : "";
-            const s = readState();
-            const preset = s.presets[id];
-            if (!preset) {
-              diag.lastPresets = "unknown-preset";
-              return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
-            }
-            const content = readContent();
-            if (content.error) {
-              diag.lastPresets = "unknown-prompt";
-              return jsonOf({ error: content.error }, 400);
-            }
-            if ("sections" in (body ?? {}) || "selection" in (body ?? {})) {
-              const empty = emptySelectionProblem(content);
-              if (empty) {
-                diag.lastPresets = "empty-selection";
-                return jsonOf({ ok: false, outcome: "empty-selection", error: empty }, 400);
-              }
-            }
-            const name =
-              typeof body?.name === "string" && body.name.trim() ? body.name.trim() : preset.name;
-            const nextId = presetId(name, Object.keys(s.presets).filter((x) => x !== id));
-            const nextPresets = { ...s.presets };
-            delete nextPresets[id];
-            nextPresets[nextId] = {
-              ...preset,
-              name,
-              prompts: content.prompts ?? preset.prompts,
-              selection: content.selection ?? preset.selection,
-            };
-            const patch = { presets: nextPresets };
-            if (nextId !== id) {
-              if (s.global.presetId === id) patch.global = { ...s.global, presetId: nextId };
-              const nextAssign = {};
-              let touched = false;
-              for (const [sid, v] of Object.entries(s.assignments)) {
-                if (v === id) {
-                  nextAssign[sid] = nextId;
-                  touched = true;
-                } else nextAssign[sid] = v;
-              }
-              if (touched) patch.assignments = nextAssign;
-            }
-            writeState(patch);
-            syncInjector(ctx);
-            diag.lastPresets = `update:${id}->${nextId}`;
-            return jsonOf({ ok: true, id: nextId, oldId: id, name });
-          }
-
-          if (action === "delete") {
-            const id = typeof body?.id === "string" ? body.id : "";
-            const s = readState();
-            if (!s.presets[id]) {
-              diag.lastPresets = "unknown-preset";
-              return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
-            }
-            const nextPresets = { ...s.presets };
-            delete nextPresets[id];
-            const patch = { presets: nextPresets };
-            if (s.global.presetId === id) patch.global = { ...s.global, presetId: null };
-            const nextAssign = {};
-            let touched = false;
-            for (const [sid, v] of Object.entries(s.assignments)) {
-              if (v === id) touched = true;
-              else nextAssign[sid] = v;
-            }
-            if (touched) patch.assignments = nextAssign;
-            writeState(patch);
-            syncInjector(ctx);
-            diag.lastPresets = `delete:${id}`;
-            return jsonOf({ ok: true, id });
-          }
-
-          if (action === "apply") {
-            const id = typeof body?.id === "string" ? body.id : "";
-            const s = readState();
-            const preset = s.presets[id];
-            if (!preset) {
-              diag.lastPresets = "unknown-preset";
-              return jsonOf({ error: `没有这条预设：${id}`, known: Object.keys(s.presets) }, 404);
-            }
-            const target = body?.target === "session" ? "session" : "global";
-            if (target === "session" && !hasSession) {
-              diag.lastPresets = "missing-session";
-              return jsonOf({ error: "挂到会话上必须带 ?session=<sessionId>" }, 400);
-            }
-            if (target === "global") {
-              writeState({
-                global: { ...s.global, presetId: id, enabled: true },
-              });
-            } else {
-              writeState({ assignments: { ...s.assignments, [sessionId]: id } });
-            }
-            syncInjector(ctx);
-            diag.lastPresets = `apply:${target}:${id}`;
-            return jsonOf({
-              ok: true,
-              id,
-              name: preset.name,
-              target,
-              label: presetLabel(preset),
-              applied: {
-                prompts: preset.prompts.length,
-                sections: Object.keys(preset.selection?.sections ?? {}).length,
-                signature: presetSignature(preset),
-              },
-            });
-          }
-
-          diag.lastPresets = "bad-action";
-          return jsonOf(
-            {
-              error: `action 必须是 save / update / delete / apply，收到 ${JSON.stringify(action)}`,
-            },
-            400,
-          );
-        }
-      }
-
-        // Preview, library reload, and session assignment endpoints.
-        if (path === PREVIEW_PATH && request.method === "GET") {
-          const sessionId = url.searchParams.get("session");
-          if (!sessionId) {
-            diag.lastPreview = "missing-session";
-            return new Response("session query param required", { status: 400 });
-          }
-          const result = await injector.preview(sessionId);
-          diag.lastPreview = result.outcome ?? "unknown";
-          return jsonOf(result);
-        }
-
-        if (path === RELOAD_PATH && request.method === "POST") {
-          let r;
-          try {
-            r = libraryOf(ctx).reload();
-          } catch (err) {
-            diag.lastPost = "reload-threw";
-            return jsonOf({ error: err?.message ?? String(err) }, 500);
-          }
-          diag.reloadCount += 1;
-          diag.lastPost = `reload:${r.count}`;
-          const pruned = prunePresets((id) => libraryOf(ctx).has(id));
-          syncInjector(ctx);
-          return jsonOf({ count: r.count, errors: r.errors, prompts: libraryList(ctx), pruned });
-        }
-
-        if (path === ASSIGN_PATH && request.method === "POST") {
-          let body;
-          try {
-            body = await request.json();
-          } catch {
-            diag.lastPost = "bad-json";
-            return jsonOf({ ok: false, error: "请求体不是合法 JSON" }, 400);
-          }
-          const sessionId = body?.sessionId;
-          if (typeof sessionId !== "string" || !sessionId) {
-            diag.lastPost = "missing-sessionId";
-            return jsonOf({ ok: false, error: "缺少 sessionId" }, 400);
-          }
-
-          if ("promptIds" in (body ?? {}) || "promptId" in (body ?? {})) {
-            diag.lastPost = "legacy-promptIds";
-            return jsonOf(
-              {
-                ok: false,
-                outcome: "preset-required",
-                error:
-                  "现在要选提示词组合（预设），不再直接收提示词 id。" +
-                  "先把组合存成预设，再传 presetId。",
-              },
-              400,
-            );
-          }
-
-          if (body?.follow === true) {
-            const beforeFollow = readState();
-            const nextFollow = { ...beforeFollow.assignments };
-            delete nextFollow[sessionId];
-            writeState({ assignments: nextFollow });
-            syncInjector(ctx);
-            diag.lastPost = "assign:follow";
-            return jsonOf({ ok: true, presetId: undefined, follow: true, assignments: nextFollow });
-          }
-
-          if (!("presetId" in (body ?? {}))) {
-            diag.lastPost = "missing-presetId";
-            return jsonOf(
-              {
-                ok: false,
-                error: "要传 presetId（预设名或 null），或者 follow: true（跟随全局）",
-              },
-              400,
-            );
-          }
-          const presetId = body.presetId;
-          if (presetId !== null && (typeof presetId !== "string" || !presetId)) {
-            diag.lastPost = "bad-presetId";
-            return jsonOf({ ok: false, error: "presetId 要么是预设名，要么是 null" }, 400);
-          }
-
-          const before = readState();
-          if (typeof presetId === "string" && !before.presets[presetId]) {
-            diag.lastPost = "unknown-preset";
-            return jsonOf(
-              {
-                ok: false,
-                outcome: "unknown-preset",
-                error: `没有这条预设：${presetId}`,
-                known: Object.keys(before.presets),
-              },
-              400,
-            );
-          }
-
-          const verdict = classifySession(ctx, sessionId);
-          diag.lastSessionCheck = verdict;
-          if (verdict === "reject") {
-            diag.lastPost = "unknown-session";
-            return jsonOf({ ok: false, error: "会话不存在" }, 404);
-          }
-
-          const nextAssign = { ...before.assignments };
-          if (presetId === null) nextAssign[sessionId] = null;
-          else nextAssign[sessionId] = presetId;
-          writeState({ assignments: nextAssign });
-          syncInjector(ctx);
-          diag.assignCount += 1;
-          diag.lastPost = `assign:${presetId ?? "(none)"}`;
-          return jsonOf({
-            ok: true,
-            presetId: presetId ?? null,
-            assignments: nextAssign,
-            sessionCheck: verdict,
-          });
-        }
+        const sessionResponse = await handleSessions(request, url, {
+          ctx,
+          PREVIEW_PATH,
+          RELOAD_PATH,
+          ASSIGN_PATH,
+          injector,
+          libraryOf,
+          libraryList,
+          readState,
+          writeState,
+          syncInjector,
+          prunePresets,
+          classifySession,
+          diag,
+          jsonOf,
+        });
+        if (sessionResponse) return sessionResponse;
 
         // The global layer stores only its switch and selected preset id.
         if (path === GLOBAL_PATH) {
@@ -1389,80 +764,25 @@ function applyInner(ctx) {
           return jsonOf({ ok: true, global: readState().global });
         }
 
-        // Prompt library editor endpoints.
-        if (path === EDIT_PATH && request.method === "GET") {
-          const stEdit = readState();
-          const items = libraryOf(ctx).raw().map((entry) => {
-            const resolved = entry && typeof entry.id === "string" ? library.resolve(entry.id) : undefined;
-            return {
-              id: entry?.id ?? null,
-              name: resolved?.name ?? entry?.name ?? entry?.id ?? null,
-              description: resolved?.description ?? entry?.description ?? "",
-              category: resolved?.category ?? "other",
-              mode: resolved?.mode ?? entry?.mode ?? "append",
-              order: resolved?.order ?? entry?.order ?? 100,
-              source: typeof entry?.file === "string" && entry.file ? "file" : typeof entry?.inline === "string" ? "inline" : "none",
-              file: typeof entry?.file === "string" ? entry.file : null,
-              tokens: resolved ? estimateTokens(resolved.text ?? "") : 0,
-              chars: resolved ? (resolved.text ?? "").length : 0,
-              text: resolved?.text ?? "",
-            };
-          });
-          const custom = [...new Set(
-            items.map((p) => p.category).filter((c) => c && !CATEGORIES.some((k) => k.id === c)),
-          )].sort();
-          return jsonOf({
-              prompts: items,
-              categories: CATEGORIES,
-              customCategories: custom,
-              presets: stEdit.presets,
-              global: stEdit.global,
-              enabled: stEdit.global.enabled === true,
-              catalogPath: CATALOG_PATH,
-              promptsDir: PROMPTS_DIR,
-              libraryErrors: libraryErrors(),
-            });
-        }
-
-        if (path === EDIT_PATH && request.method === "POST") {
-          let body;
-          try {
-            body = await request.json();
-          } catch {
-            diag.lastPost = "bad-json";
-            return new Response("Bad JSON", { status: 400 });
-          }
-          const action = body?.action;
-          if (action !== "upsert" && action !== "delete") {
-            diag.lastPost = "bad-action";
-            return jsonOf({ ok: false, error: `action 必须是 upsert 或 delete，收到 ${JSON.stringify(action)}` }, 400);
-          }
-
-          let result;
-          if (action === "upsert") {
-            result = storeOf(ctx).save(body?.prompt);
-          } else {
-            result = storeOf(ctx).remove(body?.id);
-          }
-
-          if (!result.ok) {
-            diag.lastPost = `edit:${action}:failed`;
-            return jsonOf(result, 400);
-          }
-
-          libraryOf(ctx).reload();
-          const pruned = {};
-          {
-            const inner = injectorOf(ctx)?.pruneMissing() ?? {};
-            if (inner && Object.keys(inner.defaults ?? {}).length) pruned.defaults = inner.defaults;
-            if (inner && Object.keys(inner.sessions ?? {}).length) pruned.sessions = inner.sessions;
-          }
-          Object.assign(pruned, prunePresets((id) => libraryOf(ctx).has(id)));
-          syncInjector(ctx);
-          diag.editCount = (diag.editCount ?? 0) + 1;
-          diag.lastPost = `edit:${action}:${result.id}`;
-          return jsonOf({ ...result, pruned, prompts: libraryList(ctx), libraryErrors: libraryErrors() });
-        }
+        const libraryResponse = await handleLibrary(request, url, {
+          EDIT_PATH,
+          ctx,
+          readState,
+          libraryOf,
+          storeOf,
+          libraryList,
+          libraryErrors,
+          estimateTokens,
+          CATEGORIES,
+          CATALOG_PATH,
+          PROMPTS_DIR,
+          injectorOf,
+          prunePresets,
+          syncInjector,
+          diag,
+          jsonOf,
+        });
+        if (libraryResponse) return libraryResponse;
 
         return new Response("Not Found", { status: 404 });
       };

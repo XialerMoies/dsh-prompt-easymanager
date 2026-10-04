@@ -1142,13 +1142,15 @@ const renderEditor = (props = {}) =>
   // 所以单独钉一层：**客户端源码里不许再读宿主已经不提供的字段。**
   {
     const idxSrc = readFileSync(join(HERE, "..", "index.js"), "utf8");
+    const stateSrc = readFileSync(join(HERE, "..", "scripts/lib/routes/state.mjs"), "utf8");
+    const libraryRouteSrc = readFileSync(join(HERE, "..", "scripts/lib/routes/library.mjs"), "utf8");
     // 宿主各 GET 路由回传的顶层字段（从源码里抠出来，不手写 —— 手写会跟实现漂移）
     const keysOf = (block, indent) =>
       new Set([...block.matchAll(new RegExp("^\\s{" + indent + ",16}(\\w+):", "gm"))].map((m) => m[1]));
-    const stateBlock = idxSrc.slice(idxSrc.indexOf('path === STATE_PATH && request.method === "GET"'));
-    const editBlock = idxSrc.slice(idxSrc.indexOf('path === EDIT_PATH && request.method === "GET"'));
-    const stateKeys = keysOf(stateBlock.slice(0, 3000), 8);
-    const editKeys = keysOf(editBlock.slice(0, 3000), 10);
+    const stateBlock = stateSrc.slice(stateSrc.indexOf('path === STATE_PATH && request.method === "GET"'));
+    const editBlock = libraryRouteSrc.slice(libraryRouteSrc.indexOf('path === EDIT_PATH && request.method === "GET"'));
+    const stateKeys = keysOf(stateBlock.slice(0, 3000), 4);
+    const editKeys = keysOf(editBlock.slice(0, 3000), 6);
 
     ok(stateKeys.has("global"), "宿主 /state 回传 global");
     ok(stateKeys.has("assignments"), "宿主 /state 回传 assignments");
