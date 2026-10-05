@@ -1179,8 +1179,18 @@ const TMP_ID = "zz-test-only";
   const ctx6 = makeCtx([live2.agent]);
   apply(ctx6);
 
+  // 真实设置页会在这里带着已选全局预设请求；覆盖这个状态，
+  // 以确保 /sections 的签名字段不会因漏传路由依赖而在运行时抛错。
+  const selected = await call(ctx6, GLOBAL_PATH, {
+    method: "POST",
+    body: { enabled: true, presetId: P1 },
+  });
+  eq(selected.status, 200, "为段落列表选择一个有效全局预设");
+
   const res = await call(ctx6, SECTIONS_PATH, { search: "session=session-sec-0001" });
   eq(res.status, 200, "GET /sections 正常返回");
+  ok(typeof res.json.effectivePresetSignature === "string" && res.json.effectivePresetSignature.length > 0,
+    "有效预设存在时 /sections 返回稳定签名");
 
   eq(calls.length > 0, true, "listSections 确实调了 assemble");
   const usedScope = calls.some((c) => c && c.scope !== undefined);

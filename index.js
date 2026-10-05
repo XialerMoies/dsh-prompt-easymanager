@@ -673,6 +673,7 @@ function applyInner(ctx) {
           findEmptySlots,
           SECTION_SLOTS,
           OVERRIDE_ACTIONS,
+          presetSignature,
           diag,
           jsonOf,
           editActivePresetSelection,
