@@ -27,6 +27,7 @@ window.__ModuleLoader__.load({
       var Button = api.ui.Button;
       var Input = api.ui.Input;
       var Menu = api.ui.Menu;
+      var Modal = api.ui.Modal;
       var Tag = api.ui.Tag;
       var IconChevronDownOutlineRegular = api.ui.IconChevronDownOutlineRegular;
       var fmtTokens = api.tokens;
@@ -642,10 +643,7 @@ window.__ModuleLoader__.load({
                         disabled: props.busy,
                         title: "删除这条（正文文件一并删除）",
                         onClick: function () {
-                          if (typeof window !== "undefined" && window.confirm) {
-                            if (!window.confirm("删除「" + (p.name || p.id) + "」？正文文件也会删掉。")) return;
-                          }
-                          props.send({ action: "delete", id: p.id }, "已删除「" + (p.name || p.id) + "」");
+                          if (typeof props.requestDelete === "function") props.requestDelete(p);
                         },
                       },
                       "删除",
@@ -665,8 +663,65 @@ window.__ModuleLoader__.load({
        *    邻居等距，看着就像标题是独立的一条、跟卡片没关系。
        */
       function LibraryBlock(props) {
-
-        return react.createElement("div", null, [renderHeader(props)].concat(renderCards(props)));
+        var deleteState = react.useState(null);
+        var deleteTarget = deleteState[0];
+        var setDeleteTarget = deleteState[1];
+        var viewProps = Object.assign({}, props, {
+          requestDelete: function (prompt) { setDeleteTarget(prompt); },
+        });
+        var body = [renderHeader(props)].concat(renderCards(viewProps));
+        if (deleteTarget) {
+          body.push(
+            react.createElement(
+              Modal,
+              {
+                key: "delete-modal",
+                open: true,
+                title: "删除提示词",
+                closeLabel: "关闭",
+                onClose: function () { setDeleteTarget(null); },
+              },
+              [
+                react.createElement(
+                  "p",
+                  { key: "message", style: { margin: "0 0 14px", lineHeight: "1.6" } },
+                  "确定删除「" + (deleteTarget.name || deleteTarget.id) + "」吗？正文文件也会删掉。",
+                ),
+                react.createElement(
+                  "div",
+                  { key: "actions", style: CARD_ACTIONS },
+                  [
+                    react.createElement(
+                      ActionButton,
+                      {
+                        key: "delete",
+                        type: "button",
+                        variant: "primary",
+                        onClick: function () {
+                          var target = deleteTarget;
+                          setDeleteTarget(null);
+                          props.send({ action: "delete", id: target.id }, "已删除「" + (target.name || target.id) + "」");
+                        },
+                      },
+                      "删除",
+                    ),
+                    react.createElement(
+                      ActionButton,
+                      {
+                        key: "cancel",
+                        type: "button",
+                        variant: "outline",
+                        onClick: function () { setDeleteTarget(null); },
+                      },
+                      "取消",
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }
+        return react.createElement("div", null, body);
       }
 
       /** 「个人提示词」标题行：名字 + 条数 + 提示条 + 新建/刷新。 */
