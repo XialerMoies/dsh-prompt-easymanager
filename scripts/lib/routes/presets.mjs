@@ -93,6 +93,10 @@ signature: presetSignature(p),
 
     const readContent = () => {
       const out = {};
+      const tagSelection = (raw) => {
+        const selection = normalizeSelection(raw);
+        return { ...selection, sections: {} };
+      };
       if ("prompts" in (body ?? {})) {
         const prompts = Array.isArray(body.prompts) ? body.prompts : [];
         const unknown = prompts.filter((x) => typeof x !== "string" || !libraryOf(ctx).has(x));
@@ -100,13 +104,14 @@ signature: presetSignature(p),
         out.prompts = prompts;
       }
       if ("sections" in (body ?? {})) {
-        out.selection =
+        out.selection = tagSelection(
           body.sections && typeof body.sections === "object" && !Array.isArray(body.sections)
             ? selectionFromSectionsInput(body.sections)
-            : normalizeSelection(null);
+            : normalizeSelection(null),
+        );
       }
       if ("selection" in (body ?? {})) {
-        out.selection = normalizeSelection(body.selection);
+        out.selection = tagSelection(body.selection);
       }
       return out;
     };
@@ -158,7 +163,7 @@ signature: presetSignature(p),
       });
       writeState({ presets: { ...s.presets, [id]: preset } });
       diag.lastPresets = `save:${id}`;
-      return jsonOf({ ok: true, id, preset: { ...preset, sections: preset.selection?.sections ?? {} } });
+      return jsonOf({ ok: true, id, preset: { ...preset, sections: {} } });
     }
 
     if (action === "update") {
@@ -282,5 +287,4 @@ signature: presetSignature(p),
 
   return null;
 }
-
 

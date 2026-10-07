@@ -26,9 +26,19 @@ window.__ModuleLoader__.load({
       var ActionButton = api.ui.ActionButton;
       var Button = api.ui.Button;
       var Tag = api.ui.Tag;
+      var Modal = api.ui.Modal;
       // 段落名 → 中文标签（宿主给的那一份，别在这儿再写一个）
       var sectionLabel = api.label;
       var ACTIONS = api.style.ACTIONS;
+      var EDITOR_FOOTER = {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+        marginTop: "8px",
+        width: "100%",
+        boxSizing: "border-box",
+      };
       var CARD = api.style.CARD;
       var CARD_DETAILS = api.style.CARD_DETAILS;
       var CARD_HEAD = api.style.CARD_HEAD;
@@ -47,6 +57,53 @@ window.__ModuleLoader__.load({
       var STATUS_LINE = api.style.STATUS_LINE;
       var TEXTAREA = api.style.TEXTAREA;
 
+      var TEXT_SWITCH = {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: "8px",
+        marginTop: "8px",
+        marginBottom: "0",
+        minHeight: "18px",
+      };
+      var TEXT_SWITCH_BUTTON = {
+        minWidth: "30px",
+        width: "30px",
+        height: "18px",
+        padding: "4px 0",
+        justifyContent: "center",
+        borderRadius: "var(--dsw-radius-sm)",
+      };
+      var TEXT_SWITCH_BAR = {
+        display: "block",
+        width: "24px",
+        height: "3px",
+        borderRadius: "999px",
+        background: "currentColor",
+        transition: "transform 160ms ease, opacity 160ms ease",
+      };
+      var TEXT_SWITCH_TRACK = {
+        width: "100%",
+        overflow: "hidden",
+      };
+      var TEXT_SWITCH_RAIL = {
+        display: "flex",
+        width: "200%",
+        transition: "transform 180ms ease",
+        willChange: "transform",
+      };
+      var TEXT_SWITCH_PANEL = {
+        flex: "0 0 50%",
+        minWidth: "0",
+      };
+      var TEXT_VIEW_LABEL = {
+        display: "block",
+        marginBottom: "6px",
+        color: "var(--dsw-alias-label-secondary, inherit)",
+        fontSize: "12px",
+        lineHeight: "18px",
+      };
+
       function sectionBadge(row) {
         if (row.status === "stale") return { text: "已失效", tone: "danger" };
         if (row.status === "pending") return { text: "已改写，未勾选", tone: "outline" };
@@ -54,6 +111,109 @@ window.__ModuleLoader__.load({
         if (row.action === "disable") return { text: "未勾选", tone: "outline" };
         if (row.drifted && !row.driftAcknowledged) return { text: "官方已更新", tone: "warning" };
         return { text: "已改写", tone: "success" };
+      }
+
+      // 查看和编辑共用同一个操作栏；只替换按钮内容，避免两套布局互相影响。
+      function renderSectionActions(row, props, options) {
+        var editing = options.editing;
+        var changed = options.changed;
+        var buttons = editing
+          ? [
+              react.createElement(
+                ActionButton,
+                {
+                  key: "s",
+                  type: "button",
+                  variant: "primary",
+                  disabled: props.sectionsBusy,
+                  onClick: function (e) {
+                    e.stopPropagation();
+                    props.applySection(row.name, "replace", options.draft).then(function (saved) {
+                      if (!saved) return;
+                      props.setSectionDrafts(function (prev) {
+                        var next = Object.assign({}, prev);
+                        delete next[row.name];
+                        return next;
+                      });
+                    });
+                  },
+                },
+                "保存改写",
+              ),
+              react.createElement(
+                ActionButton,
+                {
+                  key: "c",
+                  type: "button",
+                  variant: "outline",
+                  disabled: props.sectionsBusy,
+                  onClick: function (e) {
+                    e.stopPropagation();
+                    if (typeof props.setTextView === "function") props.setTextView(row.name, "rewrite");
+                    props.setSectionDrafts(function (prev) {
+                      var next = Object.assign({}, prev);
+                      delete next[row.name];
+                      return next;
+                    });
+                  },
+                },
+                "取消",
+              ),
+            ]
+          : [
+              react.createElement(
+                ActionButton,
+                {
+                  key: "e",
+                  type: "button",
+                  variant: "outline",
+                  disabled: props.sectionsBusy,
+                  onClick: function (e) {
+                    e.stopPropagation();
+                    if (typeof props.setTextView === "function") props.setTextView(row.name, "rewrite");
+                    props.setSectionDrafts(function (prev) {
+                      return Object.assign({}, prev, {
+                        [row.name]: changed && row.action === "replace" ? row.text : row.original,
+                      });
+                    });
+                  },
+                },
+                "编辑",
+              ),
+              changed
+                ? react.createElement(
+                    ActionButton,
+                    {
+                      key: "r",
+                      type: "button",
+                      variant: "outline",
+                      disabled: props.sectionsBusy,
+                      title: "彻底删除这段改写正文；预设本身不会删除",
+                      onClick: function (e) {
+                        e.stopPropagation();
+                        props.requestDelete(row.name);
+                      },
+                    },
+                    "删除",
+                  )
+                : null,
+            ];
+        return react.createElement(
+          "div",
+          {
+            key: "act",
+            style: EDITOR_FOOTER,
+            onClick: function (e) { e.stopPropagation(); },
+          },
+          [
+            options.switchControls || react.createElement("span", { key: "spacer", style: { flex: "1 1 auto" } }),
+            react.createElement(
+              "div",
+              { key: "buttons", style: Object.assign({}, ACTIONS, { width: "auto", marginTop: 0 }) },
+              buttons,
+            ),
+          ],
+        );
       }
 
       function renderSectionCard(row, props) {
@@ -164,114 +324,123 @@ window.__ModuleLoader__.load({
         if (isOpen) {
           var bodyChildren;
           if (editing) {
+            // 编辑态只编辑一份草稿：新建改写时以原文为起点，已有改写时编辑改写正文。
+            var editLabel = changed && row.action === "replace" ? "改写系统提示词" : "原生系统提示词";
             bodyChildren = [
-              react.createElement("textarea", {
-                key: "ta",
-                style: TEXTAREA,
-                value: draft,
-                disabled: props.sectionsBusy,
-                spellCheck: false,
-                onChange: function (e) {
-                  var v = e.target.value;
-                  props.setSectionDrafts(function (prev) {
-                    return Object.assign({}, prev, { [row.name]: v });
-                  });
-                },
-              }),
-              react.createElement("div", { key: "act", style: ACTIONS }, [
-                react.createElement(
-                  ActionButton,
-                  {
-                    key: "s",
-                    type: "button",
-                    variant: "primary",
-                    disabled: props.sectionsBusy,
-                    onClick: function () {
-                      props.applySection(row.name, "replace", draft).then(function () {
-                        props.setSectionDrafts(function (prev) {
-                          var next = Object.assign({}, prev);
-                          delete next[row.name];
-                          return next;
-                        });
-                      });
-                    },
+              react.createElement("div", { key: "text-view" }, [
+                react.createElement("span", { key: "label", style: TEXT_VIEW_LABEL }, editLabel),
+                react.createElement("textarea", {
+                  key: "editor-textarea",
+                  style: TEXTAREA,
+                  value: draft,
+                  disabled: props.sectionsBusy,
+                  spellCheck: false,
+                  "aria-label": editLabel,
+                  onChange: function (e) {
+                    var v = e.target.value;
+                    props.setSectionDrafts(function (prev) {
+                      return Object.assign({}, prev, { [row.name]: v });
+                    });
                   },
-                  "保存改写",
-                ),
-                react.createElement(
-                  ActionButton,
-                  {
-                    key: "c",
-                    type: "button",
-                    variant: "outline",
-                    disabled: props.sectionsBusy,
-                    onClick: function () {
-                      props.setSectionDrafts(function (prev) {
-                        var next = Object.assign({}, prev);
-                        delete next[row.name];
-                        return next;
-                      });
-                    },
-                  },
-                  "取消",
-                ),
+                }),
               ]),
+              renderSectionActions(row, props, {
+                editing: true,
+                changed: changed,
+                hasRewrite: false,
+                draft: draft,
+              }),
             ];
           } else {
-            bodyChildren = [
-              react.createElement("pre", { key: "pre", style: PRE }, shown || "（空）"),
-              react.createElement("div", { key: "act", style: ACTIONS }, [
-                react.createElement(
-                  ActionButton,
-                  {
-                    key: "e",
-                    type: "button",
-                    variant: "outline",
-                    disabled: props.sectionsBusy,
-                    onClick: function () {
-                      props.setSectionDrafts(function (prev) {
-                        return Object.assign({}, prev, {
-                          [row.name]:
-                            changed && row.action === "replace" ? row.text : row.original,
-                        });
-                      });
-                    },
+            var textView = props.textViews && props.textViews[row.name] === "native" ? "native" : "rewrite";
+            var showNative = textView === "native";
+            var hasRewrite = changed && row.action === "replace";
+            var switchButton = function (id, label) {
+              var selected = showNative === (id === "native");
+              return react.createElement(
+                Button,
+                {
+                  key: id,
+                  type: "button",
+                  variant: "ghost",
+                  size: "sm",
+                  style: Object.assign({}, TEXT_SWITCH_BUTTON, {
+                    color: selected
+                      ? "var(--dsw-alias-label-primary, inherit)"
+                      : "var(--dsw-alias-label-tertiary, inherit)",
+                  }),
+                  "aria-label": label + "系统提示词",
+                  title: "查看" + label + "系统提示词",
+                  "aria-pressed": selected,
+                  onClick: function (e) {
+                    e.stopPropagation();
+                    if (typeof props.setTextView === "function") props.setTextView(row.name, id);
                   },
-                  changed && row.action === "replace" ? "继续编辑" : "改写",
-                ),
-                // ⚠️ **「关掉」按钮已删** —— 新模型里它就是**「不勾」**。
-                //
-                //    老模型把「关闭一段」做成一个独立的动作（`action: "disable"`，
-                //    正文注册成空、dsh 丢弃空段落）。新模型里段落的三种状态是：
-                //
-                //        改过的     →  用你改的那份
-                //        取消勾选   →  不进提示词     ← 「关闭」现在就是这个
-                //        都没提到   →  用 dsh 原版
-                //
-                //    所以不需要单独一个按钮 —— 上面「📁 系统提示词」那块
-                //    把勾去掉就行，而且那样**一眼能看出哪些没进提示词**，
-                //    比一个按钮留下的状态清楚得多。
-                //
-                //    ⚠️ 后端的 `disable` 动作**保留**（老客户端 / 第三方调用还用），
-                //       它现在等价于「取消勾选」。
-                changed
-                  ? react.createElement(
-                      ActionButton,
-                      {
-                        key: "r",
-                        type: "button",
-                        variant: "outline",
-                        disabled: props.sectionsBusy,
-                        title: "删掉你的改动，回到官方当前的文本（官方更新过的话就是新版）",
-                        onClick: function (e) {
-                          e.stopPropagation();
-                          props.applySection(row.name, "restore");
-                        },
-                      },
-                      "还原默认",
-                    )
-                  : null,
-              ]),
+                },
+                react.createElement("span", {
+                  style: Object.assign({}, TEXT_SWITCH_BAR, {
+                    opacity: selected ? 1 : 0.45,
+                    transform: selected ? "scaleX(1)" : "scaleX(0.82)",
+                  }),
+                }),
+              );
+            };
+            var displayPanel = function (key, label, text) {
+              return react.createElement(
+                "div",
+                { key: key, style: TEXT_SWITCH_PANEL },
+                [
+                  react.createElement("span", { key: "label", style: TEXT_VIEW_LABEL }, label),
+                  react.createElement("textarea", {
+                    key: "textarea",
+                    style: TEXTAREA,
+                    value: text || "",
+                    readOnly: true,
+                    spellCheck: false,
+                    "aria-label": label,
+                  }),
+                ],
+              );
+            };
+            var displayRail = hasRewrite
+              ? react.createElement("div", { key: "text-rail", style: TEXT_SWITCH_TRACK }, [
+                  react.createElement("div", {
+                    key: "rail",
+                    style: Object.assign({}, TEXT_SWITCH_RAIL, {
+                      transform: showNative ? "translateX(0)" : "translateX(-50%)",
+                    }),
+                  }, [
+                    displayPanel("native", "原生系统提示词", row.original),
+                    displayPanel("rewrite", "改写系统提示词", row.text),
+                  ]),
+                ])
+              : null;
+            var switchControls = hasRewrite
+              ? react.createElement("div", { key: "text-switch", style: Object.assign({}, TEXT_SWITCH, { margin: 0 }) }, [
+                  switchButton("native", "原生"),
+                  switchButton("rewrite", "改写"),
+                ])
+              : null;
+            bodyChildren = [
+              !hasRewrite
+                ? react.createElement("div", { key: "native-view" }, [
+                    react.createElement("span", { key: "label", style: TEXT_VIEW_LABEL }, "原生系统提示词"),
+                    react.createElement("textarea", {
+                      key: "textarea",
+                      style: TEXTAREA,
+                      value: row.original || "",
+                      readOnly: true,
+                      spellCheck: false,
+                      "aria-label": "原生系统提示词",
+                    }),
+                ])
+                : displayRail,
+              renderSectionActions(row, props, {
+                editing: false,
+                changed: changed,
+                hasRewrite: hasRewrite,
+                switchControls: switchControls,
+              }),
               row.status === "apply" && row.drifted && row.basedOn
                 ? react.createElement("details", { key: "cmp", style: { marginTop: "6px" } }, [
                     react.createElement("summary", { key: "s", style: HINT_TEXT }, "对照：你当初依据的官方版本"),
@@ -331,6 +500,12 @@ window.__ModuleLoader__.load({
        *    （**状态留在编辑器**，测试按 hook 下标塞状态，搬走会全错位）。
        */
       function SectionsBlock(props) {
+        var viewState = react.useState({});
+        var textViews = viewState[0];
+        var setTextViews = viewState[1];
+        var deleteState = react.useState(null);
+        var deleteTarget = deleteState[0];
+        var setDeleteTarget = deleteState[1];
         var head = react.createElement(
           "div",
           // ⚠️ 间距给足。这一块跟上面「提示词组合」是两个不相干的功能，
@@ -365,23 +540,61 @@ window.__ModuleLoader__.load({
             ),
           ],
         );
+        var messageNode = props.message
+          ? react.createElement("div", {
+              key: "message",
+              style: Object.assign({}, HINT_TEXT, NOTICE_ROW, {
+                margin: "2px 0 8px",
+              }),
+            }, [
+              react.createElement(
+                Tag,
+                { key: "t", tone: String(props.message).indexOf("失败：") === 0 ? "danger" : "success" },
+                String(props.message).indexOf("失败：") === 0 ? "出错" : "提示",
+              ),
+              react.createElement("span", { key: "m" }, props.message),
+            ])
+          : null;
 
         if (props.sections === null) {
           return react.createElement("div", null, [
             head,
+            messageNode,
             react.createElement("div", { key: "l", style: STATUS_LINE }, "读取中…"),
           ]);
         }
 
         var items = [];
-        if (props.sections.outcome !== "ok") {
+        if (props.sections.outcome === "stored-only") {
+          // 保存/还原成功后 message 已经说明了操作结果，不再追加一条重复的
+          // “原生段落暂不可读”。首次进入设置页或主动重新读取时才显示会话状态。
+          if (!props.message) {
+            items.push(
+              react.createElement(
+                "div",
+                { key: "stored-only", style: NOTICE_ROW },
+                [
+                  react.createElement(Tag, { key: "t", tone: "warning" }, "原生段落暂不可读"),
+                  react.createElement("span", { key: "m" }, "当前没有打开的会话。下面仍显示已保存的改写和保存时的原文；打开一个会话后可重新读取原生段落。"),
+                ],
+              ),
+            );
+          }
+        } else if (props.sections.outcome !== "ok") {
+          // 旧版后端在没有存活会话时返回 error；只要响应带有已保存改写，
+          // 这仍然是离线可编辑状态，不应再显示成阻断式红色错误。
+          var hasStoredRewrite =
+            (Array.isArray(props.sections.pending) && props.sections.pending.length > 0) ||
+            (props.sections.globalOverrides && Object.keys(props.sections.globalOverrides).length > 0);
           items.push(
             react.createElement(
               "div",
               { key: "err", style: NOTICE_ROW },
               [
-                react.createElement(Tag, { key: "t", tone: "danger" }, "读取失败"),
-                react.createElement("span", { key: "m" }, (props.sections.error || "读取失败") + "（还没有存活的会话时读不到，先开个会话再回来）"),
+                react.createElement(Tag, { key: "t", tone: hasStoredRewrite ? "warning" : "danger" }, hasStoredRewrite ? "原生段落暂不可读" : "读取失败"),
+                react.createElement("span", { key: "m" }, hasStoredRewrite
+                  ? "当前没有打开的会话。已保存的改写仍可编辑；打开一个会话后可重新读取原生段落。"
+                  : (props.sections.error || "读取失败")),
               ],
             ),
           );
@@ -393,7 +606,14 @@ window.__ModuleLoader__.load({
             .concat(props.sections.pending || [])
             .concat(props.sections.stale || [])
           .concat(props.sections.untouched || []);
-        for (var si = 0; si < ordered.length; si++) items.push(renderSectionCard(ordered[si], props));
+        var cardProps = Object.assign({}, props, {
+          textViews: textViews,
+          requestDelete: setDeleteTarget,
+          setTextView: function (name, value) {
+            setTextViews(function (prev) { return Object.assign({}, prev, { [name]: value }); });
+          },
+        });
+        for (var si = 0; si < ordered.length; si++) items.push(renderSectionCard(ordered[si], cardProps));
 
         // ── 没被注册的槽位（灰卡片，不可操作）──────────────────────────
         //
@@ -419,7 +639,50 @@ window.__ModuleLoader__.load({
           for (var sj = 0; sj < slots.length; sj++) items.push(renderEmptySlot(slots[sj], props));
         }
 
-        return react.createElement("div", null, [head].concat(items));
+        if (deleteTarget) {
+          items.push(
+            react.createElement(
+              Modal,
+              {
+                key: "delete-rewrite-modal",
+                open: true,
+                title: "删除改写提示词",
+                closeLabel: "关闭",
+                onClose: function () { setDeleteTarget(null); },
+              },
+              [
+                react.createElement("p", { key: "message", style: { margin: "0 0 14px", lineHeight: "1.6" } },
+                  "删除「" + (sectionLabel(deleteTarget) || deleteTarget) + "」的改写正文？相关预设中的改写 tag 会一并清理，预设和原生段落不会删除。"),
+                react.createElement("div", { key: "actions", style: ACTIONS }, [
+                  react.createElement(ActionButton, {
+                    key: "delete",
+                    type: "button",
+                    variant: "primary",
+                    onClick: function () {
+                      var name = deleteTarget;
+                      setDeleteTarget(null);
+                      props.applySection(name, "delete").then(function (deleted) {
+                        if (!deleted) return;
+                        props.setSectionDrafts(function (prev) {
+                          var next = Object.assign({}, prev);
+                          delete next[name];
+                          return next;
+                        });
+                      });
+                    },
+                  }, "删除"),
+                  react.createElement(ActionButton, {
+                    key: "cancel",
+                    type: "button",
+                    variant: "outline",
+                    onClick: function () { setDeleteTarget(null); },
+                  }, "取消"),
+                ]),
+              ],
+            ),
+          );
+        }
+        return react.createElement("div", null, [head, messageNode].concat(items));
       }
 
       /** 这一块没有 CSS module，只有内联样式；保留成接口形状，宿主会调。 */

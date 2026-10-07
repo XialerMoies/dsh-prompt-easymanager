@@ -988,6 +988,38 @@ const modSections = sandbox.cache.get("dsh-prompt-easymanager/client.editor.sect
 ok(!!modSections, "拿得到 sections chunk 模块");
 const sectionsBox = modSections.create(strict.api);
 ok(typeof sectionsBox.SectionsBlock === "function", "sections chunk 导出了 SectionsBlock");
+{
+  const el = shims.render(sectionsBox.SectionsBlock, {
+    sections: {
+      outcome: "stored-only",
+      error: "还没有存活的会话，稍后再试",
+      summary: "已保存 1 段改写",
+      applied: [],
+      pending: [{
+        name: "harness:identity",
+        status: "pending",
+        action: "replace",
+        text: "保存过的改写",
+        original: "保存时的原文",
+        savedAt: "",
+      }],
+      stale: [],
+      untouched: [],
+      emptySlots: [],
+      counts: { applied: 0, pending: 1, stale: 0, untouched: 0, total: 1 },
+    },
+    sectionDrafts: {},
+    openSection: "harness:identity",
+    sectionsBusy: false,
+    helpIcon: () => null,
+    loadSections() {},
+    applySection() { return Promise.resolve(true); },
+  });
+  const text = flattenText(el).join(" ");
+  ok(text.includes("原生段落暂不可读"), "离线状态明确说明只能读取已存改写");
+  ok(collectValues(el).includes("保存过的改写"), "离线状态仍展示已保存改写");
+  ok(!text.includes("读取失败"), "离线状态不再显示失败提示");
+}
 
 // 「提示词组合 + 预设」那一块同理。
 sandbox.preload("client.editor.combo.js");
@@ -1709,9 +1741,9 @@ const renderEditor = (props = {}) =>
   //
   //    老版本验的是「预设自己的改动 + 全局那份改动」拼出 tag 列表 ——
   //    也就是那个已退休的两层模型。新模型里没有「全局那份改写」了：
-  //    段落改写**由预设承载**，所以 tag 只有两个来源：
+  //    段落正文独立保存；tag 名称来自共享改写库，勾选状态来自预设：
   //
-  //        改过的段（presetSections）        → 勾着
+  //        改过的段（globalOverrides）       → 按预设 listed 勾选
   //        原生段（sectionsData.availableNative）→ 默认勾着，被排除的没勾
   {
     // ① 改过一段 + 原生三段（其中一段被排除）→ 勾选状态各不相同
@@ -1720,12 +1752,13 @@ const renderEditor = (props = {}) =>
       const el = shims.render(
         comboBox.ComboBlock,
         comboProps({
-          presetSections: { "harness:identity": { action: "replace", text: "x" } },
+          presetSelection: { listed: ["harness:identity"] },
           setPresetSections: () => {},
           sectionsData: {
             // ⚠️ 服务端在 `/sections` 的响应里回这两个 —— 三块文件夹靠它们
             availableNative: ["harness:identity", "tool:bash", "plan:policy"],
             excludedSections: ["plan:policy"],
+            globalOverrides: { "harness:identity": { action: "replace", text: "共享正文" } },
           },
         }),
       );
@@ -1798,9 +1831,10 @@ const renderEditor = (props = {}) =>
     const el = shims.render(
       comboBox.ComboBlock,
       comboProps({
-        presetSections: { "harness:identity": { action: "replace", text: "x" } },
+        presetSelection: { listed: ["harness:identity"] },
+        setPresetSelection: (next) => got.push(next),
         setPresetSections: (next) => got.push(next),
-        sectionsData: { globalOverrides: {} },
+        sectionsData: { globalOverrides: { "harness:identity": { action: "replace", text: "共享正文" } } },
       }),
     );
     const one = [];

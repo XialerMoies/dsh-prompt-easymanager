@@ -78,38 +78,34 @@ window.__ModuleLoader__.load({
       /**
        * 「系统提示词」那组 tag 要列哪些段落、各自勾没勾。
        *
-       * ⚠️ 来源**两处合并**：
-       *      预设自己带的（presetSections）        → 勾着
-       *      全局改写里的（globalOverrides）        → 只有不在预设里才算「没勾」
-       *
-       *    只认第二处的话，预设里存着的改动在重开之后就不显示了。
+       * 改写正文来自系统提示词区块的独立存储；预设只记录改写 tag 是否勾选。
        */
       function sectionTagRows(props) {
         var seen = {};
         var out = [];
-        var hasSelection = !!(props.presetSelection && typeof props.presetSelection === "object");
-        var selection = hasSelection ? props.presetSelection : {
-          listed: props.presetSections && typeof props.presetSections === "object"
-            ? Object.keys(props.presetSections)
-            : [],
-          excluded: [],
-          sections: props.presetSections || {},
-        };
-        // Once the new selection shape exists, it is authoritative. Falling
-        // back to the legacy `presetSections` here can turn a native-only
-        // exclusion into a phantom edited tag after a rerender.
-        var presetSec = hasSelection ? selection.sections : props.presetSections;
+        var selection = props.presetSelection || { listed: [], excluded: [], sections: [], known: [] };
         var listed = Array.isArray(selection.listed) ? selection.listed : [];
         function push(name, on) {
           if (!name || seen[name]) return;
           seen[name] = true;
           out.push({ name: name, on: on });
         }
-        if (presetSec && typeof presetSec === "object") {
-          for (var a in presetSec) {
-            if (Object.prototype.hasOwnProperty.call(presetSec, a)) push(a, listed.indexOf(a) >= 0);
+        var data = props.sectionsData || {};
+        var groups = [data.applied, data.pending, data.stale];
+        for (var gi = 0; gi < groups.length; gi++) {
+          var rows = Array.isArray(groups[gi]) ? groups[gi] : [];
+          for (var ri = 0; ri < rows.length; ri++) {
+            if (rows[ri] && rows[ri].action === "replace") push(rows[ri].name, listed.indexOf(rows[ri].name) >= 0);
           }
         }
+        var overrides = data.globalOverrides && typeof data.globalOverrides === "object"
+          ? data.globalOverrides
+          : {};
+        Object.keys(overrides).forEach(function (name) {
+          if (overrides[name] && overrides[name].action === "replace") {
+            push(name, listed.indexOf(name) >= 0);
+          }
+        });
         out.sort(function (x, y) {
           return x.name < y.name ? -1 : x.name > y.name ? 1 : 0;
         });
@@ -299,7 +295,7 @@ window.__ModuleLoader__.load({
                 tagRows[ei].name,
                 tagRows[ei].on,
                 "edited",
-                tagRows[ei].on ? "这段的改动留在预设里（取消勾 = 使用原生）" : "这段改动暂不注入（勾上 = 使用改写）",
+                tagRows[ei].on ? "改写正文独立保存；此预设勾选后使用改写" : "改写正文独立保存；勾选此 tag 后才注入改写",
               ),
             );
           }

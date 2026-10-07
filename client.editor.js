@@ -76,6 +76,9 @@ window.__ModuleLoader__.load({
       var ROUTE_SECTIONS = api.route.ROUTE_SECTIONS;
       var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
       var ROUTE_RELOAD = api.route.ROUTE_RELOAD;
+      // 只在前端表示“正在编辑一套尚未保存的新预设”。
+      // 与 client.editor.combo.js 保持同一个哨兵值，不能把它写进状态文件。
+      var NEW_PRESET_SENTINEL = "__new_preset__";
       // ⚠️ **`ROUTE_GLOBAL` 以前漏了拿，于是「全局注入」那个开关一点就炸：**
       //
       //        Uncaught ReferenceError: ROUTE_GLOBAL is not defined
@@ -178,8 +181,8 @@ window.__ModuleLoader__.load({
         var presetDraft = draftSt[0];
         var setPresetDraft = draftSt[1];
 
-        // ⚠️ **段落草稿**：跟勾选草稿一样，改动先攒着，保存才写进预设。
-        //    勾选区那组「系统提示词」tag 改的就是它。
+        // ⚠️ **段落 tag 草稿**：勾选先留在本地，保存预设时再写入。
+        //    改写正文由 /sections 独立保存，不放进这个草稿。
         var preSecSt = react.useState(null);
         var presetSelection = preSecSt[0];
         var setPresetSelection = preSecSt[1];
@@ -211,6 +214,10 @@ window.__ModuleLoader__.load({
         var setRenameDraft = rnDraftSt[1];
         var timerRef = react.useRef(null);
         var mountedRef = react.useRef(true);
+        // 避免初次读取较慢时，用旧 GET 结果覆盖刚保存/还原的状态。
+        var sectionsRequestRef = react.useRef(0);
+        var sectionsStateRef = react.useRef(null);
+        var sectionMessageTimerRef = react.useRef(null);
 
         var flash = react.useCallback(function (t) {
           setMessage(t);
@@ -225,8 +232,19 @@ window.__ModuleLoader__.load({
           return function () {
             mountedRef.current = false;
             if (timerRef.current) clearTimeout(timerRef.current);
+            if (sectionMessageTimerRef.current) clearTimeout(sectionMessageTimerRef.current);
           };
         }, []);
+
+        var showSectionMessage = function (text) {
+          if (sectionMessageTimerRef.current) clearTimeout(sectionMessageTimerRef.current);
+          setSectionMessage(text || null);
+          if (text) {
+            sectionMessageTimerRef.current = setTimeout(function () {
+              if (mountedRef.current) setSectionMessage(null);
+            }, 4000);
+          }
+        };
 
         var load = react.useCallback(function () {
           fetch(ROUTE_EDIT, { method: "GET" })
@@ -305,19 +323,31 @@ window.__ModuleLoader__.load({
         // ── 系统提示词段落：读取 / 改写 / 关掉 / 还原 ────────────────────────
         var loadSections = react.useCallback(function () {
           // 只读全局层（不带 ?session=）。会话层由会话页负责。
+          var requestId = ++sectionsRequestRef.current;
           var url = ROUTE_SECTIONS;
           return fetch(url, { method: "GET" })
             .then(function (res) {
-              if (!res.ok) throw new Error("GET HTTP " + res.status);
-              return res.json();
+              return res.json().then(function (d) {
+                if (!res.ok) throw new Error((d && d.error) || "GET HTTP " + res.status);
+                return d;
+              });
             })
             .then(function (d) {
-              if (!mountedRef.current) return null;
+              if (!mountedRef.current || sectionsRequestRef.current !== requestId) {
+                return null;
+              }
+              sectionsStateRef.current = d;
               setSections(d);
+              // 重新读取后，清掉上一次保存/读取动作留下的瞬时提示。
+              // 保存动作会重新写入提示；读取动作不应让旧提示永久挂在标题下。
+              showSectionMessage(null);
               return null;
             })
             .catch(function (e) {
-              if (mountedRef.current) setErr((e && e.message) || String(e));
+              if (mountedRef.current && sectionsRequestRef.current === requestId) {
+                if (sectionsStateRef.current && sectionsStateRef.current.outcome === "stored-only") return;
+                showSectionMessage("失败：" + ((e && e.message) || String(e)));
+              }
             });
         }, []);
 
@@ -478,8 +508,9 @@ window.__ModuleLoader__.load({
               .catch(function (e) {
                 if (mountedRef.current) flash("失败：" + ((e && e.message) || String(e)));
               })
-              .then(function () {
+              .then(function (d) {
                 if (mountedRef.current) setPresetsBusy(false);
+                return d || null;
               });
           },
           [flash, loadPresets, loadSections],
@@ -530,12 +561,108 @@ function presetById(d, id) {
   return one ? Object.assign({ id: id }, one) : null;
 }
 
-        /** 改一段：action = replace | disable | restore | acknowledge */
+        function findSectionRow(data, name) {
+          if (!data || !name) return null;
+          var groups = [data.applied, data.pending, data.stale, data.untouched];
+          for (var gi = 0; gi < groups.length; gi++) {
+            var group = Array.isArray(groups[gi]) ? groups[gi] : [];
+            for (var ri = 0; ri < group.length; ri++) {
+              if (group[ri] && group[ri].name === name) return group[ri];
+            }
+          }
+          return null;
+        }
+
+        function cloneSectionSelection(selection) {
+          var src = selection && typeof selection === "object" ? selection : {};
+          return {
+            listed: Array.isArray(src.listed) ? src.listed.slice() : [],
+            excluded: Array.isArray(src.excluded) ? src.excluded.slice() : [],
+            sections: src.sections && typeof src.sections === "object" ? Object.assign({}, src.sections) : {},
+            known: Array.isArray(src.known) ? src.known.slice() : [],
+          };
+        }
+
+        function draftSectionSelection(selection, name, action, text, original) {
+          var next = cloneSectionSelection(selection);
+          if (action === "restore") {
+            next.listed = next.listed.filter(function (n) { return n !== name; });
+            next.excluded = next.excluded.filter(function (n) { return n !== name; });
+            delete next.sections[name];
+          } else if (action === "disable") {
+            next.excluded = next.excluded.filter(function (n) { return n !== name; });
+            next.excluded.push(name);
+          } else if (action === "acknowledge") {
+            if (next.sections[name]) {
+              next.sections[name] = Object.assign({}, next.sections[name], { original: original || "" });
+            }
+          } else if (action === "replace") {
+            next.sections[name] = {
+              text: typeof text === "string" ? text : "",
+              original: original || "",
+              savedAt: new Date().toISOString(),
+            };
+          }
+          return next;
+        }
+
+        function draftSectionView(data, name, selection) {
+          if (!data) return data;
+          var row = findSectionRow(data, name);
+          if (!row) return data;
+          var next = Object.assign({}, data);
+          var groups = ["applied", "pending", "stale", "untouched"];
+          for (var gi = 0; gi < groups.length; gi++) {
+            var key = groups[gi];
+            next[key] = (Array.isArray(data[key]) ? data[key] : []).filter(function (item) {
+              return !item || item.name !== name;
+            });
+          }
+          next.drifted = (Array.isArray(data.drifted) ? data.drifted : []).filter(function (item) {
+            return !item || item.name !== name;
+          });
+
+          var override = selection.sections[name];
+          var listed = selection.listed.indexOf(name) >= 0;
+          var excluded = selection.excluded.indexOf(name) >= 0;
+          var updated = Object.assign({}, row);
+          if (override) {
+            updated.text = override.text || "";
+            updated.basedOn = override.original || "";
+            updated.savedAt = override.savedAt || "";
+            updated.action = "replace";
+            updated.status = listed ? "apply" : "pending";
+            next[listed ? "applied" : "pending"].push(updated);
+          } else if (excluded) {
+            updated.text = "";
+            updated.action = null;
+            updated.status = "apply";
+            next.applied.push(updated);
+          } else {
+            updated.text = updated.original || "";
+            updated.action = null;
+            updated.status = "untouched";
+            next.untouched.push(updated);
+          }
+          next.drifted = next.applied.filter(function (item) { return item && item.drifted; });
+          next.counts = {
+            applied: next.applied.length,
+            drifted: next.drifted.length,
+            stale: next.stale.length,
+            untouched: next.untouched.length,
+            total: next.applied.length + next.pending.length + next.stale.length + next.untouched.length,
+          };
+          next.summary = next.applied.length > 0 ? "改 " + next.applied.length + " 段" : "全部原生";
+          return next;
+        }
+
+        /** 改写正文独立保存；改写 tag 是否注入仍由预设清单决定。 */
         var applySection = react.useCallback(
           function (name, action, text) {
+            // 这次写入的结果优先于已经在途的读取请求。
+            var requestId = ++sectionsRequestRef.current;
             setSectionsBusy(true);
-            // 只写全局层。会话层的段落改写由会话页负责（那边天然带着 sessionId）。
-            var body = { name: name, action: action, scope: "global" };
+            var body = { name: name, action: action };
             if (action === "replace") body.text = text;
             var url = ROUTE_SECTIONS;
             return fetch(url, {
@@ -545,45 +672,45 @@ function presetById(d, id) {
             })
               .then(function (res) {
                 return res.json().then(function (j) {
-                  if (!res.ok) throw new Error((j && j.error) || "HTTP " + res.status);
+                  if (!res.ok) {
+                    var error = new Error((j && j.error) || "HTTP " + res.status);
+                    error.status = res.status;
+                    error.outcome = j && j.outcome;
+                    throw error;
+                  }
                   return j;
                 });
               })
               .then(function (d) {
                 if (!mountedRef.current) return null;
-                // 服务端已经把新的判定算好了，直接整份替换，
-                // 不在前端自己推算状态（免得两边逻辑漂移）
-                setSections(function (prev) {
-                  return Object.assign({}, prev || {}, {
-                    applied: d.applied,
-                    pending: d.pending,
-                    drifted: d.drifted,
-                    stale: d.stale,
-                    untouched: d.untouched,
-                    counts: d.counts,
-                    summary: d.summary,
-                  });
-                });
-                setErr(null);
-                flash(
+                sectionsStateRef.current = d;
+                setSections(d);
+                showSectionMessage(
                   (action === "replace"
-                    ? "已改写"
+                    ? "已保存改写正文；是否注入由预设中的改写 tag 决定"
+                    : action === "delete"
+                      ? "已删除改写"
+                      : action === "restore"
+                        ? "已还原成官方原文"
                     : action === "disable"
                       ? "已关掉"
                       : action === "restore"
                         ? "已还原成官方原文"
                     : "知道了") + "：" + name + "（全局）",
                 );
-                return null;
+                return true;
               })
               .catch(function (e) {
-                if (mountedRef.current) flash("失败：" + ((e && e.message) || String(e)));
+                if (mountedRef.current) showSectionMessage("失败：" + ((e && e.message) || String(e)));
+                return false;
               })
-              .then(function () {
+              .then(function (result) {
                 if (mountedRef.current) setSectionsBusy(false);
+                return result;
               });
           },
-          [flash],
+          [
+          ],
         );
 
 
@@ -722,6 +849,11 @@ function presetById(d, id) {
           [flash],
         );
 
+        // 系统提示词反馈独立于个人提示词的错误/成功消息，避免把长错误塞进个人标题行。
+        var sectionMessageSt = react.useState(null);
+        var sectionMessage = sectionMessageSt[0];
+        var setSectionMessage = sectionMessageSt[1];
+
         var prompts = (list && list.prompts) || [];
 
         /** 内置分类表（含建议 order）+ 目录里已存在的自定义分类。 */
@@ -858,6 +990,7 @@ function presetById(d, id) {
                   applySection: applySection,
                   loadSections: loadSections,
                   helpIcon: helpIcon,
+                  message: sectionMessage,
                 })
               : null,
           ),

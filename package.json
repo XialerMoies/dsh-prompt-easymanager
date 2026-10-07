@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-easymanager",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "给 DeepSeek Harness 用的个人提示词管理器：把「个人提示词 + 系统提示词改动」存成预设，按会话或全局挂载，并能改写、关闭、还原 DSH 的原生段落，还能看清模型实际收到的最终提示词。",
   "type": "module",
   "main": "./index.js",
@@ -86,7 +86,7 @@
   "dsh": {
     "id": "dsh-prompt-easymanager",
     "name": "个人提示词",
-    "version": "0.3.8",
+    "version": "0.3.9",
     "repo": "XialerMoies/dsh-prompt-easymanager",
     "bundle": {
       "patch": "./cordis.patch.yml"

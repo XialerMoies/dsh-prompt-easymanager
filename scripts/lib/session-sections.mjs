@@ -6,7 +6,7 @@
  */
 export async function listSectionsForAgent({ agent, readOriginal, selfPrefix, sessionIdOf }) {
   if (!agent) {
-    return { outcome: "awaiting-agent", error: "还没有存活的会话，稍后再试", sections: [] };
+    return { outcome: "awaiting-agent", error: "当前没有打开的会话，暂时无法读取原生系统提示词。", sections: [] };
   }
   const sp = agent.ctx?.systemPrompt;
   if (!sp || typeof sp.assemble !== "function") {

@@ -1,4 +1,21 @@
 // Read and mutate native system-prompt sections in the effective preset.
+function storedRewriteRows(overrides) {
+  return Object.entries(overrides ?? {}).map(([name, override]) => ({
+    name,
+    index: null,
+    status: "pending",
+    drifted: false,
+    driftAcknowledged: override?.acceptedDrift === true,
+    original: override?.original ?? "",
+    originalHash: override?.originalHash ?? "",
+    basedOn: override?.original ?? "",
+    basedOnHash: override?.originalHash ?? "",
+    action: "replace",
+    text: override?.text ?? "",
+    savedAt: override?.savedAt ?? "",
+  }));
+}
+
 export async function handleSections(request, url, deps) {
   const {
     SECTIONS_PATH,
@@ -12,13 +29,15 @@ export async function handleSections(request, url, deps) {
     presetSignature,
     diag,
     jsonOf,
+    writeState,
     editActivePresetSelection,
     normalizeSelection,
     applySelectionEdit,
+    makeOverride,
+    syncInjector,
   } = deps;
   if (url.pathname !== SECTIONS_PATH) return null;  // Native sections are projected into the current preset selection.
   const sessionId = url.searchParams.get("session") ?? undefined;
-
   if (request.method === "GET") {
     const found = await injector.listSections(sessionId);
     const state = readState();
@@ -29,7 +48,37 @@ export async function handleSections(request, url, deps) {
       global: state.global,
       presets: state.presets,
     });
-    const selNow = foundPreset?.preset?.selection ?? null;
+    if (found.outcome !== "ok") {
+      const pendingRows = storedRewriteRows(state.sectionOverrides);
+      return jsonOf({
+        outcome: "stored-only",
+        error: found.error ?? "当前没有打开的会话，暂时无法读取原生系统提示词。",
+        agentId: found.agentId ?? null,
+        summary: pendingRows.length > 0 ? `已保存 ${pendingRows.length} 段改写` : "等待读取原生段落",
+        applied: [],
+        pending: pendingRows,
+        drifted: [],
+        stale: [],
+        untouched: [],
+        availableNative: [],
+        excludedSections: Array.isArray(foundPreset?.preset?.selection?.excluded)
+          ? foundPreset.preset.selection.excluded
+          : [],
+        emptySlots: [],
+        slotTotal: SECTION_SLOTS.length,
+        globalOverrides: state.sectionOverrides ?? {},
+        sessionOverrides: {},
+        effectiveOverrides: {},
+        effectivePresetId: foundPreset?.id ?? null,
+        effectivePresetSignature: foundPreset?.preset ? presetSignature(foundPreset.preset) : null,
+        counts: { applied: 0, drifted: 0, stale: 0, untouched: 0, total: pendingRows.length },
+        actions: OVERRIDE_ACTIONS,
+      });
+    }
+    const selNow = {
+      ...(foundPreset?.preset?.selection ?? normalizeSelection(null)),
+      sections: state.sectionOverrides ?? {},
+    };
     const projected = projectSelection({
       native: found.sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
       selection: selNow,
@@ -37,13 +86,13 @@ export async function handleSections(request, url, deps) {
 
     const liveOf = (nm) => found.sections.find((s) => s.name === nm)?.text ?? "";
     const asRow = (row, status) => {
-      const ov = selNow?.sections?.[row.name];
+      const ov = state.sectionOverrides?.[row.name];
       return {
         name: row.name,
         index: found.sections.findIndex((s) => s.name === row.name),
         status,
         drifted: row.drifted === true,
-        driftAcknowledged: false,
+        driftAcknowledged: ov?.acceptedDrift === true,
         original: liveOf(row.name),
         originalHash: "",
         basedOn: ov?.original ?? "",
@@ -80,7 +129,7 @@ export async function handleSections(request, url, deps) {
         excludedSections: Array.isArray(selNow?.excluded) ? selNow.excluded : [],
         emptySlots: findEmptySlots(found.sections),
         slotTotal: SECTION_SLOTS.length,
-        globalOverrides: {},
+        globalOverrides: state.sectionOverrides ?? {},
         sessionOverrides: {},
         effectiveOverrides: {},
         effectivePresetId: foundPreset?.id ?? null,
@@ -115,24 +164,29 @@ export async function handleSections(request, url, deps) {
     let wroteTo = null;
 
     {
-      if (!["restore", "replace", "disable", "acknowledge"].includes(action)) {
+      if (!["restore", "replace", "delete", "disable", "acknowledge"].includes(action)) {
         diag.lastSections = "bad-action";
         return jsonOf(
           {
-            error: `action 必须是 replace / disable / restore / acknowledge，收到 ${JSON.stringify(action)}`,
+            error: `action 必须是 replace / delete / disable / restore / acknowledge，收到 ${JSON.stringify(action)}`,
           },
           400,
         );
       }
-      if ((action === "replace" || action === "disable") && action === "replace" && typeof body?.text !== "string") {
+      if (action === "replace" && typeof body?.text !== "string") {
         diag.lastSections = "missing-text";
         return jsonOf({ error: "replace 需要 text" }, 400);
       }
 
       const foundLive = await injector.listSections(sessionId);
       const live = foundLive.sections.find((s) => s.name === name);
-      const liveText = typeof live?.text === "string" ? live.text : "";
-      if ((action === "replace" || action === "disable") && live === undefined) {
+      const before = readState();
+      const previousOverride = before.sectionOverrides?.[name];
+      const liveText = typeof live?.text === "string" ? live.text : previousOverride?.original ?? "";
+      if (
+        ((action === "replace" && !previousOverride) || action === "disable") &&
+        live === undefined
+      ) {
         diag.lastSections = "unknown-section";
         return jsonOf(
           {
@@ -143,22 +197,48 @@ export async function handleSections(request, url, deps) {
         );
       }
 
-      if (action === "acknowledge") {
-        const sAck = readState();
-        const foundAck = presetForSession({
-          sessionId,
-          assignments: sAck.assignments,
-          global: sAck.global,
-          presets: sAck.presets,
+      if (action === "replace") {
+        const state = before;
+        writeState({
+          sectionOverrides: {
+            ...state.sectionOverrides,
+            [name]: makeOverride({ action: "replace", text: body.text, original: liveText }),
+          },
         });
-        if (!foundAck?.preset?.selection?.sections?.[name]) {
+      } else if (action === "delete" || action === "restore") {
+        const state = before;
+        const nextOverrides = { ...state.sectionOverrides };
+        delete nextOverrides[name];
+        const nextPresets = {};
+        for (const [id, preset] of Object.entries(state.presets)) {
+          const selection = normalizeSelection(preset.selection);
+          const nextSections = { ...selection.sections };
+          delete nextSections[name];
+          nextPresets[id] = {
+            ...preset,
+            selection: {
+              ...selection,
+              listed: selection.listed.filter((item) => item !== name),
+              sections: nextSections,
+            },
+          };
+        }
+        writeState({ sectionOverrides: nextOverrides, presets: nextPresets });
+        syncInjector?.();
+      } else if (action === "acknowledge") {
+        const sAck = readState();
+        if (!sAck.sectionOverrides?.[name]) {
           diag.lastSections = "acknowledge-missing";
           return jsonOf({ error: `段落 ${name} 没有改动记录，无从确认` }, 404);
         }
-      }
-
-
-      const commit = (editFn) => {
+        writeState({
+          sectionOverrides: {
+            ...sAck.sectionOverrides,
+            [name]: { ...sAck.sectionOverrides[name], acceptedDrift: true },
+          },
+        });
+      } else if (action === "disable") {
+        const commit = (editFn) => {
         const r = editActivePresetSelection({ sessionId, fallbackToGlobal: true, edit: editFn });
         if (!r.ok) {
           diag.lastSections = r.outcome;
@@ -167,17 +247,6 @@ export async function handleSections(request, url, deps) {
         wroteTo = r;
         return null;
       };
-
-      if (action === "restore") {
-        const bad = commit((sel) => {
-          const next = normalizeSelection(sel);
-          next.listed = next.listed.filter((n) => n !== name);
-          next.excluded = next.excluded.filter((n) => n !== name);
-          delete next.sections[name];
-          return next;
-        });
-        if (bad) return bad;
-      } else if (action === "replace" || action === "disable") {
         const bad = commit((sel) =>
           applySelectionEdit({
             native: [{ name, text: liveText }],
@@ -188,25 +257,6 @@ export async function handleSections(request, url, deps) {
               action === "disable" ? undefined : { text: body.text, original: liveText },
           }),
         );
-        if (bad) return bad;
-      } else if (action === "acknowledge") {
-        const sAck = readState();
-        const foundAck = presetForSession({
-          sessionId,
-          assignments: sAck.assignments,
-          global: sAck.global,
-          presets: sAck.presets,
-        });
-        if (!foundAck?.preset?.selection?.sections?.[name]) {
-          diag.lastSections = "acknowledge-missing";
-          return jsonOf({ error: `段落 ${name} 没有改动记录，无从确认` }, 404);
-        }
-        const bad = commit((sel) => {
-          const next = normalizeSelection(sel);
-          const ov = next.sections[name];
-          if (ov) next.sections[name] = { ...ov, original: liveText };
-          return next;
-        });
         if (bad) return bad;
       }
     }
@@ -219,19 +269,45 @@ export async function handleSections(request, url, deps) {
       global: stateAfter2.global,
       presets: stateAfter2.presets,
     });
-    const selAfter = foundAfter?.preset?.selection ?? null;
+    if (found2.outcome !== "ok") {
+      const pendingRows = storedRewriteRows(stateAfter2.sectionOverrides);
+      return jsonOf({
+        ok: true,
+        action,
+        name,
+        outcome: "stored-only",
+        error: found2.error ?? "当前没有打开的会话，暂时无法读取原生系统提示词。",
+        summary: pendingRows.length > 0 ? `已保存 ${pendingRows.length} 段改写` : "等待读取原生段落",
+        applied: [],
+        pending: pendingRows,
+        drifted: [],
+        stale: [],
+        untouched: [],
+        availableNative: [],
+        excludedSections: Array.isArray(foundAfter?.preset?.selection?.excluded)
+          ? foundAfter.preset.selection.excluded
+          : [],
+        emptySlots: [],
+        globalOverrides: stateAfter2.sectionOverrides ?? {},
+        counts: { applied: 0, drifted: 0, stale: 0, untouched: 0, total: pendingRows.length },
+      });
+    }
+    const selAfter = {
+      ...(foundAfter?.preset?.selection ?? normalizeSelection(null)),
+      sections: stateAfter2.sectionOverrides ?? {},
+    };
     const projected = projectSelection({
       native: found2.sections.map((s) => ({ name: s.name, text: s.text ?? "" })),
       selection: selAfter,
     });
     const asRow = (row, status) => {
-      const ov = selAfter?.sections?.[row.name];
+      const ov = stateAfter2.sectionOverrides?.[row.name];
       return {
         name: row.name,
         index: found2.sections.findIndex((s) => s.name === row.name),
         status,
         drifted: row.drifted === true,
-        driftAcknowledged: false,
+        driftAcknowledged: ov?.acceptedDrift === true,
         original: found2.sections.find((s) => s.name === row.name)?.text ?? "",
         originalHash: "",
         basedOn: ov?.original ?? "",
@@ -258,11 +334,12 @@ export async function handleSections(request, url, deps) {
     diag.lastSections = `${action}:ok`;
     return jsonOf({
         ok: true,
+        outcome: "ok",
         action,
         name,
-        wroteTo: wroteTo
-          ? { presetId: wroteTo.presetId, via: wroteTo.via, fellBack: wroteTo.fellBack === true }
-          : null,
+        ...(wroteTo ? {
+          wroteTo: { presetId: wroteTo.presetId, via: wroteTo.via, fellBack: wroteTo.fellBack === true },
+        } : {}),
         summary:
           allApplied.length > 0
             ? `改 ${allApplied.length} 段`
@@ -288,4 +365,3 @@ export async function handleSections(request, url, deps) {
   }
   return null;
 }
-

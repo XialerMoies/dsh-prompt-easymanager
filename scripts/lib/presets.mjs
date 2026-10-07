@@ -1,19 +1,21 @@
 // 预设：要注入什么的**唯一载体**。
 //
 // ═══════════════════════════════════════════════════════════════════════════
-// 一个预设 = 两半
+// 一个预设 = 个人提示词 + tag 清单
 // ═══════════════════════════════════════════════════════════════════════════
 //
 //     {
 //       name:     "写代码",
 //       prompts:  ["格式契约", "编码规范"],        ← 个人提示词：挂哪几条
-//       selection: { listed, excluded, sections, known }, ← 系统提示词清单与改写正文
+//       selection: { listed, excluded, known },            ← 系统提示词 tag
 //     }
 //
-// **两半是独立的**：
-//   · `sections` 里**没有**的段落 = 原生（一个字没改）
+// **改写正文单独保存在 state.sectionOverrides**，预设只保存对应 tag：
+//   · `listed` 里的改写 tag = 使用共享改写正文
+//   · 不在 `listed` 里的改写 tag = 保留正文，但本预设使用原生段落
+//   · `excluded` 表示该预设不注入的原生段落
 //   · `prompts` 为空 = 不挂任何个人提示词
-//   · 两半都空 = 这个预设什么都不注入，等价于「系统提示词」原样
+//   · 个人提示词和 tag 清单都空 = 使用原生系统提示词
 //
 // ⚠️ 「原生」**不是一个选项，是一个状态** —— 某段没被改过它就是原生。
 //    所以界面不该有「原生提示词 / 改动过的提示词」这种二选一的下拉，
@@ -86,7 +88,7 @@ export function normalizePreset(raw) {
     prompts: Array.isArray(raw.prompts)
       ? [...new Set(raw.prompts.filter((x) => typeof x === "string" && x))]
       : [],
-    /** 系统提示词的唯一数据源：勾选名单、改写正文和 dsh 段落名快照。 */
+    /** 系统提示词 tag 清单；改写正文由 state.sectionOverrides 唯一保存。 */
     selection: normalizeSelection(raw.selection ?? selectionFromLegacySections(raw.sections)),
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
     /** 用户自己写的说明，可选 */

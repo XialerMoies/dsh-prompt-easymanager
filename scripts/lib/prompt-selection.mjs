@@ -4,10 +4,10 @@
 // 这是什么
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// 一条预设管三块东西（用户看到的就是三个文件夹）：
+// 一条预设管个人提示词和系统段落 tag（用户看到的就是三个文件夹）：
 //
 //     个人提示词    要挂哪几条（库里的 id）
-//     改动提示词    哪几段被改成了什么
+//     改动提示词    哪些共享改写 tag 被勾选
 //     系统提示词    dsh 原生的那些段，勾着的就用原版
 //
 // 这三块合成一个「清单」，装配时照清单把段落拼出来。
@@ -24,7 +24,7 @@
 // 改成记「用户主动做过的动作」之后：
 //
 //     没动过的段   →  不在任何名单里  →  **跟着 dsh 走**（自动包含，内容用最新的）
-//     改过的段     →  在 `listed` 里，正文记在 `sections`
+//     改过的段     →  在 `listed` 里，正文来自共享改写库
 //     取消勾选的段 →  在 `excluded` 里  →  不进提示词
 //
 // 于是 dsh 加了新段：**不用改任何预设，它自动就在提示词里**。
@@ -36,7 +36,7 @@
 // 某一段的三种状态
 // ═══════════════════════════════════════════════════════════════════════════
 //
-//     `sections[name]` 有   →  用**用户改的那份**
+//     `sections[name]` 有且在 `listed` → 用共享改写正文
 //     `excluded` 里有       →  **不进提示词**（这就是原来那个「关闭」动作）
 //     两个都没有            →  用 **dsh 原版**（跟着它升级走）
 
@@ -46,10 +46,10 @@ import { OVERRIDE_ACTIONS, hashSectionText } from "./section-overrides.mjs";
  * 「用户主动改过、但还没决定要不要进预设」的那一段，用的占位。
  *
  * ⚠️ 存在这个值是因为**改一段**和**决定它进不进预设**是两步：
- *    用户刚在「系统提示词」那一栏改完，改动要**先存进预设**（否则刷新就丢），
- *    但他可能还没在清单里勾中它。占位就表示「改好了，等着被勾」。
+ *    用户刚在「系统提示词」那一栏改完，正文已独立保存，
+ *    但当前预设可能还没勾中它。占位只表示「有改写但本预设不启用」。
  *
- *    真正生效时正文取的是这个段落的实际内容，所以占位不会变成空正文。
+ *    实际注入正文由宿主把共享改写库合并到投影 selection 后提供。
  */
 export const UNCHECKED = Symbol("dsh-prompt-easymanager.selection.unchecked");
 
@@ -429,7 +429,7 @@ export function diffNative({ native, selection }) {
  */
 export function isEmptySelection({ selection, availableNative }) {
   const sel = normalizeSelection(selection);
-  if (Object.keys(sel.sections).length > 0) return false; // 有改过的段 → 不空
+  if (sel.listed.length > 0 || Object.keys(sel.sections).length > 0) return false;
 
   const names = (Array.isArray(availableNative) ? availableNative : []).filter(
     (n) => typeof n === "string" && n,

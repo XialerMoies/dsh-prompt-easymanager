@@ -1052,17 +1052,16 @@ const TMP_ID = "zz-test-only";
 
 // ══ 30. 原生段落覆盖路由（/sections）══════════════════════════════════════
 //
-// 这一块**必须能在「没有存活的 agent」时也不炸** —— 界面一打开就会请求它，
-// 而那时可能还没有任何会话。返回 `awaiting-agent` + 空列表 + 说明，
-// 界面显示成「先开个会话」就行。
+// 这一块**必须能在「没有存活的 agent」时也不炸** —— 已存改写仍可读取，
+// 原生段落则明确标记为暂不可读。
 {
   const ctx2 = makeCtx([]);   // 故意不给任何 agent
   apply(ctx2);
 
   const g = await call(ctx2, SECTIONS_PATH, { search: "session=whatever" });
   eq(g.status, 200, "GET /sections 在没 agent 时也返回 200");
-  eq(g.json.outcome, "awaiting-agent", "并如实说明是「还没有会话」");
-  eq(g.json.counts.total, 0, "段落总数为 0");
+  eq(g.json.outcome, "stored-only", "没有 agent 时切到已存改写视图");
+  eq(g.json.counts.total, g.json.pending.length, "只统计已存改写行");
   ok(typeof g.json.error === "string" && g.json.error.length > 0, "带一句给人看的说明");
   ok(Array.isArray(g.json.applied), "applied 是数组（界面不用判空）");
   ok(Array.isArray(g.json.stale), "stale 是数组");
@@ -1201,7 +1200,7 @@ const TMP_ID = "zz-test-only";
 
   // ⚠️ 用全集（applied + stale + untouched）—— `harness:identity` 可能被前面的
   //    用例留下了一条覆盖，那它就在 applied 而不是 untouched 里。
-  const names = [...(res.json.applied || []), ...(res.json.stale || []), ...(res.json.untouched || [])].map((r) => r.name);
+  const names = [...(res.json.applied || []), ...(res.json.pending || []), ...(res.json.stale || []), ...(res.json.untouched || [])].map((r) => r.name);
   ok(names.includes("harness:identity"), "列表里有全局层段落");
   ok(
     names.includes("tool:bash") && names.includes("tool:read"),
@@ -1218,7 +1217,7 @@ const TMP_ID = "zz-test-only";
   );
 }
 
-// ══ 33. 段落改写**写进预设**（不再有那两张独立的表）═══════════════════════
+// ══ 33. 段落改写正文独立保存，预设只保存 tag ═════════════════════════════
 //
 // ⚠️ 这一节整个重写过。老版本验的是「两层改写」模型：
 //
@@ -1266,14 +1265,7 @@ const TMP_ID = "zz-test-only";
   /** 那张退休的表**这一刻**长什么样 —— 用来验「这次写没写它」。 */
   const legacyBefore = JSON.stringify(diskState().sectionOverrides ?? {});
 
-  // ── ① 退无可退 → **409**，并说清怎么办 ────────────────────────────────
-  //
-  // ⚠️ 这一条是核心：改动总得有地方存。退无可退时就明确拒绝，
-  //    而不是悄悄写进一个没人读的地方（老模型就是这么干的）。
-  //
-  // ⚠️ **「退无可退」= 全局那一层也没有预设。** 第一版没把全局清掉，
-  //    于是 `ensureDefaultPreset` 造的那条默认预设接住了 → 200，
-  //    红的反而是夹具（踩过一次）。
+  // ── ① 改写正文不依赖预设；无 tag 时只保存、不注入 ────────────────────
   {
     // 先把全局指空 —— 制造真正的「退无可退」
     await call(ctx7, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
@@ -1285,29 +1277,14 @@ const TMP_ID = "zz-test-only";
       search: "session=session-A",
       body: { name: "harness:identity", action: "replace", text: "无处可存" },
     });
-    eq(r.status, 409, "**全局也没预设时改段落 → 409**（不静默丢弃）");
-    eq(r.json.outcome, "no-active-preset", "结论说清是「没有生效的预设」");
-    ok(
-      typeof r.json.error === "string" && r.json.error.includes("先在会话页选一条预设"),
-      "  并告诉用户怎么办",
-    );
-    // ⚠️ 错误响应里 **没有** `wroteTo`（不是 `null` —— 那个字段只在写成功时才回）。
-    //    第一版我写成期望 `null`，红了。判据用 `undefined`。
-    eq(r.json.wroteTo, undefined, "  错误响应里没有 wroteTo（什么都没写）");
+    eq(r.status, 200, "没有有效预设时也能独立保存改写正文");
+    eq(r.json.wroteTo, undefined, "正文保存不写入任何预设");
+    eq(diskState().sectionOverrides["harness:identity"]?.text, "无处可存", "正文保存到共享改写库");
+    const a = await assembleOnce();
+    eq(a.sections[0].text, "官方身份", "没有有效预设 tag 时正文不注入");
   }
 
-  // ── ①b **全局有货时，带 session 也该退到全局**（真机上复现过的不一致）──
-  //
-  // ⚠️ 起因：真机上同一个动作，带不带 `session` 参数结果不一样 ——
-  //
-  //        POST /sections            （不带） →  200，写进全局预设
-  //        POST /sections?session=X  （X 设了「不注入」）→  409
-  //
-  //    设置页那一栏**本来就只管全局层**（界面上没有「这一栏写给谁」这个选择），
-  //    所以带上 session 时不该被那个会话的「不注入」挡住。
-  //
-  //    ⚠️ 但**会话自己选了预设时不许退** —— 那是用户明确的选择，
-  //       退到全局会让「改 A 会话的段落」悄悄改了所有会话。见 ①c。
+  // ── ①b 无论 session 当前选什么，正文都写入同一个共享改写库 ──────────
   {
     const gp0 = await call(ctx7, PRESETS_PATH, {
       method: "POST",
@@ -1335,14 +1312,13 @@ const TMP_ID = "zz-test-only";
       console.log("  [DEBUG] 盘上 global: " + JSON.stringify(diskState().global));
       console.log("  [DEBUG] 盘上 assignments: " + JSON.stringify(diskState().assignments));
     }
-    eq(r.json.wroteTo && r.json.wroteTo.fellBack, true, "**并且如实回报「退到了全局」**");
-    eq(r.json.wroteTo && r.json.wroteTo.presetId, gp0.json.id, "  落到的是全局那条预设");
+    eq(r.json.wroteTo, undefined, "保存正文不修改或回退到任何预设");
 
     const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
     eq(
-      disk.presets?.[gp0.json.id]?.selection?.sections?.["harness:identity"]?.text,
+      disk.sectionOverrides?.["harness:identity"]?.text,
       "退到全局了",
-      "  改动真的写进了全局预设",
+      "正文仍写入共享改写库",
     );
 
     // 收尾：撤掉这条改写，别影响后面的用例
@@ -1354,7 +1330,7 @@ const TMP_ID = "zz-test-only";
     await call(ctx7, ASSIGN_PATH, { method: "POST", body: { sessionId: "session-A", follow: true } });
   }
 
-  // ── ② 给全局选一条预设之后，改写**写进那条预设** ──────────────────────
+  // ── ② 预设只存改写 tag；正文继续保存在共享改写库 ──────────────────────
   const gp = await call(ctx7, PRESETS_PATH, {
     method: "POST",
     body: { action: "save", name: "七号全局", prompts: [] },
@@ -1370,18 +1346,18 @@ const TMP_ID = "zz-test-only";
     });
     eq(r.status, 200, "有预设了 → 200");
 
-    // 落盘：改动在**预设里**，那两张老表**没被动**
+    // 落盘：正文与预设 tag 分开保存。
     const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
     const p = disk.presets[gp.json.id];
     eq(
-      p?.selection?.sections?.["harness:identity"]?.text,
-      "改过的身份",
-      "**改动写进了预设的清单里**",
+      p?.selection?.sections?.["harness:identity"],
+      undefined,
+      "预设中不重复存改写正文",
     );
     eq(
-      JSON.stringify(disk.sectionOverrides ?? {}),
-      "{}",
-      "**退休的 `sectionOverrides` 表已清空**（改动只写预设 selection）",
+      disk.sectionOverrides?.["harness:identity"]?.text,
+      "改过的身份",
+      "共享改写库保留正文",
     );
     eq(
       JSON.stringify(disk.sessionSectionOverrides ?? {}),
@@ -1389,9 +1365,9 @@ const TMP_ID = "zz-test-only";
       "  会话层那张也没被动",
     );
     eq(
-      p?.selection?.sections?.["harness:identity"]?.original,
-      "官方身份",
-      "  顺手记下了当时的官方原文（漂移基准）",
+      Object.keys(p?.selection?.sections ?? {}),
+      [],
+      "预设只记录 tag，不保存正文或漂移基准",
     );
     ok(!p?.selection?.listed?.includes("harness:identity"), "  改写默认未勾选");
   }
@@ -1432,19 +1408,32 @@ const TMP_ID = "zz-test-only";
     eq(a.sections.find((s) => s.name === "tool:bash")?.text, "", "  装配时那段被清空");
   }
 
-  // ── ⑤ 「还原」= 从清单里拿掉 → 回原生 ──────────────────────────────────
+  // ── ⑤ 删除改写正文：清理 tag，保留预设 ─────────────────────────────────
   {
+    // 预先勾选另一条改写 tag，确认删除目标不会把其它 tag 一并清空。
+    const beforeDelete = diskState();
+    beforeDelete.presets[gp.json.id].selection.listed.push("tool:bash");
+    writeFileSync(
+      join(DSH_HOME, "dsh-prompt-easymanager-state.json"),
+      JSON.stringify(beforeDelete, null, 2),
+    );
     const r = await call(ctx7, SECTIONS_PATH, {
       method: "POST",
       search: "session=session-A",
-      body: { name: "harness:identity", action: "restore" },
+      body: { name: "harness:identity", action: "delete" },
     });
-    eq(r.status, 200, "还原一段 → 200");
+    eq(r.status, 200, "删除改写正文 → 200");
     const sel = diskState().presets[gp.json.id].selection;
     eq(
-      Object.keys(sel.sections).includes("harness:identity"),
+      sel.listed.includes("harness:identity"),
       false,
-      "**还原 = 把它从清单里拿掉**",
+      "删除改写时清理预设 tag",
+    );
+    eq(diskState().sectionOverrides["harness:identity"], undefined, "共享改写正文被删除");
+    ok(diskState().presets[gp.json.id], "删除改写不删除预设");
+    ok(
+      diskState().presets[gp.json.id].selection.listed.includes("tool:bash"),
+      "删除改写不清空其它改写 tag",
     );
 
     const a = await assembleOnce();
@@ -1478,9 +1467,9 @@ const TMP_ID = "zz-test-only";
 
     const disk = diskState();
     eq(
-      disk.presets[own.json.id].selection.sections["tool:bash"]?.text,
+      disk.sectionOverrides["tool:bash"]?.text,
       "A 自己的 bash",
-      "**改动落到了 A 自己那条预设上**",
+      "改写正文独立保存，不依附于会话预设",
     );
     eq(
       disk.presets[gp.json.id].selection.sections["tool:bash"],
@@ -1522,8 +1511,9 @@ const TMP_ID = "zz-test-only";
   });
   eq(saved.status, 200, "存预设 → 200");
   eq(saved.json.id, "代码", "id 就是名字（中文保留）");
-  eq(saved.json.preset.prompts, ["format-contract"], "提示词进预设");
-  ok(saved.json.preset.sections["harness:identity"] !== undefined, "段落改写进预设");
+    eq(saved.json.preset.prompts, ["format-contract"], "提示词进预设");
+    eq(saved.json.preset.sections, {}, "改写正文不跟预设一起保存");
+    ok(saved.json.preset.selection.listed.includes("harness:identity"), "传入的改写内容只转换为预设 tag");
   eq(
     Object.prototype.hasOwnProperty.call(saved.json.preset, "scope"),
     false,
@@ -1585,9 +1575,9 @@ const TMP_ID = "zz-test-only";
     eq(g.json.global.enabled, true, "**挂到全局会顺带把全局注入打开**");
     const st = await call(ctx8, STATE_PATH);
     eq(
-      st.json.presets["代码"].sections["harness:identity"] !== undefined,
-      true,
-      "段落改写跟着生效（注入侧每次装配现取）",
+      st.json.presets["代码"].sections["harness:identity"],
+      undefined,
+      "预设 API 不暴露改写正文",
     );
   }
 
@@ -1605,7 +1595,7 @@ const TMP_ID = "zz-test-only";
     eq(only.status, 200, "存一条「只有系统改动」的预设");
     const list = await call(ctx8, PRESETS_PATH, { method: "GET" });
     const row = list.json.presets.find((p) => p.id === "只改段落");
-    eq(row.label, "系统提示词 · 改", "**没个人提示词 → 显示「系统提示词 · 改」**，不显示预设名");
+    eq(row.label, "系统提示词 · 改", "**没个人提示词、已选改写 tag → 显示「系统提示词 · 改」**，不显示预设名");
   }
 
   // ④ 挂到会话：只动那个会话，不碰全局
@@ -1732,14 +1722,6 @@ const TMP_ID = "zz-test-only";
   const ctx9 = makeCtx([live9.agent]);
   apply(ctx9);
 
-  // ⚠️ **这条改写不能在这儿写。**
-  //
-  //    老模型下它无条件生效，所以放哪儿都行 —— 于是老测试把它放在**建预设之前**。
-  //    新模型里段落改写由预设承载，此时还没有任何预设 → POST 直接 409，
-  //    改写**根本没存下来**，后面「开关开着 → 改写生效」那条必然红。
-  //
-  //    所以改成：先建预设 → 选上并打开 → 再写这条改写。见下面。
-
   const l0 = live9.assembleListeners[0];
   ok(typeof l0 === "function", "注入器挂上了装配监听器");
   const asm = async () => ({
@@ -1762,6 +1744,23 @@ const TMP_ID = "zz-test-only";
   eq(a.sections[0].text, "官方身份", "**没选预设时段落改写不生效**（它现在跟着预设走）");
   eq(a.sections[1].text, "我注入的提示词正文", "个人提示词的注入不受影响（同上）");
 
+  // 改写正文可独立保存；没有有效预设时只是不注入。
+  await call(ctx9, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
+  await call(ctx9, GLOBAL_PATH, { method: "POST", body: { presetId: null } });
+  await call(ctx9, ASSIGN_PATH, { method: "POST", body: { sessionId: "session-T", presetId: null } });
+  const savedWithoutPreset = await call(ctx9, SECTIONS_PATH, {
+    method: "POST",
+    search: "session=session-T",
+    body: { name: "harness:identity", action: "replace", text: "我改的身份" },
+  });
+  eq(savedWithoutPreset.status, 200, "没有预设时也能保存改写正文");
+  eq(
+    JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"))
+      .sectionOverrides["harness:identity"]?.text,
+    "我改的身份",
+    "改写正文进入共享存储",
+  );
+
   // ── 没选预设就想开全局注入 → 400（用户定的规则）────────────────────────
   {
     await call(ctx9, GLOBAL_PATH, { method: "POST", body: { enabled: false } });
@@ -1778,32 +1777,24 @@ const TMP_ID = "zz-test-only";
     method: "POST",
     body: { action: "save", name: "全局那条", prompts: ["format-contract"] },
   });
+  await call(ctx9, ASSIGN_PATH, { method: "POST", body: { sessionId: "session-T", follow: true } });
   {
     const on = await call(ctx9, GLOBAL_PATH, { method: "POST", body: { presetId: gp9.json.id, enabled: true } });
     eq(on.status, 200, "选上预设并打开 → 200");
     eq(on.json.global.presetId, gp9.json.id, "指向它");
     eq(on.json.global.enabled, true, "**35 节**：开启后 global.enabled 为 true");
 
-    // 🔑 **现在才写这条段落改写** —— 它写进刚才选上的那条预设。
-    //    （老测试把它放在建预设之前，新模型下会 409。）
-    const sec = await call(ctx9, SECTIONS_PATH, {
-      method: "POST",
-      search: "session=session-T",
-      body: { name: "harness:identity", action: "replace", text: "我改的身份" },
-    });
-    eq(sec.status, 200, "有预设之后写段落改写 → 200");
-
-    // 改写刚保存时默认未勾选，所以此刻仍是原生。
+    // 改写 tag 默认未勾选，所以此刻仍是原生。
     a = await asm();
     await l0(a, {}, async () => a);
     eq(a.sections[0].text, "官方身份", "**改写未勾选 → 仍是原生**");
     const disk = JSON.parse(readFileSync(join(DSH_HOME, "dsh-prompt-easymanager-state.json"), "utf8"));
     const selection = disk.presets[gp9.json.id].selection;
     selection.listed = ["harness:identity"];
-    await call(ctx9, PRESETS_PATH, {
-      method: "POST",
-      body: { action: "update", id: gp9.json.id, selection },
-    });
+  await call(ctx9, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "update", id: gp9.json.id, selection },
+  });
     a = await asm();
     await l0(a, {}, async () => a);
     eq(a.sections[0].text, "我改的身份", "**保存并勾选后 → 改写生效**");
@@ -1969,17 +1960,21 @@ const TMP_ID = "zz-test-only";
   const ctxN = makeCtx([liveN.agent]);
   apply(ctxN);
 
-  // 全局那条预设带一段改写，并且开着
+  // 改写正文独立存在；是否启用仍由当前预设中的段落 tag 决定。
   const gN = await call(ctxN, PRESETS_PATH, {
     method: "POST",
     body: {
       action: "save",
       name: "N 全局",
       prompts: ["format-contract"],
-      sections: { "harness:identity": { action: "replace", text: "全局改的身份" } },
     },
   });
   eq(gN.status, 200, "**存「N 全局」这条预设 → 200**（400 的话后面全是假失败）");
+  const rewriteN = await call(ctxN, SECTIONS_PATH, {
+    method: "POST",
+    body: { name: "harness:identity", action: "replace", text: "共享改写身份" },
+  });
+  eq(rewriteN.status, 200, "改写正文单独保存 → 200");
   await call(ctxN, GLOBAL_PATH, { method: "POST", body: { presetId: gN.json.id, enabled: true } });
 
   const lN = liveN.assembleListeners[0];
@@ -1992,11 +1987,21 @@ const TMP_ID = "zz-test-only";
     tools: [],
   });
 
-  // ── ① 没记录 → 跟随全局 → 改写生效 ────────────────────────────────────
+  // ── ① tag 未勾选 → 保存的正文不注入 ───────────────────────────────────
   {
     const x = await asmN();
     await lN(x, {}, async () => x);
-    eq(x.sections[0].text, "全局改的身份", "没记录的会话跟着全局 → 改写生效");
+    eq(x.sections[0].text, "官方身份", "tag 未勾选时使用原生段落");
+  }
+
+  await call(ctxN, PRESETS_PATH, {
+    method: "POST",
+    body: { action: "update", id: gN.json.id, selection: { listed: ["harness:identity"] } },
+  });
+  {
+    const x = await asmN();
+    await lN(x, {}, async () => x);
+    eq(x.sections[0].text, "共享改写身份", "勾选 tag 后共享正文生效");
   }
 
   // ── ② 显式选「不注入」 → 全局那条不生效 → **改写也不生效** ──────────────
@@ -2018,7 +2023,7 @@ const TMP_ID = "zz-test-only";
     eq(injected?.text, "会话自己的提示词", "  那一段是夹具带的，注入器没动它");
   }
 
-  // ── ③ 给它选一条**自己的**预设 → 改写按那条走 ─────────────────────────
+  // ── ③ 会话使用自己的预设，tag 独立选择但正文仍共享 ───────────────────
   {
     const own = await call(ctxN, PRESETS_PATH, {
       method: "POST",
@@ -2026,7 +2031,6 @@ const TMP_ID = "zz-test-only";
         action: "save",
         name: "N 自己",
         prompts: ["format-contract"],
-        sections: { "harness:identity": { action: "replace", text: "会话自己的身份" } },
       },
     });
     await call(ctxN, ASSIGN_PATH, {
@@ -2038,9 +2042,16 @@ const TMP_ID = "zz-test-only";
     await lN(x, {}, async () => x);
     eq(
       x.sections[0].text,
-      "会话自己的身份",
-      "**选了自己的预设 → 按它那条走**（不是全局那条）",
+      "官方身份",
+      "自己的预设未勾 tag 时使用原生段落",
     );
+    await call(ctxN, PRESETS_PATH, {
+      method: "POST",
+      body: { action: "update", id: own.json.id, selection: { listed: ["harness:identity"] } },
+    });
+    const selected = await asmN();
+    await lN(selected, {}, async () => selected);
+    eq(selected.sections[0].text, "共享改写身份", "不同预设勾同一 tag 时共用正文");
   }
 }
 
@@ -2349,6 +2360,45 @@ rmSync(DSH_HOME, { recursive: true, force: true });
     if (existed.old) writeFileSync(OLD_FILE, backup.old, "utf8");
     else if (existsSync(OLD_FILE)) unlinkSync(OLD_FILE);
   }
+}
+
+// 已保存的改写在没有存活会话时仍可读取、继续编辑和删除。
+{
+  const live = makeAgent("session-offline-sections", {
+    assemble: async () => ({
+      sections: [{ name: "harness:identity", text: "当前原生身份" }],
+      contexts: [],
+      tools: [],
+    }),
+  });
+  const online = makeCtx([live.agent]);
+  apply(online);
+  const saved = await call(online, SECTIONS_PATH, {
+    method: "POST",
+    body: { name: "harness:identity", action: "replace", text: "离线仍可看的改写" },
+  });
+  eq(saved.status, 200, "先在线保存一条改写");
+
+  const offline = makeCtx([]);
+  apply(offline);
+  const read = await call(offline, SECTIONS_PATH);
+  eq(read.status, 200, "没有存活会话时读取改写仍返回 200");
+  eq(read.json.outcome, "stored-only", "标明当前只有持久化改写数据");
+  eq(read.json.pending[0]?.text, "离线仍可看的改写", "离线回传已保存的改写正文");
+  eq(read.json.pending[0]?.original, "当前原生身份", "离线回传保存时的原生正文");
+
+  const updated = await call(offline, SECTIONS_PATH, {
+    method: "POST",
+    body: { name: "harness:identity", action: "replace", text: "离线继续编辑" },
+  });
+  eq(updated.status, 200, "没有存活会话时已知改写仍可继续保存");
+  eq(updated.json.pending[0]?.text, "离线继续编辑", "保存响应仍返回改写行");
+
+  const deleted = await call(offline, SECTIONS_PATH, {
+    method: "POST",
+    body: { name: "harness:identity", action: "delete" },
+  });
+  eq(deleted.status, 200, "没有存活会话时也可删除已保存改写");
 }
 
 done();

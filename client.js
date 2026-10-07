@@ -467,8 +467,11 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
           display: "flex",
           gap: "6px",
           alignItems: "center",
+          justifyContent: "flex-end",
           flexWrap: "wrap",
           marginTop: "8px",
+          width: "100%",
+          boxSizing: "border-box",
         };
         /** 段落正文的只读显示。 */
         var PRE = {

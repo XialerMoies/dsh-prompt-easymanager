@@ -58,7 +58,7 @@ import { handleLibrary } from "./scripts/lib/routes/library.mjs";
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.8";
+const PLUGIN_VERSION = "0.3.9";
 
 export const STATE_PATH = "/api/prompt-easymanager/state";
 export const ASSIGN_PATH = "/api/prompt-easymanager/assign";
@@ -252,6 +252,7 @@ const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"));
       sectionOverrides: {},
       sessionSectionOverrides: {},
       presets: {},
+      rewriteStorage: parsed?.rewriteStorage === "shared-v1" ? "shared-v1" : "legacy",
       hasLoaded: parsed?.hasLoaded === true,
     };
     out.presets = normalizePresets(parsed?.presets);
@@ -265,6 +266,33 @@ const parsed = JSON.parse(readFileSync(stateFilePath(), "utf8"));
     });
     if (parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object") {
       out.sectionOverrides = normalizeOverrides(parsed.sectionOverrides);
+    }
+    // Rewrite bodies are shared data; presets retain only the selected tag names.
+    // Prefer the active global preset when old preset-specific bodies conflict.
+    const legacyPresetIds = Object.keys(out.presets);
+    const globalPresetId = out.global?.presetId;
+    if (globalPresetId && out.presets[globalPresetId]) {
+      legacyPresetIds.splice(legacyPresetIds.indexOf(globalPresetId), 1);
+      legacyPresetIds.unshift(globalPresetId);
+    }
+    for (const id of legacyPresetIds) {
+      const preset = out.presets[id];
+      const selection = preset.selection ?? { listed: [], excluded: [], sections: {}, known: [] };
+      for (const [name, override] of Object.entries(selection.sections ?? {})) {
+        if (out.sectionOverrides[name] || !override || typeof override.text !== "string") continue;
+        out.sectionOverrides[name] = {
+          action: "replace",
+          text: override.text,
+          original: override.original ?? "",
+          originalHash: override.originalHash ?? "",
+          savedAt: override.savedAt ?? "",
+          acceptedDrift: false,
+        };
+      }
+      out.presets[id] = normalizePreset({
+        ...preset,
+        selection: { ...selection, sections: {} },
+      }) ?? preset;
     }
     const perSession = parsed?.sessionSectionOverrides;
     if (perSession && typeof perSession === "object" && !Array.isArray(perSession)) {
@@ -303,48 +331,6 @@ function ensureDefaultPreset(out) {
     sections: {},
     note: "刚装上时的默认：三段都用 dsh 原生的。改哪一段，它就会挪进「改动提示词」。",
   });
-}
-
-// Section edits follow the effective session preset, falling back to global settings
-// for the settings page where no session is available.
-function editActivePresetSelection({ sessionId, fallbackToGlobal = false, edit }) {
-  const s = readState();
-  let found = presetForSession({
-    sessionId,
-    assignments: s.assignments,
-    global: s.global,
-    presets: s.presets,
-  });
-  let fellBack = false;
-
-  if (fallbackToGlobal && (!found || !found.preset)) {
-    const gp =
-      typeof s.global?.presetId === "string" && s.presets[s.global.presetId]
-        ? s.presets[s.global.presetId]
-        : null;
-    if (gp) {
-      found = { id: s.global.presetId, preset: gp, source: "global" };
-      fellBack = true;
-    }
-  }
-
-  if (!found || !found.preset) {
-    return {
-      ok: false,
-      outcome: "no-active-preset",
-      error:
-        "这个会话没有生效的预设，改动无处可存 —— " +
-        "先在会话页选一条预设（或者把全局注入打开并选一条）。",
-    };
-  }
-  const before = found.preset.selection ?? { listed: [], excluded: [], sections: {}, known: [] };
-  const after = edit(before);
-  const next = normalizePreset({ ...found.preset, selection: after });
-  if (next === null) {
-    return { ok: false, outcome: "bad-preset", error: "改完之后预设不合法（名字丢了？）" };
-  }
-  writeState({ presets: { ...s.presets, [found.id]: next } });
-  return { ok: true, presetId: found.id, via: found.source ?? "unknown", fellBack };
 }
 
 function migrateLegacyState(out, parsed) {
@@ -405,7 +391,11 @@ function migrateLegacyState(out, parsed) {
     parsed?.sectionOverrides && typeof parsed.sectionOverrides === "object"
       ? selectionFromSectionsInput(parsed.sectionOverrides)
       : null;
-  if (globalLegacy && (globalLegacy.listed.length > 0 || globalLegacy.excluded.length > 0)) {
+  if (
+    parsed?.rewriteStorage !== "shared-v1" &&
+    globalLegacy &&
+    (globalLegacy.listed.length > 0 || globalLegacy.excluded.length > 0)
+  ) {
     const gid = typeof parsed?.global?.presetId === "string" ? parsed.global.presetId : null;
     const target = gid && out.presets[gid] ? out.presets[gid] : null;
     if (target) {
@@ -457,11 +447,39 @@ function migrateLegacyState(out, parsed) {
   }
 }
 
+// Tag changes still belong to a preset; rewrite bodies are stored separately.
+function editActivePresetSelection({ sessionId, fallbackToGlobal = false, edit }) {
+  const s = readState();
+  let found = presetForSession({ sessionId, assignments: s.assignments, global: s.global, presets: s.presets });
+  if (fallbackToGlobal && (!found || !found.preset)) {
+    const id = s.global?.presetId;
+    if (id && s.presets[id]) found = { id, preset: s.presets[id], source: "global" };
+  }
+  if (!found?.preset) {
+    return { ok: false, outcome: "no-active-preset", error: "没有生效的预设，无法更改段落 tag。" };
+  }
+  const selection = edit(found.preset.selection ?? normalizeSelection(null));
+  const next = normalizePreset({ ...found.preset, selection: { ...selection, sections: {} } });
+  if (!next) return { ok: false, outcome: "bad-preset", error: "无法更新预设段落 tag。" };
+  writeState({ presets: { ...s.presets, [found.id]: next } });
+  return { ok: true, presetId: found.id, via: found.source ?? "unknown", fellBack: found.source === "global" };
+}
+
 // Merge partial writes with on-disk state so independent routes cannot erase each other.
 function writeState(state) {
   try {
     mkdirSync(dirname(STATE_FILE), { recursive: true });
     const onDisk = readState();
+    const rawPresets = state && "presets" in state && state.presets
+      ? normalizePresets(state.presets)
+      : onDisk.presets;
+    const presets = Object.fromEntries(Object.entries(rawPresets).map(([id, preset]) => [
+      id,
+      normalizePreset({
+        ...preset,
+        selection: { ...(preset.selection ?? {}), sections: {} },
+      }),
+    ]).filter(([, preset]) => preset));
     const merged = {
       global: {
         enabled:
@@ -476,12 +494,13 @@ function writeState(state) {
             : onDisk.global.presetId,
       },
       assignments: pickPresetAssignments(state, onDisk),
-      sectionOverrides: {},
+      sectionOverrides:
+        state && "sectionOverrides" in state
+          ? normalizeOverrides(state.sectionOverrides)
+          : onDisk.sectionOverrides,
       sessionSectionOverrides: {},
-      presets:
-        state && "presets" in state && state.presets
-          ? normalizePresets(state.presets)
-          : onDisk.presets,
+      presets,
+      rewriteStorage: "shared-v1",
       hasLoaded: onDisk.hasLoaded === true,
       updatedAt: new Date().toISOString(),
     };
@@ -595,7 +614,7 @@ function applyInner(ctx) {
 
       const sel = found.preset.selection ?? { listed: [], excluded: [], sections: {}, known: [] };
 
-      return sel;
+      return { ...sel, sections: s.sectionOverrides };
     },
   });
   injector.restore(toInjectorState(readState()));
@@ -676,9 +695,12 @@ function applyInner(ctx) {
           presetSignature,
           diag,
           jsonOf,
+          writeState,
           editActivePresetSelection,
           normalizeSelection,
           applySelectionEdit,
+          makeOverride,
+          syncInjector: () => syncInjector(ctx),
         });
         if (sectionResponse) return sectionResponse;
 
