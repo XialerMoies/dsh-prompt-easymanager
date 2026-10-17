@@ -147,8 +147,8 @@
           "details": "dsh-system-prompt 与 dsh-agent-instructions 的 lib/index.js 哈希和 0.1.7-rc.2 完全一致。"
         },
         "0.2.0-rc.2": {
-          "level": "api-identical",
-          "details": "dsh-system-prompt 与 dsh-agent-instructions 的 lib/index.js 哈希和 0.1.7-rc.2 完全一致。"
+          "level": "tested",
+          "details": "在 Windows x64、Node 22.23.2 的真实 DSH Profile 中安装、启动和使用；两个提示词包的 lib/index.js 哈希也与 0.1.7-rc.2 完全一致。"
         },
         "0.2.1-alpha.1": {
           "level": "api-identical-plus-isolated-start",
