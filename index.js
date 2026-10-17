@@ -59,7 +59,7 @@ import { serializePresetBundle, parsePresetBundle } from "./scripts/lib/preset-t
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
-const PLUGIN_VERSION = "0.3.9";
+const PLUGIN_VERSION = "0.4.0";
 
 export const STATE_PATH = "/api/prompt-easymanager/state";
 export const ASSIGN_PATH = "/api/prompt-easymanager/assign";
