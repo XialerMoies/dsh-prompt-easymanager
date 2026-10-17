@@ -32,6 +32,8 @@ window.__ModuleLoader__.load({
       var IconChevronDownOutlineRegular = api.ui.IconChevronDownOutlineRegular;
       var IconEditOutlineRegular = api.ui.IconEditOutlineRegular;
       var IconEllipsisOutlineRegular = api.ui.IconEllipsisOutlineRegular;
+      var ROUTE_PRESETS = api.route.ROUTE_PRESETS;
+      var ROUTE_PRESET_EXPORT = api.route.ROUTE_PRESET_EXPORT || ROUTE_PRESETS;
       var Checkbox = api.ui.Checkbox;
       var Input = api.ui.Input;
       var presetModel = api.preset;
@@ -192,7 +194,7 @@ window.__ModuleLoader__.load({
             react.createElement(
               "div",
               { key: "no-prompts", style: STATUS_LINE },
-              "库里还没有可选的提示词 —— 在下面「新建」加一条。",
+              "暂无可用提示词，请点击“新建”添加。",
             ),
           );
         }
@@ -273,7 +275,7 @@ window.__ModuleLoader__.load({
           };
 
           var rowStyle = { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "12px" };
-          var headStyle = Object.assign({}, STATUS_LINE, { fontWeight: 600 });
+          var headStyle = Object.assign({}, HEADING_TITLE, { marginBottom: "4px" });
 
           // ① 个人提示词 —— 勾了哪几条（列表放在这个标题下面）
           //
@@ -324,7 +326,7 @@ window.__ModuleLoader__.load({
               react.createElement(
                 "div",
                 { key: "l", style: headStyle },
-                "个人提示词" + (personalOn > 0 ? "（勾了 " + personalOn + " 条）" : "（一条没勾）"),
+                "个人提示词" + (personalOn > 0 ? "（已选择 " + personalOn + " 条）" : "（未选择）"),
               ),
               react.createElement(
                 "div",
@@ -340,7 +342,7 @@ window.__ModuleLoader__.load({
               react.createElement(
                 "div",
                 { key: "l", style: headStyle },
-                "改动提示词" + (editedEls.length > 0 ? "（" + editedEls.length + " 段）" : "（还没改过）"),
+                "改动提示词" + (editedEls.length > 0 ? "（" + editedEls.length + " 段）" : "（暂无改动）"),
               ),
               editedEls.length > 0
                 ? react.createElement("div", { key: "t", style: rowStyle }, editedEls)
@@ -501,6 +503,9 @@ window.__ModuleLoader__.load({
             );
 
         var moreItems = [
+          { id: "__import", label: "导入预设（Markdown）", disabled: bus },
+          { id: "__export", label: "导出当前预设（Markdown）", disabled: bus || !currentId || currentId === "__native" },
+          { type: "separator", id: "__transfer-separator" },
           { id: "__reload", label: "重新读取", disabled: bus },
         ].concat(
           currentId && currentId !== "__native"
@@ -639,6 +644,31 @@ window.__ModuleLoader__.load({
                         items: moreItems,
                         onSelect: function (id) {
                           setMenuTarget(null);
+                          if (id === "__import") {
+                            var input = document.createElement("input");
+                            input.type = "file";
+                            input.accept = ".md,text/markdown";
+                            input.onchange = function () {
+                              var file = input.files && input.files[0];
+                              if (!file) return;
+                              var reader = new FileReader();
+                              reader.onload = function () { props.previewImport(String(reader.result || "")); };
+                              reader.readAsText(file);
+                            };
+                            input.click();
+                          }
+                          if (id === "__export" && currentId && currentId !== "__native") {
+                            fetch(ROUTE_PRESET_EXPORT + "?export=1&id=" + encodeURIComponent(currentId)).then(function (res) {
+                              if (!res.ok) throw new Error("导出失败");
+                              return res.blob();
+                            }).then(function (blob) {
+                              var a = document.createElement("a");
+                              a.href = URL.createObjectURL(blob);
+                              a.download = (currentName || "preset") + ".md";
+                              a.click();
+                              setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+                            }).catch(function (e) { props.flash("导出失败：" + e.message); });
+                          }
                           if (id === "__reload") props.loadPresets();
                           if (id === "__delete" && currentId && currentId !== "__native") {
                             props.doPreset({ action: "delete", id: currentId });
@@ -677,12 +707,23 @@ window.__ModuleLoader__.load({
             [swRow, actRow],
         );
 
+        var importPanel = props.importPreview
+          ? react.createElement("div", { style: Object.assign({}, CARD_DETAILS, { marginBottom: "10px", border: "1px solid var(--dsw-alias-border-l2)" }) }, [
+              react.createElement("strong", { key: "title" }, "导入预览：" + props.importPreview.data.name),
+              react.createElement("div", { key: "summary", style: STATUS_LINE }, "包含 " + props.importPreview.data.prompts + " 条个人提示词、" + props.importPreview.data.rewrites + " 段系统改写。"),
+              props.importPreview.data.conflicts.name || props.importPreview.data.conflicts.prompts.length || props.importPreview.data.conflicts.sections.length
+                ? react.createElement("div", { key: "conflict", style: STATUS_LINE }, "发现冲突：" + (props.importPreview.data.conflicts.name ? "预设重名；" : "") + props.importPreview.data.conflicts.prompts.length + " 条提示词正文不同；" + props.importPreview.data.conflicts.sections.length + " 段改写正文不同。导入会保留现有冲突内容。")
+                : react.createElement("div", { key: "ok", style: STATUS_LINE }, "没有发现冲突。导入后不会自动启用。"),
+              react.createElement("div", { key: "actions", style: { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "8px" } }, [
+                react.createElement(ActionButton, { key: "save", variant: "primary", onClick: function () { props.commitImport(props.importPreview.markdown, props.importPreview.data.name, false); } }, "导入"),
+                react.createElement(ActionButton, { key: "cancel", variant: "outline", onClick: function () { props.setImportPreview(null); } }, "取消"),
+              ]),
+            ])
+          : null;
         var bodyNode = react.createElement(
           "div",
-          { key: "body", style: CARD_DETAILS },
-          props.presetsData
-            ? renderPickerBody(props)
-            : react.createElement("div", { style: STATUS_LINE }, "读取中…"),
+          { key: "body" },
+          [importPanel, react.createElement("div", { key: "picker", style: CARD_DETAILS }, props.presetsData ? renderPickerBody(props) : react.createElement("div", { style: STATUS_LINE }, "读取中…"))],
         );
 
         // ⚠️ 区块标题在**卡片外面**，跟「个人提示词」「系统提示词」同一套样式

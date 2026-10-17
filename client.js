@@ -27,6 +27,7 @@
         const ROUTE_EDIT = "/api/prompt-easymanager/edit";
     const ROUTE_SECTIONS = "/api/prompt-easymanager/sections";
     const ROUTE_PRESETS = "/api/prompt-easymanager/presets";
+    const ROUTE_PRESET_EXPORT = ROUTE_PRESETS;
 /**
  * 全局那份配置（开关 + 指向哪条预设）。
  *
@@ -914,6 +915,7 @@ const ROUTE_GLOBAL = "/api/prompt-easymanager/global";
             ROUTE_EDIT: ROUTE_EDIT,
             ROUTE_SECTIONS: ROUTE_SECTIONS,
             ROUTE_PRESETS: ROUTE_PRESETS,
+            ROUTE_PRESET_EXPORT: ROUTE_PRESET_EXPORT,
           ROUTE_GLOBAL: ROUTE_GLOBAL,
           },
           preset: {

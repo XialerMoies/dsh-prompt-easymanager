@@ -55,6 +55,7 @@ import { handleSections } from "./scripts/lib/routes/sections.mjs";
 import { handleState } from "./scripts/lib/routes/state.mjs";
 import { handleSessions } from "./scripts/lib/routes/sessions.mjs";
 import { handleLibrary } from "./scripts/lib/routes/library.mjs";
+import { serializePresetBundle, parsePresetBundle } from "./scripts/lib/preset-transfer.mjs";
 
 const PLUGIN_ID = "dsh-prompt-easymanager";
 const PLUGIN_NAME = "个人提示词";
@@ -722,6 +723,10 @@ function applyInner(ctx) {
           selectionFromSectionsInput,
           normalizeSelection,
           isEmptySelection,
+          storeOf,
+          serializePresetBundle,
+          parsePresetBundle,
+          dshVersion,
         });
         if (presetResponse) return presetResponse;
 

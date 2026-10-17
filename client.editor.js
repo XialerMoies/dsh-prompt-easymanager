@@ -386,6 +386,20 @@ window.__ModuleLoader__.load({
             });
         }, []);
 
+        var previewImport = react.useCallback(function (markdown) {
+          return fetch(ROUTE_PRESETS, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "import-preview", markdown: markdown }) })
+            .then(function (res) { return res.json().then(function (d) { if (!res.ok) throw new Error(d.error || "导入失败"); return d; }); })
+            .then(function (d) { if (mountedRef.current) setImportPreview({ markdown: markdown, data: d.preview }); return d; })
+            .catch(function (e) { flash("导入失败：" + ((e && e.message) || String(e))); return null; });
+        }, [flash]);
+
+        var commitImport = react.useCallback(function (markdown, name, overwriteSections) {
+          return fetch(ROUTE_PRESETS, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "import-commit", markdown: markdown, name: name, overwriteSections: overwriteSections === true }) })
+            .then(function (res) { return res.json().then(function (d) { if (!res.ok) throw new Error(d.error || "导入失败"); return d; }); })
+            .then(function (d) { if (mountedRef.current) { setImportPreview(null); flash("已导入预设「" + d.name + "」，未自动启用"); loadPresets(); load(); loadSections(); } return d; })
+            .catch(function (e) { flash("导入失败：" + ((e && e.message) || String(e))); return null; });
+        }, [flash, load, loadPresets, loadSections]);
+
         react.useEffect(function () {
           loadPresets();
         }, [loadPresets]);
@@ -853,6 +867,9 @@ function presetById(d, id) {
         var sectionMessageSt = react.useState(null);
         var sectionMessage = sectionMessageSt[0];
         var setSectionMessage = sectionMessageSt[1];
+        var importSt = react.useState(null);
+        var importPreview = importSt[0];
+        var setImportPreview = importSt[1];
 
         var prompts = (list && list.prompts) || [];
 
@@ -928,6 +945,10 @@ function presetById(d, id) {
                     MasterSwitch: props.MasterSwitch,
                     globalEnabled: enabledDraft,
                     onToggleGlobal: toggleEnabled,
+                    importPreview: importPreview,
+                    previewImport: previewImport,
+                    commitImport: commitImport,
+                    setImportPreview: setImportPreview,
                   })
                 : null,
             ),
